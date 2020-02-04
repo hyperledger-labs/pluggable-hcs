@@ -164,12 +164,12 @@ func KafkaBrokersValue(brokers []string) *StandardConfigValue {
 	}
 }
 
-// HcsTopicValue returns the config definition for the HCS Topic ID. It is a value for the Channel/Orderer group.
-func HcsTopicValue(id string) *StandardConfigValue {
+// HcsValue returns the config definition for HCS. It is a value for the Channel/Orderer group.
+func HcsValue(topicId string) *StandardConfigValue {
 	return &StandardConfigValue{
-		key: HcsTopicKey,
-		value: &ab.HcsTopic {
-			Id: id,
+		key: HcsKey,
+		value: &ab.Hcs {
+			TopicId: topicId,
 		},
 	}
 }
