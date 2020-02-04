@@ -292,7 +292,7 @@
   version = "v1.2.1"
 
 [[projects]]
-  digest = "1:445011b46c9874de479d56206ffe827ccc712e3507f5e6cfc338debd83f8e063"
+  digest = "1:ab95176c111bfc9fd636b49a8deecfe70dab3e4f8cdcb53e203f9ed00db54a7a"
   name = "github.com/golang/protobuf"
   packages = [
     "jsonpb",
@@ -309,6 +309,7 @@
     "ptypes/empty",
     "ptypes/struct",
     "ptypes/timestamp",
+    "ptypes/wrappers",
   ]
   pruneopts = "NUT"
   revision = "b5d812f8a3706043e23a9cd5babf2e5423744d30"
@@ -345,6 +346,18 @@
   pruneopts = "NUT"
   revision = "dd15ed025b6054e5253963e355991f3070d4e593"
   version = "v1.1.0"
+
+[[projects]]
+  digest = "1:3b8c97d9d2621086e008a4d268dc9c351f41b0bc5e309ae6890c6d58ff445b77"
+  name = "github.com/hashgraph/hedera-sdk-go"
+  packages = [
+    ".",
+    "proto",
+    "proto/mirror",
+  ]
+  pruneopts = "NUT"
+  revision = "8ede9350ab8e97da03411ed0a9352f4b0a03d74a"
+  version = "v0.1.0"
 
 [[projects]]
   digest = "1:53a4ebb0e1eb24a4644a3eec9457ba6ead5476a9ea5af43bf2c8b8b1a8ce47f2"
@@ -776,6 +789,17 @@
   revision = "bea94bb476ccecfbd31b12ed493a971bdb8c904b"
 
 [[projects]]
+  digest = "1:9ae36c8c05b1ab2777108891f6e08e7f7d00f8a1d493b01ff31d160cb9949747"
+  name = "github.com/tyler-smith/go-bip39"
+  packages = [
+    ".",
+    "wordlists",
+  ]
+  pruneopts = "NUT"
+  revision = "5e3853c3f4e1a44df487c7efeb064ee8b43755de"
+  version = "1.0.2"
+
+[[projects]]
   digest = "1:0f4299df39f2e222cdd1b802126a7ae9cadcb4f11f65d657adb48a4e07c9bfb7"
   name = "github.com/willf/bitset"
   packages = ["."]
@@ -836,9 +860,14 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:9c4fed825c10231651e81bf0ab2c12e3a6cc349dcc62a78f8d3a9dfb6744855e"
+  digest = "1:6bc5f992ed1dd4346d657b7467f7b3c61b3188607770ee20ab3ad75ab666e3c7"
   name = "golang.org/x/crypto"
-  packages = ["sha3"]
+  packages = [
+    "ed25519",
+    "ed25519/internal/edwards25519",
+    "pbkdf2",
+    "sha3",
+  ]
   pruneopts = "NUT"
   revision = "cc06ce4a13d484c0101a9e92913248488a75786d"
 
@@ -1059,6 +1088,7 @@
     "github.com/gorilla/handlers",
     "github.com/gorilla/mux",
     "github.com/grpc-ecosystem/go-grpc-middleware",
+    "github.com/hashgraph/hedera-sdk-go",
     "github.com/hashicorp/go-version",
     "github.com/hyperledger/fabric-amcl/amcl",
     "github.com/hyperledger/fabric-amcl/amcl/FP256BN",
