@@ -227,3 +227,37 @@ func TestConnectionTimeout(t *testing.T) {
 		assert.Equal(t, cfg.General.ConnectionTimeout, 10*time.Second)
 	})
 }
+
+func TestHcsPrivateKey(t *testing.T) {
+	testCases := []struct {
+		name        string
+		privateKey  HcsPrivateKey
+		shouldPanic bool
+	}{
+		{"Disabled", HcsPrivateKey{Enabled: false}, false},
+		{"EnabledNoType", HcsPrivateKey{Enabled: true, Key: "dummy"}, true},
+		{"EnabledNoKey", HcsPrivateKey{Enabled: true, Type: "ed25519"}, true},
+		{"EnabledHappyPath", HcsPrivateKey{Enabled: true, Type: "ed25519", Key: "dummy"}, false},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			uconf := &TopLevel{Hcs: Hcs{Operator: HcsOperator{PrivateKey: tc.privateKey}}}
+			if tc.shouldPanic {
+				assert.Panics(t, func() { uconf.completeInitialization("/dummy/path") }, "Should panic")
+			} else {
+				assert.NotPanics(t, func() { uconf.completeInitialization("/dummy/path") }, "Should not panic")
+			}
+		})
+	}
+}
+
+func TestTranslateHcsNodes(t *testing.T) {
+	nodes := map[string]string{"10_10_10_1:52210": "0.0.10"}
+	expected := map[string]string{"10.10.10.1:52210": "0.0.10"}
+	ans := translateHcsNodes(&nodes)
+	assert.Equal(t, expected, ans, "underscores should be replaced by dots")
+
+	nodes = map[string]string{"10.10.10.1:52210": "0.0.10"}
+	ans = translateHcsNodes(&nodes)
+	assert.Equal(t, nodes, ans, "expect no change when keys have no underscores")
+}
