@@ -21,9 +21,11 @@ func TestLoadProfile(t *testing.T) {
 	pNames := []string{
 		SampleDevModeKafkaProfile,
 		SampleDevModeSoloProfile,
+		SampleDevModeHcsProfile,
 		SampleSingleMSPChannelProfile,
 		SampleSingleMSPKafkaProfile,
 		SampleSingleMSPSoloProfile,
+		SampleSingleMSPHcsProfile,
 	}
 	for _, pName := range pNames {
 		t.Run(pName, func(t *testing.T) {
@@ -39,9 +41,11 @@ func TestLoadProfileWithPath(t *testing.T) {
 	pNames := []string{
 		SampleDevModeKafkaProfile,
 		SampleDevModeSoloProfile,
+		SampleDevModeHcsProfile,
 		SampleSingleMSPChannelProfile,
 		SampleSingleMSPKafkaProfile,
 		SampleSingleMSPSoloProfile,
+		SampleSingleMSPHcsProfile,
 	}
 	for _, pName := range pNames {
 		t.Run(pName, func(t *testing.T) {
@@ -121,6 +125,18 @@ func TestConsensusSpecificInit(t *testing.T) {
 		}
 		profile.completeInitialization(devConfigDir)
 		assert.NotNil(t, profile.Orderer.Kafka.Brokers, "Kafka config settings should be set")
+	})
+
+	t.Run("hcs", func(t *testing.T) {
+		profile := &Profile{
+			Orderer: &Orderer{
+				OrdererType: "hcs",
+				HcsTopic: HcsTopic{},
+			},
+		}
+		assert.Panics(t, func() {
+			profile.completeInitialization(devConfigDir)
+		})
 	})
 
 	t.Run("raft", func(t *testing.T) {

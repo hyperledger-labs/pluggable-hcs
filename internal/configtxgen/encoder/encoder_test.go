@@ -367,6 +367,31 @@ var _ = Describe("Encoder", func() {
 			})
 		})
 
+		Context("when the consensus type is hcs", func() {
+			BeforeEach(func() {
+				conf.OrdererType = "hcs"
+				conf.HcsTopic = genesisconfig.HcsTopic{Id: "0.0.1230"}
+			})
+
+			It("adds the hcs topic key", func() {
+				cg, err := encoder.NewOrdererGroup(conf)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(len(cg.Values)).To(Equal(6))
+				Expect(cg.Values["HcsTopic"]).NotTo(BeNil())
+			})
+
+			Context("when the hcs topic id is bad", func () {
+				BeforeEach(func() {
+					conf.HcsTopic = genesisconfig.HcsTopic{Id: "a.b.dead"}
+				})
+
+				It("wraps and returns the error", func() {
+					_, err := encoder.NewOrdererGroup(conf)
+					Expect(err).NotTo(BeNil())
+				})
+			})
+		})
+
 		Context("when the consensus type is unknown", func() {
 			BeforeEach(func() {
 				conf.OrdererType = "bad-type"

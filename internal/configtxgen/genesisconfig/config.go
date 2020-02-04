@@ -22,6 +22,7 @@ import (
 const (
 	// The type key for etcd based RAFT consensus.
 	EtcdRaft = "etcdraft"
+	Hcs = "hcs"
 )
 
 var logger = flogging.MustGetLogger("common.tools.configtxgen.localconfig")
@@ -46,6 +47,16 @@ const (
 	// SampleSingleMSPKafkaProfile references the sample profile which includes
 	// only the sample MSP and uses Kafka for ordering.
 	SampleSingleMSPKafkaProfile = "SampleSingleMSPKafka"
+
+	// SampleInsecureHcsProfile references the sample profile which does not
+	// include any MSPs and uses HCS for ordering.
+	SampleInsecureHcsProfile = "SampleInsecureHcs"
+	// SampleDevModeHcsProfile references the sample profile which requires only
+	// basic membership for admin privileges and uses HCS for ordering.
+	SampleDevModeHcsProfile = "SampleDevModeHcs"
+	// SampleSingleMSPKHcsProfile references the sample profile which includes
+	// only the sample MSP and uses HCS for ordering.
+	SampleSingleMSPHcsProfile = "SampleSingleMSPHcs"
 
 	// SampleDevModeEtcdRaftProfile references the sample profile used for testing
 	// the etcd/raft-based ordering service.
@@ -154,6 +165,7 @@ type Orderer struct {
 	BatchTimeout  time.Duration            `yaml:"BatchTimeout"`
 	BatchSize     BatchSize                `yaml:"BatchSize"`
 	Kafka         Kafka                    `yaml:"Kafka"`
+	HcsTopic      HcsTopic                 `yaml:"HcsTopic"`
 	EtcdRaft      *etcdraft.ConfigMetadata `yaml:"EtcdRaft"`
 	Organizations []*Organization          `yaml:"Organizations"`
 	MaxChannels   uint64                   `yaml:"MaxChannels"`
@@ -173,6 +185,9 @@ type Kafka struct {
 	Brokers []string `yaml:"Brokers"`
 }
 
+type HcsTopic struct {
+	Id string `yaml:"Id"`
+}
 var genesisDefaults = TopLevel{
 	Orderer: &Orderer{
 		OrdererType:  "solo",
@@ -369,6 +384,10 @@ loop:
 		if ord.Kafka.Brokers == nil {
 			logger.Infof("Orderer.Kafka unset, setting to %v", genesisDefaults.Orderer.Kafka.Brokers)
 			ord.Kafka.Brokers = genesisDefaults.Orderer.Kafka.Brokers
+		}
+	case Hcs:
+		if ord.HcsTopic.Id == "" {
+			logger.Panic("must provide HCS Topic ID")
 		}
 	case EtcdRaft:
 		if ord.EtcdRaft == nil {
