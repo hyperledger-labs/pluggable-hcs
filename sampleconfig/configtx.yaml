@@ -318,6 +318,9 @@ Orderer: &OrdererDefaults
             - kafka1:9092
             - kafka2:9092
 
+    HcsTopic:
+        Id: 0.0.1230
+
     # EtcdRaft defines configuration which must be set when the "etcdraft"
     # orderertype is chosen.
     EtcdRaft:
@@ -469,6 +472,20 @@ Profiles:
                 Organizations:
                     - *SampleOrg
 
+    # SampleSingleMSPHcs defines a configuration that differs from the
+    # SampleSingleMSPSolo one only in that it uses the HCS-based orderer.
+    SampleSingleMSPHcs:
+        <<: *ChannelDefaults
+        Orderer:
+            <<: *OrdererDefaults
+            OrdererType: hcs
+            Organizations:
+                - *SampleOrg
+        Consortiums:
+            SampleConsortium:
+                Organizations:
+                    - *SampleOrg
+
     # SampleInsecureSolo defines a configuration which uses the Solo orderer,
     # contains no MSP definitions, and allows all transactions and channel
     # creation requests for the consortium SampleConsortium.
@@ -485,8 +502,19 @@ Profiles:
     SampleInsecureKafka:
         <<: *ChannelDefaults
         Orderer:
-            OrdererType: kafka
             <<: *OrdererDefaults
+            OrdererType: kafka
+        Consortiums:
+            SampleConsortium:
+                Organizations:
+
+    # SampleInsecureHcs defines a configuration that differs from the
+    # SampleInsecureSolo one only in that it uses the HCS-based orderer.
+    SampleInsecureHcs:
+        <<: *ChannelDefaults
+        Orderer:
+            <<: *OrdererDefaults
+            OrdererType: hcs
         Consortiums:
             SampleConsortium:
                 Organizations:
@@ -533,6 +561,39 @@ Profiles:
         Orderer:
             <<: *OrdererDefaults
             OrdererType: kafka
+            Organizations:
+                - <<: *SampleOrg
+                  Policies:
+                      <<: *SampleOrgPolicies
+                      Admins:
+                          Type: Signature
+                          Rule: "OR('SampleOrg.member')"
+        Application:
+            <<: *ApplicationDefaults
+            Organizations:
+                - <<: *SampleOrg
+                  Policies:
+                      <<: *SampleOrgPolicies
+                      Admins:
+                          Type: Signature
+                          Rule: "OR('SampleOrg.member')"
+        Consortiums:
+            SampleConsortium:
+                Organizations:
+                    - <<: *SampleOrg
+                      Policies:
+                          <<: *SampleOrgPolicies
+                          Admins:
+                              Type: Signature
+                              Rule: "OR('SampleOrg.member')"
+
+    # SampleDevModeHcs defines a configuration that differs from the
+    # SampleDevModeSolo one only in that it uses the HCS-based orderer.
+    SampleDevModeHcs:
+        <<: *ChannelDefaults
+        Orderer:
+            <<: *OrdererDefaults
+            OrdererType: hcs
             Organizations:
                 - <<: *SampleOrg
                   Policies:
