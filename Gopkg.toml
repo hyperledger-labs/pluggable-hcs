@@ -192,3 +192,7 @@ noverify = [
 [[constraint]]
   name = "github.com/VictoriaMetrics/fastcache"
   version = "1.4.6"
+
+[[constraint]]
+  name = "github.com/hashgraph/hedera-sdk-go"
+  version = "0.1.0"
