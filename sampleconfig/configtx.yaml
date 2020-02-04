@@ -318,8 +318,8 @@ Orderer: &OrdererDefaults
             - kafka1:9092
             - kafka2:9092
 
-    HcsTopic:
-        Id: 0.0.1230
+    Hcs:
+        TopicId: 0.0.1230
 
     # EtcdRaft defines configuration which must be set when the "etcdraft"
     # orderertype is chosen.

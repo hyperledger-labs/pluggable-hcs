@@ -17,12 +17,12 @@ import (
 	cf "github.com/hyperledger/fabric/core/config"
 	"github.com/hyperledger/fabric/msp"
 	"github.com/spf13/viper"
+	"github.com/hashgraph/hedera-sdk-go"
 )
 
 const (
 	// The type key for etcd based RAFT consensus.
 	EtcdRaft = "etcdraft"
-	Hcs = "hcs"
 )
 
 var logger = flogging.MustGetLogger("common.tools.configtxgen.localconfig")
@@ -165,7 +165,7 @@ type Orderer struct {
 	BatchTimeout  time.Duration            `yaml:"BatchTimeout"`
 	BatchSize     BatchSize                `yaml:"BatchSize"`
 	Kafka         Kafka                    `yaml:"Kafka"`
-	HcsTopic      HcsTopic                 `yaml:"HcsTopic"`
+	Hcs           Hcs                      `yaml:"Hcs"`
 	EtcdRaft      *etcdraft.ConfigMetadata `yaml:"EtcdRaft"`
 	Organizations []*Organization          `yaml:"Organizations"`
 	MaxChannels   uint64                   `yaml:"MaxChannels"`
@@ -185,9 +185,10 @@ type Kafka struct {
 	Brokers []string `yaml:"Brokers"`
 }
 
-type HcsTopic struct {
-	Id string `yaml:"Id"`
+type Hcs struct {
+	TopicId string `yaml:"TopicId"`
 }
+
 var genesisDefaults = TopLevel{
 	Orderer: &Orderer{
 		OrdererType:  "solo",
@@ -385,9 +386,9 @@ loop:
 			logger.Infof("Orderer.Kafka unset, setting to %v", genesisDefaults.Orderer.Kafka.Brokers)
 			ord.Kafka.Brokers = genesisDefaults.Orderer.Kafka.Brokers
 		}
-	case Hcs:
-		if ord.HcsTopic.Id == "" {
-			logger.Panic("must provide HCS Topic ID")
+	case "hcs":
+		if _, err := hedera.TopicIDFromString(ord.Hcs.TopicId); err != nil {
+			logger.Panic("invalid HCS Topic ID '%v', %v", ord.Hcs.TopicId, err)
 		}
 	case EtcdRaft:
 		if ord.EtcdRaft == nil {

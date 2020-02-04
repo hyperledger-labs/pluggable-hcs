@@ -50,19 +50,19 @@ func TestKafkaBrokers(t *testing.T) {
 	assert.Error(t, oc.validateKafkaBrokers(), "Invalid kafka brokers")
 }
 
-func TestHcsTopicId(t *testing.T) {
-	oc := &OrdererConfig{protos: &OrdererProtos{HcsTopic: &ab.HcsTopic{Id: "0.0.1230"}}}
-	assert.Error(t, oc.validateHcsTopic(), "Must set ConsensusType")
+func TestHcs(t *testing.T) {
+	oc := &OrdererConfig{protos: &OrdererProtos{Hcs: &ab.Hcs{TopicId: "0.0.1230"}}}
+	assert.Error(t, oc.validateHcs(), "Must set ConsensusType")
 
 	oc = &OrdererConfig{protos: &OrdererProtos{
 		ConsensusType: &ab.ConsensusType{Type: "hcs"},
-		HcsTopic: &ab.HcsTopic{Id: "0.0.1230"},
+		Hcs: &ab.Hcs{TopicId: "0.0.1230"},
 	}}
-	assert.NoError(t, oc.validateHcsTopic(), "Valid HCS topic ID")
+	assert.NoError(t, oc.validateHcs(), "Valid HCS topic ID")
 
 	oc = &OrdererConfig{protos: &OrdererProtos{
 		ConsensusType: &ab.ConsensusType{Type: "hcs"},
-		HcsTopic: &ab.HcsTopic{Id: "a.b.xx00"},
+		Hcs: &ab.Hcs{TopicId: "a.b.xx00"},
 	}}
-	assert.Error(t, oc.validateHcsTopic(), "Invalid HCS topic ID")
+	assert.Error(t, oc.validateHcs(), "Invalid HCS topic ID")
 }

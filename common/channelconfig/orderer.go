@@ -41,8 +41,8 @@ const (
 	// KafkaBrokersKey is the cb.ConfigItem type key name for the KafkaBrokers message.
 	KafkaBrokersKey = "KafkaBrokers"
 
-	// HcsTopicKey is the cb.ConfigItem type key name for the HcsTopic message.
-	HcsTopicKey = "HcsTopic"
+	// HcsKey is the cb.ConfigItem type key name for the Hcs message.
+	HcsKey = "Hcs"
 
 	// EndpointsKey is the cb.COnfigValue key name for the Endpoints message in the OrdererOrgGroup.
 	EndpointsKey = "Endpoints"
@@ -54,7 +54,7 @@ type OrdererProtos struct {
 	BatchSize           *ab.BatchSize
 	BatchTimeout        *ab.BatchTimeout
 	KafkaBrokers        *ab.KafkaBrokers
-	HcsTopic            *ab.HcsTopic
+	Hcs                 *ab.Hcs
 	ChannelRestrictions *ab.ChannelRestrictions
 	Capabilities        *cb.Capabilities
 }
@@ -200,7 +200,7 @@ func (oc *OrdererConfig) Validate() error {
 		oc.validateBatchSize,
 		oc.validateBatchTimeout,
 		oc.validateKafkaBrokers,
-		oc.validateHcsTopic,
+		oc.validateHcs,
 	} {
 		if err := validator(); err != nil {
 			return err
@@ -247,7 +247,7 @@ func (oc *OrdererConfig) validateKafkaBrokers() error {
 	return nil
 }
 
-func (oc *OrdererConfig) validateHcsTopic() error {
+func (oc *OrdererConfig) validateHcs() error {
 	if oc.protos.ConsensusType == nil {
 		return fmt.Errorf("ConsensusType must be set")
 	}
@@ -255,9 +255,9 @@ func (oc *OrdererConfig) validateHcsTopic() error {
 		return nil
 	}
 
-	_, err := hedera.TopicIDFromString(oc.protos.HcsTopic.Id)
+	_, err := hedera.TopicIDFromString(oc.protos.Hcs.TopicId)
 	if err != nil {
-		return fmt.Errorf("Invalid HCS topic ID '%v', %v", oc.protos.HcsTopic.Id, err)
+		return fmt.Errorf("Invalid HCS topic ID '%v', %v", oc.protos.Hcs.TopicId, err)
 	}
 
 	return nil

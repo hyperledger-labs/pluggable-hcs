@@ -146,8 +146,8 @@ func (docv *DynamicOrdererConfigValue) StaticallyOpaqueFieldProto(name string) (
 		return &orderer.ChannelRestrictions{}, nil
 	case "Capabilities":
 		return &common.Capabilities{}, nil
-	case "HcsTopic":
-		return &orderer.HcsTopic{}, nil
+	case "Hcs":
+		return &orderer.Hcs{}, nil
 	default:
 		return nil, fmt.Errorf("unknown Orderer ConfigValue name: %s", docv.name)
 	}
