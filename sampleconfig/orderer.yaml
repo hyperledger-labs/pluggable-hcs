@@ -269,6 +269,34 @@ Kafka:
 
 ################################################################################
 #
+#   SECTION: Hcs
+#
+#   - This section applies to the configuration of the HCS-based orderer, and
+#     its interaction with the Hedera hashgraph mainnet and mirrornet.
+#
+################################################################################
+Hcs:
+
+    # map of mainnet/testnet nodes, each entry contains NodeAddress / NodeId
+    Nodes:
+        "34_66_214_12:50211": 0.0.8
+        "34_66_214_12:50219": 0.0.198
+
+    # mirror node address in the format of host:port
+    MirrorNodeAddress: 34.66.214.12:6552
+
+    # operator set for the orderer
+    Operator:
+        Id: 0.0.1998
+        PrivateKey:
+            Enabled: false
+            # type of the private key
+            Type: ed25519
+            # path to the key file
+            Key:
+
+################################################################################
+#
 #   Debug Configuration
 #
 #   - This controls the debugging options for the orderer
