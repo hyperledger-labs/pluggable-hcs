@@ -195,6 +195,11 @@ func (oc *OrdererConfig) Capabilities() OrdererCapabilities {
 	return capabilities.NewOrdererProvider(oc.protos.Capabilities.Capabilities)
 }
 
+// Hcs returns HCS related config
+func (oc *OrdererConfig) Hcs() *ab.Hcs {
+	return oc.protos.Hcs
+}
+
 func (oc *OrdererConfig) Validate() error {
 	for _, validator := range []func() error{
 		oc.validateBatchSize,

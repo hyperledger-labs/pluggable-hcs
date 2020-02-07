@@ -119,6 +119,9 @@ type Orderer interface {
 
 	// Capabilities defines the capabilities for the orderer portion of a channel
 	Capabilities() OrdererCapabilities
+
+	// Hcs returns HCS related config
+	Hcs() *ab.Hcs
 }
 
 // ChannelCapabilities defines the capabilities for a channel
