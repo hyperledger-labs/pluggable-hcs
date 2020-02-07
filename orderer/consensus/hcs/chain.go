@@ -1,0 +1,733 @@
+// TODO copyright and license
+
+package hcs
+
+import (
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/ptypes"
+	"github.com/golang/protobuf/ptypes/timestamp"
+	"github.com/hashgraph/hedera-sdk-go"
+	"github.com/hyperledger/fabric-protos-go/common"
+	cb "github.com/hyperledger/fabric-protos-go/common"
+	ab "github.com/hyperledger/fabric-protos-go/orderer"
+	"github.com/hyperledger/fabric/orderer/common/localconfig"
+	"github.com/hyperledger/fabric/orderer/consensus"
+	"github.com/hyperledger/fabric/protoutil"
+	"github.com/pkg/errors"
+)
+
+func getStateFromMetadata(metadataValue []byte, chainID string) (time.Time, uint64, uint64) {
+	if metadataValue != nil {
+		hcsMetadata := &ab.HcsMetadata{}
+		if err := proto.Unmarshal(metadataValue, hcsMetadata); err != nil {
+			logger.Panicf("[channel: %s] Ledger may be corrupted: "+
+				"cannot unmarshal orderer metadata in most recent block", chainID)
+		}
+		timestamp, err := ptypes.Timestamp(hcsMetadata.GetLastConsensusTimestampPersisted())
+		if err != nil {
+			logger.Panicf("[channel: %s] Ledger may be corrupted: "+
+				"cannot unmarshal orderer metadata in most recent block, %v", chainID, err)
+		}
+		return timestamp, hcsMetadata.GetLastOriginalSequenceProcessed(), hcsMetadata.GetLastResubmittedConfigSequence()
+	}
+
+	// defaults
+	return time.Time{}, 0, 0
+}
+
+func newChain(
+	consenter commonConsenter,
+	support consensus.ConsenterSupport,
+	lastConsensusTimestampPersisted time.Time,
+	lastOriginalSequenceProcessed uint64,
+	lastResubmittedConfigSequence uint64,
+) (*chainImpl, error) {
+	lastCutBlockNumber := support.Height() - 1
+	logger.Infof("[channel: %s] starting chain with last persisted consensus timestamp %v and" +
+		"last recorded block [%d]", support.ChannelID(), lastConsensusTimestampPersisted, lastCutBlockNumber)
+
+	doneReprocessingMsgInFlight := make(chan struct{})
+	// In either one of following cases, we should unblock ingress messages:
+	// - lastResubmittedConfigOffset == 0, where we've never resubmitted any config messages
+	// - lastResubmittedConfigOffset == lastOriginalOffsetProcessed, where the latest config message we resubmitted
+	//   has been processed already
+	// - lastResubmittedConfigOffset < lastOriginalOffsetProcessed, where we've processed one or more resubmitted
+	//   normal messages after the latest resubmitted config message. (we advance `lastResubmittedConfigOffset` for
+	//   config messages, but not normal messages)
+	if lastResubmittedConfigSequence == 0 || lastResubmittedConfigSequence <= lastOriginalSequenceProcessed {
+		// If we've already caught up with the reprocessing resubmitted messages, close the channel to unblock broadcast
+		close(doneReprocessingMsgInFlight)
+	}
+
+	return &chainImpl{
+		consenter:                       consenter,
+		ConsenterSupport:                support,
+		lastConsensusTimestampPersisted: lastConsensusTimestampPersisted,
+		lastConsensusTimestamp:          lastConsensusTimestampPersisted,
+		lastOriginalSequenceProcessed:   lastOriginalSequenceProcessed,
+		lastResubmittedConfigSequence:   lastResubmittedConfigSequence,
+		lastCutBlockNumber:              lastCutBlockNumber,
+		haltChan:                        make(chan struct{}),
+		startChan:                       make(chan struct{}),
+		doneReprocessingMsgInFlight:     doneReprocessingMsgInFlight,
+	}, nil
+}
+
+type chainImpl struct {
+	consenter commonConsenter
+	consensus.ConsenterSupport
+
+	lastConsensusTimestampPersisted time.Time
+	lastConsensusTimestamp          time.Time
+	lastOriginalSequenceProcessed   uint64
+	lastResubmittedConfigSequence   uint64
+	lastCutBlockNumber              uint64
+
+	// mutex used when changing the doneReprocessingMsgInFlight
+	doneReprocessingMutex sync.Mutex
+	// notification that there are in-flight messages need to wait for
+	doneReprocessingMsgInFlight chan struct{}
+
+	// when the topic consumer errors, close the channel. Otherwise, make this
+	// an open, unbuffered channel
+	errorChan chan struct{}
+	// when a Halt() request comes, close the channel.
+	haltChan chan struct{}
+	doneProcessingMessages chan struct{}
+	startChan chan struct{}
+	// timer control the batch timeout of cutting pending messages into a block
+	timer <-chan time.Time
+
+	topicId                 hedera.ConsensusTopicID
+	topicProducer           *hedera.Client
+	topicConsumer           *hedera.MirrorClient
+	topicSubscriptionHandle *hedera.MirrorSubscriptionHandle
+
+	consensusRespChan  chan *hedera.MirrorConsensusTopicResponse
+	consensusErrorChan chan error
+}
+
+func (chain *chainImpl) Order(env *common.Envelope, configSeq uint64) error {
+	return chain.order(env, configSeq, 0)
+}
+
+func (chain *chainImpl) Configure(config *common.Envelope, configSeq uint64) error {
+	return chain.configure(config, configSeq, 0)
+}
+
+func (chain *chainImpl) WaitReady() error {
+	select {
+	case <-chain.startChan:
+		select {
+		case <-chain.haltChan:
+			return fmt.Errorf("consenter for this channel has been halted")
+		}
+	default:
+		return fmt.Errorf("consenter has not completed bootstraping; try again later")
+	}
+}
+
+func (chain *chainImpl) Start() {
+	go startThread(chain)
+}
+
+func (chain *chainImpl) Halt() {
+	select {
+	case <-chain.startChan:
+		// chain finished starting, so we can halt it
+		select {
+		case <-chain.haltChan:
+			// This construct is useful because it allows Halt() to be called
+			// multiple times (by a single thread) w/o panicking. Recall that a
+			// receive from a closed channel returns (the zero value) immediately.
+			logger.Warningf("[channel: %s] Halting of chain requested again", chain.ChannelID())
+		default:
+			logger.Criticalf("[channel: %s] Halting of chain requested", chain.ChannelID())
+			// stat shutdown of chain
+			close(chain.haltChan)
+			// wait for processing of messages to blocks to finish shutting down
+			<-chain.doneProcessingMessages
+			logger.Debugf("[channel: %s] Closed the haltChan", chain.ChannelID())
+		}
+	default:
+		logger.Warningf("[channel: %s] Waiting for chain to finish starting before halting", chain.ChannelID())
+		<-chain.startChan
+		chain.Halt()
+	}
+}
+
+func (chain *chainImpl) Errored() <-chan struct{} {
+	select {
+	case <-chain.startChan:
+		return chain.errorChan
+	default:
+		dummyError := make(chan struct{})
+		close(dummyError)
+		return dummyError
+	}
+}
+
+func startThread(chain *chainImpl) {
+	var err error
+
+	// create topicProducer
+	chain.topicProducer, err = setupTopicProducer(chain.consenter.sharedHcsConfig())
+	if err != nil {
+		logger.Panicf("[channel: %s] failed to set up topic producer, %s", err)
+	}
+
+	// create topicConsumer and start subscription
+	chain.topicConsumer, err = setupTopicConsumer(chain.consenter.sharedHcsConfig().MirrorNodeAddress,
+		chain.SharedConfig().Hcs().TopicId)
+	if err != nil {
+		logger.Panicf("[channel: %s] failed to set up topic consumer, %s", err)
+	}
+
+	// subscribe to the hcs topic
+	chain.topicId, err = hedera.TopicIDFromString(chain.SharedConfig().Hcs().TopicId)
+	startTime := chain.lastConsensusTimestampPersisted
+	if !startTime.IsZero() {
+		startTime = startTime.Add(1)
+	}
+	handle, err := hedera.NewMirrorConsensusTopicQuery().
+		SetTopicID(chain.topicId).
+		SetStartTime(startTime).
+		Subscribe(
+			*chain.topicConsumer,
+			func(resp hedera.MirrorConsensusTopicResponse) {
+				chain.consensusRespChan <- &resp
+			},
+			func(err error) {
+				chain.consensusErrorChan <- err
+				close(chain.consensusRespChan)
+			})
+	if err != nil {
+		logger.Panicf("[channel: %s] failed to subscribe to hcs topic %s", chain.ChannelID(),
+			chain.SharedConfig().Hcs().TopicId)
+	}
+	chain.topicSubscriptionHandle = &handle
+
+	chain.doneProcessingMessages = make(chan struct{})
+
+	chain.errorChan = make(chan struct{})
+	close(chain.startChan)
+
+	logger.Infof("[channel: %s] Start phase completed successfully", chain.ChannelID())
+
+	chain.processMessages()
+}
+
+func (chain *chainImpl) processMessages() error {
+	defer func() {
+		chain.topicSubscriptionHandle.Unsubscribe()
+		close(chain.doneProcessingMessages)
+	}()
+
+	for {
+		select {
+		case <-chain.haltChan:
+			logger.Warningf("[channel: %s] consenter for channel exiting", chain.ChannelID())
+			return nil
+		case hcsErr := <-chain.consensusErrorChan:
+			logger.Errorf("[channel: %s] error received during subscription streaming, %s", chain.ChannelID(), hcsErr)
+			select {
+			case <-chain.errorChan: // don't do anything if already closed
+			default:
+				logger.Errorf("[channel: %s] closing errorChan due to subscription streaming error", chain.ChannelID())
+				close(chain.errorChan)
+			}
+		case resp, ok := <-chain.consensusRespChan:
+			if !ok {
+				logger.Criticalf("[channel: %s] hcs topic subscription closed")
+				return nil
+			}
+
+			select {
+			case <-chain.errorChan:
+				chain.errorChan = make(chan struct{}) // make a new one, make the chain available again
+				logger.Infof("[channel: %s] marked chain as available again", chain.ChannelID())
+			default:
+			}
+
+			var msg *ab.HcsMessage
+			plain, err := chain.decrypt(resp.Message)
+			if err != nil {
+				logger.Errorf("failed to decrypt message payload in MirrorConsensusTopicResponse")
+				continue
+			}
+			if err := proto.Unmarshal(plain, msg); err != nil {
+				logger.Critical("[channel: %s] unable to unmarshal ordered message")
+				continue
+			} else {
+				logger.Debugf("[channel %s] successfully unmarshalled ordered message," +
+					"consensus timestamp %v", resp.ConsensusTimeStamp)
+			}
+			switch msg.Type.(type) {
+			case *ab.HcsMessage_Regular:
+				chain.processRegularMessage(msg.GetRegular(), &resp.ConsensusTimeStamp, resp.SequenceNumber)
+			case *ab.HcsMessage_TimeToCut:
+				chain.processTimeToCutMessage(msg.GetTimeToCut(), &resp.ConsensusTimeStamp, resp.SequenceNumber)
+			}
+		case <-chain.timer:
+			if err := chain.sendTimeToCut(); err != nil {
+				logger.Errorf("[channel: %s] cannot send time-to-cut message, %s", chain.ChannelID(), err)
+			}
+		}
+	}
+}
+
+func (chain *chainImpl) WriteBlock(block *cb.Block, metadata *ab.HcsMetadata) {
+	chain.ConsenterSupport.WriteBlock(block, protoutil.MarshalOrPanic(metadata))
+	chain.lastCutBlockNumber++
+}
+
+func (chain *chainImpl) WriteConfigBlock(block *cb.Block, metadata *ab.HcsMetadata) {
+	chain.ConsenterSupport.WriteConfigBlock(block, protoutil.MarshalOrPanic(metadata))
+	chain.lastCutBlockNumber++
+}
+
+func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTimestamp *time.Time, newOriginalSequenceProcessed uint64) {
+	batches, pending := chain.BlockCutter().Ordered(message)
+	logger.Debugf("[channel: %s] Ordering results: items in batch = %d, pending = %v", chain.ChannelID(), len(batches), pending)
+
+	switch {
+	case chain.timer != nil && !pending:
+		// Timer is already running but there are no messages pending, stop the timer
+		chain.timer = nil
+	case chain.timer == nil && pending:
+		// Timer is not already running and there are messages pending, so start it
+		chain.timer = time.After(chain.SharedConfig().BatchTimeout())
+		logger.Debugf("[channel: %s] Just began %s batch timer", chain.ChannelID(), chain.SharedConfig().BatchTimeout().String())
+	default:
+		// Do nothing when:
+		// 1. Timer is already running and there are messages pending
+		// 2. Timer is not set and there are no messages pending
+	}
+
+	if len(batches) == 0 {
+		// If no block is cut, we update the `lastOriginalSequenceProcessed`, start the timer if necessary and return
+		chain.lastOriginalSequenceProcessed = newOriginalSequenceProcessed
+		chain.lastConsensusTimestamp = *curConsensusTimestamp
+		return
+	}
+
+	if pending || len(batches) == 2 {
+		// If the newest envelope is not encapsulated into the first batch,
+		// the `LastConsensusTimestampPersisted` should be `chain.lastConsensusTimestamp`
+		// the 'LastOriginalSequenceProcessed` should be `chain.lastOriginalSequenceProcessed`
+	} else {
+		// We are just cutting exactly one block, so it is safe to update
+		// `lastOriginalSequenceProcessed` with `newOriginalSequenceProcessed` here, and then
+		// encapsulate it into this block. Otherwise, if we are cutting two
+		// blocks, the first one should use current `lastOriginalSequenceProcessed`
+		// and the second one should use `newOriginalSequenceProcessed`, which is also used to
+		// update `lastOriginalSequenceProcessed`
+		chain.lastOriginalSequenceProcessed = newOriginalSequenceProcessed
+		chain.lastConsensusTimestamp = *curConsensusTimestamp
+	}
+
+	// Commit the first block
+	block := chain.CreateNextBlock(batches[0])
+	consensusTimestamp := timestampProtoOrPanic(curConsensusTimestamp)
+	metadata := newHcsMetadata(consensusTimestamp, chain.lastOriginalSequenceProcessed, chain.lastResubmittedConfigSequence)
+	chain.WriteBlock(block, metadata)
+	logger.Debugf("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus timestamp" +
+		"is now %v", chain.ChannelID(), chain.lastCutBlockNumber, *consensusTimestamp)
+
+	// Commit the second block if exists
+	if len(batches) == 2 {
+		chain.lastOriginalSequenceProcessed = newOriginalSequenceProcessed
+		chain.lastConsensusTimestamp = *curConsensusTimestamp
+
+		block := chain.CreateNextBlock(batches[1])
+		consensusTimestamp = timestampProtoOrPanic(curConsensusTimestamp)
+		metadata := newHcsMetadata(consensusTimestamp, chain.lastOriginalSequenceProcessed, chain.lastResubmittedConfigSequence)
+		chain.WriteBlock(block, metadata)
+		logger.Debugf("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus" +
+			"timestamp is now %v", chain.ChannelID(), chain.lastCutBlockNumber, *consensusTimestamp)
+	}
+}
+
+func (chain *chainImpl) commitConfigMessage(message *cb.Envelope, curConsensusTimestamp *time.Time, newOriginalSequenceProcessed uint64) {
+	logger.Debugf("[channel: %s] Received config message", chain.ChannelID())
+	batch := chain.BlockCutter().Cut()
+
+	if batch != nil {
+		logger.Debugf("[channel: %s] Cut pending messages into block", chain.ChannelID())
+		block := chain.CreateNextBlock(batch)
+		consensusTimestamp := timestampProtoOrPanic(&chain.lastConsensusTimestamp)
+		metadata := newHcsMetadata(consensusTimestamp, chain.lastOriginalSequenceProcessed, chain.lastResubmittedConfigSequence)
+		chain.WriteBlock(block, metadata)
+	}
+
+	logger.Debugf("[channel: %s] Creating isolated block for config message", chain.ChannelID())
+	chain.lastOriginalSequenceProcessed = newOriginalSequenceProcessed
+	chain.lastConsensusTimestamp = *curConsensusTimestamp
+	block := chain.CreateNextBlock([]*cb.Envelope{message})
+	consensusTimestamp := timestampProtoOrPanic(curConsensusTimestamp)
+	metadata := newHcsMetadata(consensusTimestamp, chain.lastOriginalSequenceProcessed, chain.lastResubmittedConfigSequence)
+	chain.WriteConfigBlock(block, metadata)
+	chain.timer = nil
+}
+
+func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts *time.Time, receivedSequence uint64) error {
+	curConfigSeq := chain.Sequence()
+	env := &cb.Envelope{}
+	if err := proto.Unmarshal(msg.Payload, env); err != nil {
+		// This shouldn't happen, it should be filtered at ingress
+		return errors.Errorf("failed to unmarshal payload of regular message because = %s", err)
+	}
+
+	logger.Debugf("[channel: %s] Processing regular Kafka message of type %s", chain.ChannelID(), msg.Class.String())
+
+	switch msg.Class {
+	case ab.HcsMessageRegular_NORMAL:
+		// This is a message that is re-validated and re-ordered
+		if msg.OriginalSeq != 0 {
+			logger.Debugf("[channel: %s] Received re-submitted normal message with original sequence %d", chain.ChannelID(), msg.OriginalSeq)
+
+			// But we've reprocessed it already
+			if msg.OriginalSeq <= chain.lastOriginalSequenceProcessed {
+				logger.Debugf(
+					"[channel: %s] OriginalSeq(%d) <= lastOriginalSequenceProcessed(%d), message has been consumed already, discard",
+					chain.ChannelID(), msg.OriginalSeq, chain.lastOriginalSequenceProcessed)
+				return nil
+			}
+
+			logger.Debugf(
+				"[channel: %s] OriginalSeq(%d) > lastOriginalSequenceProcessed(%d), "+
+					"this is the first time we receive this re-submitted normal message",
+				chain.ChannelID(), msg.OriginalSeq, chain.lastOriginalSequenceProcessed)
+
+			// In case we haven't reprocessed the message, there's no need to differentiate it from those
+			// messages that will be processed for the first time.
+		}
+
+		// The configuration has changed
+		if msg.ConfigSeq < curConfigSeq {
+			logger.Debugf("[channel: %s] config sequence has advanced since this normal message got validated, re-validating", chain.ChannelID())
+			configSeq, err := chain.ProcessNormalMsg(env)
+			if err != nil {
+				return fmt.Errorf("discarding bad normal message because = %s", err)
+			}
+
+			logger.Debugf("[channel: %s] Normal message is still valid, re-submit", chain.ChannelID())
+
+			// For both messages that are ordered for the first time or re-ordered, we set original offset
+			// to current received offset and re-order it.
+			if err := chain.order(env, configSeq, receivedSequence); err != nil {
+				return fmt.Errorf("error re-submitting normal message because = %s", err)
+			}
+
+			return nil
+		}
+
+		// Any messages coming in here may or may not have been re-validated
+		// and re-ordered, BUT they are definitely valid here
+
+		// advance lastOriginalOffsetProcessed if message is re-validated and re-ordered
+		newSeq := msg.OriginalSeq
+		if newSeq == 0 {
+			newSeq = chain.lastOriginalSequenceProcessed
+		}
+
+		chain.commitNormalMessage(env, ts, newSeq)
+
+	case ab.HcsMessageRegular_CONFIG:
+		// This is a message that is re-validated and re-ordered
+		if msg.OriginalSeq != 0 {
+			logger.Debugf("[channel: %s] Received re-submitted config message with original offset %d", chain.ChannelID(), msg.OriginalSeq)
+
+			// But we've reprocessed it already
+			if msg.OriginalSeq <= chain.lastOriginalSequenceProcessed {
+				logger.Debugf(
+					"[channel: %s] OriginalSeq(%d) <= lastOriginalSequenceProcessed(%d), message has been consumed already, discard",
+					chain.ChannelID(), msg.OriginalSeq, chain.lastOriginalSequenceProcessed)
+				return nil
+			}
+
+			logger.Debugf(
+				"[channel: %s] OriginalSeq(%d) > lastOriginalSequenceProcessed(%d), "+
+					"this is the first time we receive this re-submitted config message",
+				chain.ChannelID(), msg.OriginalSeq, chain.lastOriginalSequenceProcessed)
+
+			if msg.OriginalSeq == chain.lastResubmittedConfigSequence && // This is very last resubmitted config message
+				msg.ConfigSeq == curConfigSeq { // AND we don't need to resubmit it again
+				logger.Debugf("[channel: %s] Config message with original offset %d is the last in-flight resubmitted message"+
+					"and it does not require revalidation, unblock ingress messages now", chain.ChannelID(), msg.OriginalSeq)
+				chain.reprocessConfigComplete() // Therefore, we could finally unblock broadcast
+			}
+
+			// Somebody resubmitted message at offset X, whereas we didn't. This is due to non-determinism where
+			// that message was considered invalid by us during re-validation, however somebody else deemed it to
+			// be valid, and resubmitted it. We need to advance lastResubmittedConfigOffset in this case in order
+			// to enforce consistency across the network.
+			if chain.lastResubmittedConfigSequence < msg.OriginalSeq {
+				chain.lastResubmittedConfigSequence = msg.OriginalSeq
+			}
+		}
+
+		// The config sequence has advanced
+		if msg.ConfigSeq < curConfigSeq {
+			logger.Debugf("[channel: %s] Config sequence has advanced since this config message got validated, re-validating", chain.ChannelID())
+			configEnv, configSeq, err := chain.ProcessConfigMsg(env)
+			if err != nil {
+				return fmt.Errorf("rejecting config message because = %s", err)
+			}
+
+			// For both messages that are ordered for the first time or re-ordered, we set original offset
+			// to current received offset and re-order it.
+			if err := chain.configure(configEnv, configSeq, receivedSequence); err != nil {
+				return fmt.Errorf("error re-submitting config message because = %s", err)
+			}
+
+			logger.Debugf("[channel: %s] Resubmitted config message with sequence %d, block ingress messages", chain.ChannelID(), receivedSequence)
+			chain.lastResubmittedConfigSequence = receivedSequence // Keep track of last resubmitted message offset
+			chain.reprocessConfigPending()                     // Begin blocking ingress messages
+
+			return nil
+		}
+
+		// Any messages coming in here may or may not have been re-validated
+		// and re-ordered, BUT they are definitely valid here
+
+		// advance lastOriginalOffsetProcessed if message is re-validated and re-ordered
+		newSeq := msg.OriginalSeq
+		if newSeq == 0 {
+			newSeq = chain.lastOriginalSequenceProcessed
+		}
+
+		chain.commitConfigMessage(env, ts, newSeq)
+
+	default:
+		return errors.Errorf("unsupported regular kafka message type: %v", msg.Class.String())
+	}
+
+	return nil
+}
+
+func (chain *chainImpl) processTimeToCutMessage(msg *ab.HcsMessageTimeToCut, ts *time.Time, sequence uint64) error {
+	blockNumber := msg.GetBlockNumber()
+	if blockNumber == chain.lastCutBlockNumber+1 {
+		chain.timer = nil
+		batch := chain.BlockCutter().Cut()
+		if len(batch) == 0 {
+			return fmt.Errorf("bug, got correct time-to-cut message (block %d), " +
+				"but no pending transactions", blockNumber)
+		}
+		block := chain.CreateNextBlock(batch)
+		chain.lastConsensusTimestamp = *ts
+		chain.lastOriginalSequenceProcessed = sequence
+		consensusTimestamp := timestampProtoOrPanic(ts)
+		metadata := &ab.HcsMetadata{
+			LastConsensusTimestampPersisted: consensusTimestamp,
+			LastOriginalSequenceProcessed: chain.lastOriginalSequenceProcessed,
+			LastResubmittedConfigSequence: chain.lastResubmittedConfigSequence,
+		}
+		chain.WriteBlock(block, metadata)
+		logger.Debugf("[channel: %s] successfully cut block %d, triggered by time-to-cut",
+			chain.ChannelID(), blockNumber)
+	} else if blockNumber > chain.lastCutBlockNumber+1 {
+		return fmt.Errorf("discard larger time-to-cut message (%d) than expected (%d)",
+			blockNumber, chain.lastCutBlockNumber+1)
+	}
+	logger.Debugf("[channel: %s] ignore stale/late time-to-cut (block %d)", chain.ChannelID(), blockNumber)
+	return nil
+}
+
+func (chain *chainImpl) sendTimeToCut() error {
+	chain.timer = nil
+	msg := &ab.HcsMessage{
+		Type: &ab.HcsMessage_TimeToCut{
+			TimeToCut: &ab.HcsMessageTimeToCut{
+				BlockNumber: chain.lastCutBlockNumber+1,
+			},
+		},
+	}
+	if !chain.enqueue(msg) {
+		return errors.Errorf("[channel: %s] failed to send time-to-cut with block number %d",
+			chain.ChannelID(), chain.lastCutBlockNumber+1)
+	} else {
+		logger.Infof("[channel: %s] time to cut with block number %d sent to topic %v",
+			chain.ChannelID(), chain.lastCutBlockNumber+1, chain.topicId)
+	}
+	return nil
+}
+
+func setupTopicProducer(sharedHcsConfig *localconfig.Hcs) (*hedera.Client, error) {
+	var err error
+
+	network := make(map[string]hedera.AccountID, len(sharedHcsConfig.Nodes))
+	for address, id := range sharedHcsConfig.Nodes {
+		if network[address], err = hedera.AccountIDFromString(id); err != nil {
+			return nil, err
+		}
+	}
+	client := hedera.NewClient(network)
+
+	operator, err := hedera.AccountIDFromString(sharedHcsConfig.Operator.Id)
+	if err != nil {
+		return nil, fmt.Errorf("invalid operator account id %s", sharedHcsConfig.Operator.Id)
+	}
+
+	privateKeyConfig := &sharedHcsConfig.Operator.PrivateKey
+	var privateKey hedera.Ed25519PrivateKey
+	if privateKeyConfig.Enabled {
+		if privateKeyConfig.Type != "ed25519" {
+			return nil, fmt.Errorf("unsupported privatekey type %s for operator", privateKeyConfig.Type)
+		}
+		privateKey, err = hedera.Ed25519PrivateKeyFromString(privateKeyConfig.Key)
+		if err != nil {
+			return nil, errors.Errorf("failed to parse %s private key string: %s", privateKeyConfig.Type, err)
+		}
+	}
+
+	client.SetOperator(operator, privateKey)
+	return client, nil
+}
+
+func setupTopicConsumer(mirrorNodeAddress string, topicId string) (*hedera.MirrorClient, error) {
+	client, err := hedera.NewMirrorClient(mirrorNodeAddress)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mirror client with mirror node address %s", mirrorNodeAddress)
+	}
+
+	return &client, nil
+}
+
+func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset uint64) error {
+	marshaledEnv, err := protoutil.Marshal(env)
+	if err != nil {
+		return errors.Errorf("cannot enqueue, unable to marshal envelope: %s", err)
+	}
+	if !chain.enqueue(newNormalMessage(marshaledEnv, configSeq, originalOffset)) {
+		return errors.Errorf("cannot enqueue")
+	}
+	return nil
+}
+
+func (chain *chainImpl) encrypt(plain []byte) ([]byte, error) {
+	// TODO: AES encryption
+	return plain, nil
+}
+
+func (chain *chainImpl) decrypt(encrypted []byte) ([]byte, error) {
+	// TODO: AES decryption
+	return encrypted, nil
+}
+
+func (chain *chainImpl) configure(config *cb.Envelope, configSeq uint64, originalOffset uint64) error {
+	marshaledConfig, err := protoutil.Marshal(config)
+	if err != nil {
+		return errors.Errorf("unable to marshal config because %s", err)
+	}
+	if !chain.enqueue(newConfigMessage(marshaledConfig, configSeq, originalOffset)) {
+		return fmt.Errorf("cannot enqueue the config message")
+	}
+	return nil
+}
+
+func (chain *chainImpl) enqueue(message *ab.HcsMessage) bool {
+	logger.Debugf("[channel: %s] Enqueueing envelope...", chain.ChannelID())
+	select {
+	case <-chain.startChan: // The Start phase has completed
+		select {
+		case <-chain.haltChan: // The chain has been halted, stop here
+			logger.Warningf("[channel: %s] consenter for this channel has been halted", chain.ChannelID())
+			return false
+		default: // The post path
+			payload, err := protoutil.Marshal(message)
+			if err != nil {
+				logger.Errorf("[channel: %s] unable to marshal Kafka message because = %s", chain.ChannelID(), err)
+				return false
+			}
+			encrypted, err := chain.encrypt(payload)
+			if err != nil {
+				logger.Errorf("cannot enqueue, failed to encrypt message payload: %s", err)
+				return false
+			}
+			// TODO: always send resubmitted messages to the same node to ensure order
+			_, err = hedera.NewConsensusMessageSubmitTransaction().
+				SetTopicID(chain.topicId).
+				SetMessage(encrypted).
+				Execute(chain.topicProducer)
+			if err != nil {
+				logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
+				return false
+			}
+			logger.Debugf("[channel: %s] Envelope enqueued successfully", chain.ChannelID())
+			return true
+		}
+	default: // Not ready yet
+		logger.Warningf("[channel: %s] Will not enqueue, consenter for this channel hasn't started yet", chain.ChannelID())
+		return false
+	}
+}
+
+func newConfigMessage(config []byte, configSeq uint64, originalSeq uint64) *ab.HcsMessage {
+	return &ab.HcsMessage{
+		Type: &ab.HcsMessage_Regular{
+			Regular: &ab.HcsMessageRegular{
+				Payload:     config,
+				ConfigSeq:   configSeq,
+				Class:       ab.HcsMessageRegular_CONFIG,
+				OriginalSeq: originalSeq,
+			},
+		},
+	}
+}
+
+func newNormalMessage(config []byte, configSeq uint64, originalSeq uint64) *ab.HcsMessage {
+	return &ab.HcsMessage{
+		Type: &ab.HcsMessage_Regular{
+			Regular: &ab.HcsMessageRegular{
+				Payload:     config,
+				ConfigSeq:   configSeq,
+				Class:       ab.HcsMessageRegular_NORMAL,
+				OriginalSeq: originalSeq,
+			},
+		},
+	}
+}
+
+func newHcsMetadata(
+	lastConsensusTimestampPersisted *timestamp.Timestamp,
+	lastOriginalSequenceProcessed uint64,
+	lastResubmittedConfigSequence uint64) *ab.HcsMetadata {
+	return &ab.HcsMetadata{
+		LastConsensusTimestampPersisted: lastConsensusTimestampPersisted,
+		LastOriginalSequenceProcessed:   lastOriginalSequenceProcessed,
+		LastResubmittedConfigSequence:   lastResubmittedConfigSequence,
+	}
+}
+
+func timestampProtoOrPanic(t *time.Time) *timestamp.Timestamp {
+	if ts, err := ptypes.TimestampProto(*t); err != nil {
+		logger.Panicf("failed to convert time.Time %v to google.protobuf.Timestamp = %v", err)
+		return nil
+	} else {
+		return ts
+	}
+}
+
+func (chain *chainImpl) doneReprocessing() <-chan struct{} {
+	chain.doneReprocessingMutex.Lock()
+	defer chain.doneReprocessingMutex.Unlock()
+	return chain.doneReprocessingMsgInFlight
+}
+
+func (chain *chainImpl) reprocessConfigComplete() {
+	chain.doneReprocessingMutex.Lock()
+	defer chain.doneReprocessingMutex.Unlock()
+	close(chain.doneReprocessingMsgInFlight)
+}
+
+func (chain *chainImpl) reprocessConfigPending() {
+	chain.doneReprocessingMutex.Lock()
+	defer chain.doneReprocessingMutex.Unlock()
+	chain.doneReprocessingMsgInFlight = make(chan struct{})
+}
