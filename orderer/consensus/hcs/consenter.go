@@ -1,4 +1,6 @@
-// TODO copyright and license
+/*
+SPDX-License-Identifier: Apache-2.0
+*/
 
 package hcs
 
@@ -15,6 +17,7 @@ var logger = flogging.MustGetLogger("orderer.consensus.hcs")
 
 // New creates a HCS-based consenter. Called by orderer's main.go.
 func New(config localconfig.Hcs) consensus.Consenter {
+	logger.Debug("creating HCS-based consenter...")
 	return &consenterImpl{
 		sharedHcsConfigVal: &config,
 	}

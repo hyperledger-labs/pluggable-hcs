@@ -1,9 +1,12 @@
-// TODO copyright and license
+/*
+SPDX-License-Identifier: Apache-2.0
+*/
 
 package hcs
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -19,6 +22,8 @@ import (
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
 )
+
+var unixEpoch = time.Unix(0, 0)
 
 func getStateFromMetadata(metadataValue []byte, chainID string) (time.Time, uint64, uint64) {
 	if metadataValue != nil {
@@ -36,7 +41,7 @@ func getStateFromMetadata(metadataValue []byte, chainID string) (time.Time, uint
 	}
 
 	// defaults
-	return time.Time{}, 0, 0
+	return unixEpoch, 0, 0
 }
 
 func newChain(
@@ -47,8 +52,8 @@ func newChain(
 	lastResubmittedConfigSequence uint64,
 ) (*chainImpl, error) {
 	lastCutBlockNumber := support.Height() - 1
-	logger.Infof("[channel: %s] starting chain with last persisted consensus timestamp %v and" +
-		"last recorded block [%d]", support.ChannelID(), lastConsensusTimestampPersisted, lastCutBlockNumber)
+	logger.Infof("[channel: %s] starting chain with last persisted consensus timestamp %d and " +
+		"last recorded block [%d]", support.ChannelID(), lastConsensusTimestampPersisted.UnixNano(), lastCutBlockNumber)
 
 	doneReprocessingMsgInFlight := make(chan struct{})
 	// In either one of following cases, we should unblock ingress messages:
@@ -74,6 +79,7 @@ func newChain(
 		haltChan:                        make(chan struct{}),
 		startChan:                       make(chan struct{}),
 		doneReprocessingMsgInFlight:     doneReprocessingMsgInFlight,
+		network:                         make(map[string]hedera.AccountID, len(consenter.sharedHcsConfig().Nodes)),
 	}, nil
 }
 
@@ -102,8 +108,10 @@ type chainImpl struct {
 	// timer control the batch timeout of cutting pending messages into a block
 	timer <-chan time.Time
 
+	network                 map[string]hedera.AccountID
 	topicId                 hedera.ConsensusTopicID
 	topicProducer           *hedera.Client
+	singleNodeTopicProducer *hedera.Client
 	topicConsumer           *hedera.MirrorClient
 	topicSubscriptionHandle *hedera.MirrorSubscriptionHandle
 
@@ -175,7 +183,7 @@ func startThread(chain *chainImpl) {
 	var err error
 
 	// create topicProducer
-	chain.topicProducer, err = setupTopicProducer(chain.consenter.sharedHcsConfig())
+	chain.topicProducer, chain.singleNodeTopicProducer, err = setupTopicProducer(chain.consenter.sharedHcsConfig(), chain.network)
 	if err != nil {
 		logger.Panicf("[channel: %s] failed to set up topic producer, %s", err)
 	}
@@ -190,8 +198,8 @@ func startThread(chain *chainImpl) {
 	// subscribe to the hcs topic
 	chain.topicId, err = hedera.TopicIDFromString(chain.SharedConfig().Hcs().TopicId)
 	startTime := chain.lastConsensusTimestampPersisted
-	if !startTime.IsZero() {
-		startTime = startTime.Add(1)
+	if !startTime.Equal(unixEpoch) {
+		startTime = startTime.Add(time.Nanosecond)
 	}
 	handle, err := hedera.NewMirrorConsensusTopicQuery().
 		SetTopicID(chain.topicId).
@@ -268,9 +276,14 @@ func (chain *chainImpl) processMessages() error {
 			}
 			switch msg.Type.(type) {
 			case *ab.HcsMessage_Regular:
-				chain.processRegularMessage(msg.GetRegular(), &resp.ConsensusTimeStamp, resp.SequenceNumber)
+				if err := chain.processRegularMessage(msg.GetRegular(), &resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
+					logger.Warningf("[channel: %s] error when processing incoming message of type REGULAR = %s", chain.ChannelID(), err)
+				}
 			case *ab.HcsMessage_TimeToCut:
-				chain.processTimeToCutMessage(msg.GetTimeToCut(), &resp.ConsensusTimeStamp, resp.SequenceNumber)
+				if err := chain.processTimeToCutMessage(msg.GetTimeToCut(), &resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
+					logger.Critical("[channel: %s] consenter for channel exiting, %s", chain.ChannelID(), err)
+					return err
+				}
 			}
 		case <-chain.timer:
 			if err := chain.sendTimeToCut(); err != nil {
@@ -382,7 +395,7 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts *tim
 		return errors.Errorf("failed to unmarshal payload of regular message because = %s", err)
 	}
 
-	logger.Debugf("[channel: %s] Processing regular Kafka message of type %s", chain.ChannelID(), msg.Class.String())
+	logger.Debugf("[channel: %s] Processing regular HCS message of type %s", chain.ChannelID(), msg.Class.String())
 
 	switch msg.Class {
 	case ab.HcsMessageRegular_NORMAL:
@@ -504,7 +517,7 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts *tim
 		chain.commitConfigMessage(env, ts, newSeq)
 
 	default:
-		return errors.Errorf("unsupported regular kafka message type: %v", msg.Class.String())
+		return errors.Errorf("unsupported regular HCS message type: %v", msg.Class.String())
 	}
 
 	return nil
@@ -548,7 +561,7 @@ func (chain *chainImpl) sendTimeToCut() error {
 			},
 		},
 	}
-	if !chain.enqueue(msg) {
+	if !chain.enqueue(msg, false) {
 		return errors.Errorf("[channel: %s] failed to send time-to-cut with block number %d",
 			chain.ChannelID(), chain.lastCutBlockNumber+1)
 	} else {
@@ -558,36 +571,51 @@ func (chain *chainImpl) sendTimeToCut() error {
 	return nil
 }
 
-func setupTopicProducer(sharedHcsConfig *localconfig.Hcs) (*hedera.Client, error) {
+func setupTopicProducer(sharedHcsConfig *localconfig.Hcs, network map[string]hedera.AccountID) (*hedera.Client, *hedera.Client, error) {
 	var err error
-
-	network := make(map[string]hedera.AccountID, len(sharedHcsConfig.Nodes))
 	for address, id := range sharedHcsConfig.Nodes {
 		if network[address], err = hedera.AccountIDFromString(id); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	client := hedera.NewClient(network)
 
 	operator, err := hedera.AccountIDFromString(sharedHcsConfig.Operator.Id)
 	if err != nil {
-		return nil, fmt.Errorf("invalid operator account id %s", sharedHcsConfig.Operator.Id)
+		return nil, nil, fmt.Errorf("invalid operator account id %s", sharedHcsConfig.Operator.Id)
 	}
 
 	privateKeyConfig := &sharedHcsConfig.Operator.PrivateKey
 	var privateKey hedera.Ed25519PrivateKey
 	if privateKeyConfig.Enabled {
 		if privateKeyConfig.Type != "ed25519" {
-			return nil, fmt.Errorf("unsupported privatekey type %s for operator", privateKeyConfig.Type)
+			return nil, nil, fmt.Errorf("unsupported privatekey type %s for operator", privateKeyConfig.Type)
 		}
 		privateKey, err = hedera.Ed25519PrivateKeyFromString(privateKeyConfig.Key)
 		if err != nil {
-			return nil, errors.Errorf("failed to parse %s private key string: %s", privateKeyConfig.Type, err)
+			return nil, nil, errors.Errorf("failed to parse %s private key string: %s", privateKeyConfig.Type, err)
 		}
 	}
 
 	client.SetOperator(operator, privateKey)
-	return client, nil
+
+	address, id := getRandomNode(network)
+	singleNetwork := map[string]hedera.AccountID{address: id}
+	singleNodeClient := hedera.NewClient(singleNetwork)
+	client.SetOperator(operator, privateKey)
+
+	return client, singleNodeClient, nil
+}
+
+func getRandomNode(network map[string]hedera.AccountID) (string, hedera.AccountID) {
+	index := rand.Intn(len(network))
+	for address, id := range network {
+		if index == 0 {
+			return address, id
+		}
+		index--
+	}
+	return "", hedera.AccountID{}
 }
 
 func setupTopicConsumer(mirrorNodeAddress string, topicId string) (*hedera.MirrorClient, error) {
@@ -604,7 +632,7 @@ func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset
 	if err != nil {
 		return errors.Errorf("cannot enqueue, unable to marshal envelope: %s", err)
 	}
-	if !chain.enqueue(newNormalMessage(marshaledEnv, configSeq, originalOffset)) {
+	if !chain.enqueue(newNormalMessage(marshaledEnv, configSeq, originalOffset), originalOffset != 0) {
 		return errors.Errorf("cannot enqueue")
 	}
 	return nil
@@ -625,13 +653,13 @@ func (chain *chainImpl) configure(config *cb.Envelope, configSeq uint64, origina
 	if err != nil {
 		return errors.Errorf("unable to marshal config because %s", err)
 	}
-	if !chain.enqueue(newConfigMessage(marshaledConfig, configSeq, originalOffset)) {
+	if !chain.enqueue(newConfigMessage(marshaledConfig, configSeq, originalOffset), originalOffset != 0) {
 		return fmt.Errorf("cannot enqueue the config message")
 	}
 	return nil
 }
 
-func (chain *chainImpl) enqueue(message *ab.HcsMessage) bool {
+func (chain *chainImpl) enqueue(message *ab.HcsMessage, isResubmission bool) bool {
 	logger.Debugf("[channel: %s] Enqueueing envelope...", chain.ChannelID())
 	select {
 	case <-chain.startChan: // The Start phase has completed
@@ -642,7 +670,7 @@ func (chain *chainImpl) enqueue(message *ab.HcsMessage) bool {
 		default: // The post path
 			payload, err := protoutil.Marshal(message)
 			if err != nil {
-				logger.Errorf("[channel: %s] unable to marshal Kafka message because = %s", chain.ChannelID(), err)
+				logger.Errorf("[channel: %s] unable to marshal HCS message because = %s", chain.ChannelID(), err)
 				return false
 			}
 			encrypted, err := chain.encrypt(payload)
@@ -650,14 +678,24 @@ func (chain *chainImpl) enqueue(message *ab.HcsMessage) bool {
 				logger.Errorf("cannot enqueue, failed to encrypt message payload: %s", err)
 				return false
 			}
-			// TODO: always send resubmitted messages to the same node to ensure order
-			_, err = hedera.NewConsensusMessageSubmitTransaction().
-				SetTopicID(chain.topicId).
-				SetMessage(encrypted).
-				Execute(chain.topicProducer)
-			if err != nil {
-				logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
-				return false
+			if !isResubmission {
+				_, err = hedera.NewConsensusMessageSubmitTransaction().
+					SetTopicID(chain.topicId).
+					SetMessage(encrypted).
+					Execute(chain.topicProducer)
+				if err != nil {
+					logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
+					return false
+				}
+			} else {
+				_, err = hedera.NewConsensusMessageSubmitTransaction().
+					SetTopicID(chain.topicId).
+					SetMessage(encrypted).
+					Execute(chain.singleNodeTopicProducer)
+				if err != nil {
+					logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
+					return false
+				}
 			}
 			logger.Debugf("[channel: %s] Envelope enqueued successfully", chain.ChannelID())
 			return true
