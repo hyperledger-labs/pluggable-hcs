@@ -133,6 +133,8 @@ func (chain *chainImpl) WaitReady() error {
 		select {
 		case <-chain.haltChan:
 			return fmt.Errorf("consenter for this channel has been halted")
+		case <-chain.doneReprocessing(): // Block waiting for all re-submitted messages to be reprocessed
+			return nil
 		}
 	default:
 		return fmt.Errorf("consenter has not completed bootstraping; try again later")
@@ -189,14 +191,18 @@ func startThread(chain *chainImpl) {
 	}
 
 	// create topicConsumer and start subscription
-	chain.topicConsumer, err = setupTopicConsumer(chain.consenter.sharedHcsConfig().MirrorNodeAddress,
-		chain.SharedConfig().Hcs().TopicId)
+	chain.topicConsumer, err = setupTopicConsumer(chain.consenter.sharedHcsConfig().MirrorNodeAddress)
 	if err != nil {
 		logger.Panicf("[channel: %s] failed to set up topic consumer, %s", err)
 	}
 
 	// subscribe to the hcs topic
-	chain.topicId, err = hedera.TopicIDFromString(chain.SharedConfig().Hcs().TopicId)
+	// hack, use channel id as the topic id, SKIP the first character, it has to be a letter to pass
+	// validation
+	chain.topicId, err = hedera.TopicIDFromString(chain.ChannelID()[1:])
+	if err != nil {
+		logger.Panicf("[channel: %s] invalid HCS topic ID %s", chain.ChannelID(), chain.ChannelID()[1:])
+	}
 	startTime := chain.lastConsensusTimestampPersisted
 	if !startTime.Equal(unixEpoch) {
 		startTime = startTime.Add(time.Nanosecond)
@@ -214,8 +220,8 @@ func startThread(chain *chainImpl) {
 				close(chain.consensusRespChan)
 			})
 	if err != nil {
-		logger.Panicf("[channel: %s] failed to subscribe to hcs topic %s", chain.ChannelID(),
-			chain.SharedConfig().Hcs().TopicId)
+		logger.Panicf("[channel: %s] failed to subscribe to hcs topic %v", chain.ChannelID(),
+			chain.topicId)
 	}
 	chain.topicSubscriptionHandle = &handle
 
@@ -618,7 +624,7 @@ func getRandomNode(network map[string]hedera.AccountID) (string, hedera.AccountI
 	return "", hedera.AccountID{}
 }
 
-func setupTopicConsumer(mirrorNodeAddress string, topicId string) (*hedera.MirrorClient, error) {
+func setupTopicConsumer(mirrorNodeAddress string) (*hedera.MirrorClient, error) {
 	client, err := hedera.NewMirrorClient(mirrorNodeAddress)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create mirror client with mirror node address %s", mirrorNodeAddress)
