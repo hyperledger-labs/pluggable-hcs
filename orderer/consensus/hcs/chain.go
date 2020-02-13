@@ -5,6 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 package hcs
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -25,7 +27,7 @@ import (
 
 var unixEpoch = time.Unix(0, 0)
 
-func getStateFromMetadata(metadataValue []byte, chainID string) (time.Time, uint64, uint64) {
+func getStateFromMetadata(metadataValue []byte, chainID string) (time.Time, uint64, uint64, uint64) {
 	if metadataValue != nil {
 		hcsMetadata := &ab.HcsMetadata{}
 		if err := proto.Unmarshal(metadataValue, hcsMetadata); err != nil {
@@ -37,11 +39,23 @@ func getStateFromMetadata(metadataValue []byte, chainID string) (time.Time, uint
 			logger.Panicf("[channel: %s] Ledger may be corrupted: "+
 				"cannot unmarshal orderer metadata in most recent block, %v", chainID, err)
 		}
-		return timestamp, hcsMetadata.GetLastOriginalSequenceProcessed(), hcsMetadata.GetLastResubmittedConfigSequence()
+		return timestamp,
+			hcsMetadata.GetLastOriginalSequenceProcessed(),
+			hcsMetadata.GetLastResubmittedConfigSequence(),
+			hcsMetadata.GetLastFragmentId()
 	}
 
 	// defaults
-	return unixEpoch, 0, 0
+	return unixEpoch, 0, 0, 0
+}
+
+func makeRandomKey(prefix string) string {
+	data := make([]byte, 128)
+	rand.Seed(time.Now().UnixNano())
+	rand.Read(data)
+	data = append(data, []byte(prefix)...)
+	sum := md5.Sum(data)
+	return hex.EncodeToString(sum[:])[0:16]
 }
 
 func newChain(
@@ -50,6 +64,7 @@ func newChain(
 	lastConsensusTimestampPersisted time.Time,
 	lastOriginalSequenceProcessed uint64,
 	lastResubmittedConfigSequence uint64,
+	lastFragmentId uint64,
 ) (*chainImpl, error) {
 	lastCutBlockNumber := support.Height() - 1
 	logger.Infof("[channel: %s] starting chain with last persisted consensus timestamp %d and " +
@@ -75,11 +90,16 @@ func newChain(
 		lastConsensusTimestamp:          lastConsensusTimestampPersisted,
 		lastOriginalSequenceProcessed:   lastOriginalSequenceProcessed,
 		lastResubmittedConfigSequence:   lastResubmittedConfigSequence,
+		lastFragmentId:                  lastFragmentId,
 		lastCutBlockNumber:              lastCutBlockNumber,
 		haltChan:                        make(chan struct{}),
 		startChan:                       make(chan struct{}),
 		doneReprocessingMsgInFlight:     doneReprocessingMsgInFlight,
 		network:                         make(map[string]hedera.AccountID, len(consenter.sharedHcsConfig().Nodes)),
+		consensusRespChan:               make(chan *hedera.MirrorConsensusTopicResponse),
+		consensusErrorChan:              make(chan error),
+		fragmenter:                      newFragmentSupport(),
+		fragmentKey:                     makeRandomKey(consenter.sharedHcsConfig().Operator.Id),
 	}, nil
 }
 
@@ -91,6 +111,7 @@ type chainImpl struct {
 	lastConsensusTimestamp          time.Time
 	lastOriginalSequenceProcessed   uint64
 	lastResubmittedConfigSequence   uint64
+	lastFragmentId                  uint64
 	lastCutBlockNumber              uint64
 
 	// mutex used when changing the doneReprocessingMsgInFlight
@@ -102,9 +123,9 @@ type chainImpl struct {
 	// an open, unbuffered channel
 	errorChan chan struct{}
 	// when a Halt() request comes, close the channel.
-	haltChan chan struct{}
+	haltChan               chan struct{}
 	doneProcessingMessages chan struct{}
-	startChan chan struct{}
+	startChan              chan struct{}
 	// timer control the batch timeout of cutting pending messages into a block
 	timer <-chan time.Time
 
@@ -117,6 +138,9 @@ type chainImpl struct {
 
 	consensusRespChan  chan *hedera.MirrorConsensusTopicResponse
 	consensusErrorChan chan error
+
+	fragmenter  *fragmentSupport
+	fragmentKey string
 }
 
 func (chain *chainImpl) Order(env *common.Envelope, configSeq uint64) error {
@@ -187,14 +211,16 @@ func startThread(chain *chainImpl) {
 	// create topicProducer
 	chain.topicProducer, chain.singleNodeTopicProducer, err = setupTopicProducer(chain.consenter.sharedHcsConfig(), chain.network)
 	if err != nil {
-		logger.Panicf("[channel: %s] failed to set up topic producer, %s", err)
+		logger.Panicf("[channel: %s] failed to set up topic producer, %s", chain.ChannelID(), err)
 	}
 
 	// create topicConsumer and start subscription
 	chain.topicConsumer, err = setupTopicConsumer(chain.consenter.sharedHcsConfig().MirrorNodeAddress)
 	if err != nil {
-		logger.Panicf("[channel: %s] failed to set up topic consumer, %s", err)
+		logger.Panicf("[channel: %s] failed to set up topic consumer, %s", chain.ChannelID(), err)
 	}
+	logger.Debugf("[channel: %s] created topic consumer with mirror node address %s",
+		chain.ChannelID(), chain.consenter.sharedHcsConfig().MirrorNodeAddress)
 
 	// subscribe to the hcs topic
 	// hack, use channel id as the topic id, SKIP the first character, it has to be a letter to pass
@@ -213,9 +239,11 @@ func startThread(chain *chainImpl) {
 		Subscribe(
 			*chain.topicConsumer,
 			func(resp hedera.MirrorConsensusTopicResponse) {
+				logger.Debugf("[channel: %s] received consensus response, sequence = %d", chain.ChannelID(), resp.SequenceNumber)
 				chain.consensusRespChan <- &resp
 			},
 			func(err error) {
+				logger.Debugf("[channel: %s] received error when handling consensus subscription, %v", chain.ChannelID(), err)
 				chain.consensusErrorChan <- err
 				close(chain.consensusRespChan)
 			})
@@ -241,6 +269,16 @@ func (chain *chainImpl) processMessages() error {
 		close(chain.doneProcessingMessages)
 	}()
 
+	defer func() {
+		select {
+		case <-chain.errorChan: // If already closed, don't do anything
+		default:
+			close(chain.errorChan)
+		}
+	}()
+
+	msg := new(ab.HcsMessage)
+	logger.Debugf("[channel: %s] going into the processMessages loop", chain.ChannelID())
 	for {
 		select {
 		case <-chain.haltChan:
@@ -256,10 +294,9 @@ func (chain *chainImpl) processMessages() error {
 			}
 		case resp, ok := <-chain.consensusRespChan:
 			if !ok {
-				logger.Criticalf("[channel: %s] hcs topic subscription closed")
+				logger.Criticalf("[channel: %s] hcs topic subscription closed", chain.ChannelID())
 				return nil
 			}
-
 			select {
 			case <-chain.errorChan:
 				chain.errorChan = make(chan struct{}) // make a new one, make the chain available again
@@ -267,18 +304,27 @@ func (chain *chainImpl) processMessages() error {
 			default:
 			}
 
-			var msg *ab.HcsMessage
-			plain, err := chain.decrypt(resp.Message)
+			fragment := new(ab.HcsMessageFragment)
+			if err := proto.Unmarshal(resp.Message, fragment); err != nil {
+				logger.Panicf("[channel: %s] failed to unmarshal ordered message into HCS fragment", chain.ChannelID())
+			}
+			encrypted := chain.fragmenter.reassemble(fragment)
+			if encrypted == nil {
+				logger.Debugf("need more fragments to reassemble the HCS message")
+				continue
+			}
+			logger.Debugf("[channel: %s] reassembled a message of %d bytes", chain.ChannelID(), len(encrypted))
+			plain, err := chain.decrypt(encrypted)
 			if err != nil {
 				logger.Errorf("failed to decrypt message payload in MirrorConsensusTopicResponse")
 				continue
 			}
 			if err := proto.Unmarshal(plain, msg); err != nil {
-				logger.Critical("[channel: %s] unable to unmarshal ordered message")
+				logger.Critical("[channel: %s] unable to unmarshal ordered message", chain.ChannelID())
 				continue
 			} else {
-				logger.Debugf("[channel %s] successfully unmarshalled ordered message," +
-					"consensus timestamp %v", resp.ConsensusTimeStamp)
+				logger.Debugf("[channel %s] successfully unmarshalled ordered message, " +
+					"consensus timestamp %v", chain.ChannelID(), resp.ConsensusTimeStamp)
 			}
 			switch msg.Type.(type) {
 			case *ab.HcsMessage_Regular:
@@ -352,7 +398,11 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTi
 	// Commit the first block
 	block := chain.CreateNextBlock(batches[0])
 	consensusTimestamp := timestampProtoOrPanic(curConsensusTimestamp)
-	metadata := newHcsMetadata(consensusTimestamp, chain.lastOriginalSequenceProcessed, chain.lastResubmittedConfigSequence)
+	metadata := newHcsMetadata(
+		consensusTimestamp,
+		chain.lastOriginalSequenceProcessed,
+		chain.lastResubmittedConfigSequence,
+		chain.lastFragmentId)
 	chain.WriteBlock(block, metadata)
 	logger.Debugf("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus timestamp" +
 		"is now %v", chain.ChannelID(), chain.lastCutBlockNumber, *consensusTimestamp)
@@ -364,7 +414,11 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTi
 
 		block := chain.CreateNextBlock(batches[1])
 		consensusTimestamp = timestampProtoOrPanic(curConsensusTimestamp)
-		metadata := newHcsMetadata(consensusTimestamp, chain.lastOriginalSequenceProcessed, chain.lastResubmittedConfigSequence)
+		metadata := newHcsMetadata(
+			consensusTimestamp,
+			chain.lastOriginalSequenceProcessed,
+			chain.lastResubmittedConfigSequence,
+			chain.lastFragmentId)
 		chain.WriteBlock(block, metadata)
 		logger.Debugf("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus" +
 			"timestamp is now %v", chain.ChannelID(), chain.lastCutBlockNumber, *consensusTimestamp)
@@ -379,7 +433,11 @@ func (chain *chainImpl) commitConfigMessage(message *cb.Envelope, curConsensusTi
 		logger.Debugf("[channel: %s] Cut pending messages into block", chain.ChannelID())
 		block := chain.CreateNextBlock(batch)
 		consensusTimestamp := timestampProtoOrPanic(&chain.lastConsensusTimestamp)
-		metadata := newHcsMetadata(consensusTimestamp, chain.lastOriginalSequenceProcessed, chain.lastResubmittedConfigSequence)
+		metadata := newHcsMetadata(
+			consensusTimestamp,
+			chain.lastOriginalSequenceProcessed,
+			chain.lastResubmittedConfigSequence,
+			chain.lastFragmentId)
 		chain.WriteBlock(block, metadata)
 	}
 
@@ -388,7 +446,11 @@ func (chain *chainImpl) commitConfigMessage(message *cb.Envelope, curConsensusTi
 	chain.lastConsensusTimestamp = *curConsensusTimestamp
 	block := chain.CreateNextBlock([]*cb.Envelope{message})
 	consensusTimestamp := timestampProtoOrPanic(curConsensusTimestamp)
-	metadata := newHcsMetadata(consensusTimestamp, chain.lastOriginalSequenceProcessed, chain.lastResubmittedConfigSequence)
+	metadata := newHcsMetadata(
+		consensusTimestamp,
+		chain.lastOriginalSequenceProcessed,
+		chain.lastResubmittedConfigSequence,
+		chain.lastFragmentId)
 	chain.WriteConfigBlock(block, metadata)
 	chain.timer = nil
 }
@@ -681,27 +743,36 @@ func (chain *chainImpl) enqueue(message *ab.HcsMessage, isResubmission bool) boo
 			}
 			encrypted, err := chain.encrypt(payload)
 			if err != nil {
-				logger.Errorf("cannot enqueue, failed to encrypt message payload: %s", err)
+				logger.Errorf("[channel: %s]cannot enqueue, failed to encrypt message payload: %s", chain.ChannelID(), err)
 				return false
 			}
-			if !isResubmission {
-				_, err = hedera.NewConsensusMessageSubmitTransaction().
-					SetTopicID(chain.topicId).
-					SetMessage(encrypted).
-					Execute(chain.topicProducer)
-				if err != nil {
-					logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
-					return false
+
+			fragments := chain.fragmenter.makeFragments(encrypted, chain.fragmentKey, chain.lastFragmentId)
+			chain.lastFragmentId++
+			logger.Debugf("[channel: %s] the payload of %d bytes is cut into %d fragments",
+				chain.ChannelID(), len(encrypted), len(fragments))
+			for _, fragment := range fragments {
+				data := protoutil.MarshalOrPanic(fragment)
+				if !isResubmission {
+					_, err = hedera.NewConsensusMessageSubmitTransaction().
+						SetTopicID(chain.topicId).
+						SetMessage(data).
+						Execute(chain.topicProducer)
+					if err != nil {
+						logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
+						return false
+					}
+				} else {
+					_, err = hedera.NewConsensusMessageSubmitTransaction().
+						SetTopicID(chain.topicId).
+						SetMessage(data).
+						Execute(chain.singleNodeTopicProducer)
+					if err != nil {
+						logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
+						return false
+					}
 				}
-			} else {
-				_, err = hedera.NewConsensusMessageSubmitTransaction().
-					SetTopicID(chain.topicId).
-					SetMessage(encrypted).
-					Execute(chain.singleNodeTopicProducer)
-				if err != nil {
-					logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
-					return false
-				}
+				logger.Debugf("[channel: %s] %d fragment of id %d sent successfully", chain.ChannelID(), fragment.Sequence, fragment.FragmentId)
 			}
 			logger.Debugf("[channel: %s] Envelope enqueued successfully", chain.ChannelID())
 			return true
@@ -741,11 +812,13 @@ func newNormalMessage(config []byte, configSeq uint64, originalSeq uint64) *ab.H
 func newHcsMetadata(
 	lastConsensusTimestampPersisted *timestamp.Timestamp,
 	lastOriginalSequenceProcessed uint64,
-	lastResubmittedConfigSequence uint64) *ab.HcsMetadata {
+	lastResubmittedConfigSequence uint64,
+	lastFragmentId uint64) *ab.HcsMetadata {
 	return &ab.HcsMetadata{
 		LastConsensusTimestampPersisted: lastConsensusTimestampPersisted,
 		LastOriginalSequenceProcessed:   lastOriginalSequenceProcessed,
 		LastResubmittedConfigSequence:   lastResubmittedConfigSequence,
+		LastFragmentId:                  lastFragmentId,
 	}
 }
 
