@@ -5,9 +5,14 @@ SPDX-License-Identifier: Apache-2.0
 package hcs
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/md5"
+	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"math/rand"
 	"sync"
 	"time"
@@ -100,6 +105,7 @@ func newChain(
 		consensusErrorChan:              make(chan error),
 		fragmenter:                      newFragmentSupport(),
 		fragmentKey:                     makeRandomKey(consenter.sharedHcsConfig().Operator.Id),
+		gcmCipher:                       makeGCMCipher(),
 	}, nil
 }
 
@@ -141,6 +147,8 @@ type chainImpl struct {
 
 	fragmenter  *fragmentSupport
 	fragmentKey string
+
+	gcmCipher   cipher.AEAD
 }
 
 func (chain *chainImpl) Order(env *common.Envelope, configSeq uint64) error {
@@ -316,7 +324,8 @@ func (chain *chainImpl) processMessages() error {
 			logger.Debugf("[channel: %s] reassembled a message of %d bytes", chain.ChannelID(), len(encrypted))
 			plain, err := chain.decrypt(encrypted)
 			if err != nil {
-				logger.Errorf("failed to decrypt message payload in MirrorConsensusTopicResponse")
+				logger.Errorf("[channel: %s] failed to decrypt message payload in MirrorConsensusTopicResponse, %v",
+					chain.ChannelID(), err)
 				continue
 			}
 			if err := proto.Unmarshal(plain, msg); err != nil {
@@ -706,14 +715,46 @@ func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset
 	return nil
 }
 
-func (chain *chainImpl) encrypt(plain []byte) ([]byte, error) {
-	// TODO: AES encryption
-	return plain, nil
+// just for PoC
+func makeGCMCipher() cipher.AEAD {
+	filename := "/var/hyperledger/fabric/orderer/aes.key"
+	data, err := ioutil.ReadFile(filename)
+	if err != nil {
+		logger.Panicf("failed to read file: %s, err = %v", filename, err)
+	}
+
+	block, err := aes.NewCipher(data)
+	if err != nil {
+		logger.Panicf("failed to create the AES block cipher, err = %v", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		logger.Panicf("failed to create the GCM cipehr, err = %v", err)
+	}
+
+	return gcm
 }
 
-func (chain *chainImpl) decrypt(encrypted []byte) ([]byte, error) {
-	// TODO: AES decryption
-	return encrypted, nil
+func (chain *chainImpl) encrypt(plaintext []byte) ([]byte, error) {
+	nonce := make([]byte, chain.gcmCipher.NonceSize())
+	if _, err := io.ReadFull(crand.Reader, nonce); err != nil {
+		logger.Criticalf("failed to read nonce from secure random source")
+		return nil, err
+	}
+
+	ciphertext := chain.gcmCipher.Seal(nil, nonce, plaintext, nil)
+	return append(nonce, ciphertext...), nil
+}
+
+func (chain *chainImpl) decrypt(ciphertext []byte) ([]byte, error) {
+	nonce := ciphertext[0:chain.gcmCipher.NonceSize()]
+	plaintext, err := chain.gcmCipher.Open(nil, nonce, ciphertext[chain.gcmCipher.NonceSize():], nil)
+	if err != nil {
+		logger.Critical("failed to decrypt ciphertext")
+		return nil, err
+	}
+	return plaintext, nil
 }
 
 func (chain *chainImpl) configure(config *cb.Envelope, configSeq uint64, originalOffset uint64) error {
@@ -743,7 +784,7 @@ func (chain *chainImpl) enqueue(message *ab.HcsMessage, isResubmission bool) boo
 			}
 			encrypted, err := chain.encrypt(payload)
 			if err != nil {
-				logger.Errorf("[channel: %s]cannot enqueue, failed to encrypt message payload: %s", chain.ChannelID(), err)
+				logger.Errorf("[channel: %s]cannot enqueue, failed to encrypt message payload: %v", chain.ChannelID(), err)
 				return false
 			}
 
