@@ -152,10 +152,14 @@ type chainImpl struct {
 }
 
 func (chain *chainImpl) Order(env *common.Envelope, configSeq uint64) error {
+	logger.Debugf("[channel: %s] begin processing of a new normal tx with config sequence %d",
+		chain.ChannelID(), configSeq)
 	return chain.order(env, configSeq, 0)
 }
 
 func (chain *chainImpl) Configure(config *common.Envelope, configSeq uint64) error {
+	logger.Debugf("[channel: %s] begin processing of a new config tx with config sequence %d",
+		chain.ChannelID(), configSeq)
 	return chain.configure(config, configSeq, 0)
 }
 
@@ -472,7 +476,8 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts *tim
 		return errors.Errorf("failed to unmarshal payload of regular message because = %s", err)
 	}
 
-	logger.Debugf("[channel: %s] Processing regular HCS message of type %s", chain.ChannelID(), msg.Class.String())
+	logger.Debugf("[channel: %s] Processing regular HCS message of type %s with ConfigSeq %d, curConfigSeq %d",
+		chain.ChannelID(), msg.Class.String(), msg.ConfigSeq, curConfigSeq)
 
 	switch msg.Class {
 	case ab.HcsMessageRegular_NORMAL:
@@ -648,6 +653,12 @@ func (chain *chainImpl) sendTimeToCut() error {
 	return nil
 }
 
+func createClientWithOperator(network map[string]hedera.AccountID, operator *hedera.AccountID, operatorPrivateKey *hedera.Ed25519PrivateKey) *hedera.Client {
+	client := hedera.NewClient(network)
+	client.SetOperator(*operator, *operatorPrivateKey)
+	return client
+}
+
 func setupTopicProducer(sharedHcsConfig *localconfig.Hcs, network map[string]hedera.AccountID) (*hedera.Client, *hedera.Client, error) {
 	var err error
 	for address, id := range sharedHcsConfig.Nodes {
@@ -655,7 +666,6 @@ func setupTopicProducer(sharedHcsConfig *localconfig.Hcs, network map[string]hed
 			return nil, nil, err
 		}
 	}
-	client := hedera.NewClient(network)
 
 	operator, err := hedera.AccountIDFromString(sharedHcsConfig.Operator.Id)
 	if err != nil {
@@ -674,12 +684,11 @@ func setupTopicProducer(sharedHcsConfig *localconfig.Hcs, network map[string]hed
 		}
 	}
 
-	client.SetOperator(operator, privateKey)
+	client := createClientWithOperator(network, &operator, &privateKey)
 
 	address, id := getRandomNode(network)
 	singleNetwork := map[string]hedera.AccountID{address: id}
-	singleNodeClient := hedera.NewClient(singleNetwork)
-	client.SetOperator(operator, privateKey)
+	singleNodeClient := createClientWithOperator(singleNetwork, &operator, &privateKey)
 
 	return client, singleNodeClient, nil
 }
@@ -790,8 +799,8 @@ func (chain *chainImpl) enqueue(message *ab.HcsMessage, isResubmission bool) boo
 
 			fragments := chain.fragmenter.makeFragments(encrypted, chain.fragmentKey, chain.lastFragmentId)
 			chain.lastFragmentId++
-			logger.Debugf("[channel: %s] the payload of %d bytes is cut into %d fragments",
-				chain.ChannelID(), len(encrypted), len(fragments))
+			logger.Debugf("[channel: %s] the payload of %d bytes is cut into %d fragments, resubmission ? %v",
+				chain.ChannelID(), len(encrypted), len(fragments), isResubmission)
 			for _, fragment := range fragments {
 				data := protoutil.MarshalOrPanic(fragment)
 				if !isResubmission {
