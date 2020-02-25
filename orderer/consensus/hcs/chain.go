@@ -235,12 +235,11 @@ func startThread(chain *chainImpl) {
 		chain.ChannelID(), chain.consenter.sharedHcsConfig().MirrorNodeAddress)
 
 	// subscribe to the hcs topic
-	// hack, use channel id as the topic id, SKIP the first character, it has to be a letter to pass
-	// validation
-	chain.topicId, err = hedera.TopicIDFromString(chain.ChannelID()[1:])
+	chain.topicId, err = hedera.TopicIDFromString(chain.SharedConfig().Hcs().TopicId)
 	if err != nil {
-		logger.Panicf("[channel: %s] invalid HCS topic ID %s", chain.ChannelID(), chain.ChannelID()[1:])
+		logger.Panicf("[channel: %s] invalid HCS topic ID %s", chain.ChannelID(), chain.SharedConfig().Hcs().TopicId)
 	}
+	logger.Infof("[channel: %s] the HCS topic ID is %v", chain.ChannelID(), chain.topicId)
 	startTime := chain.lastConsensusTimestampPersisted
 	if !startTime.Equal(unixEpoch) {
 		startTime = startTime.Add(time.Nanosecond)
