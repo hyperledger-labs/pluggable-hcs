@@ -195,4 +195,4 @@ noverify = [
 
 [[constraint]]
   name = "github.com/hashgraph/hedera-sdk-go"
-  version = "0.1.0"
+  version = "0.6.0"

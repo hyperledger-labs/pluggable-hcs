@@ -15,6 +15,22 @@ type Transaction struct {
 	ID TransactionID
 }
 
+func (transaction *Transaction) UnmarshalBinary(txBytes []byte) error {
+	transaction.pb = new(proto.Transaction)
+	if err := protobuf.Unmarshal(txBytes, transaction.pb); err != nil {
+		return err
+	}
+
+	var txBody proto.TransactionBody
+	if err := protobuf.Unmarshal(transaction.pb.GetBodyBytes(), &txBody); err != nil {
+		return err
+	}
+
+	transaction.ID = transactionIDFromProto(txBody.TransactionID)
+
+	return nil
+}
+
 func (transaction Transaction) Sign(privateKey Ed25519PrivateKey) Transaction {
 	return transaction.SignWith(privateKey.PublicKey(), privateKey.Sign)
 }
@@ -44,7 +60,7 @@ func (transaction Transaction) signWithOperator(operator operator) Transaction {
 	return transaction
 }
 
-func (transaction Transaction) SignWith(publicKey Ed25519PublicKey, signer signer) Transaction {
+func (transaction Transaction) SignWith(publicKey Ed25519PublicKey, signer TransactionSigner) Transaction {
 	signature := signer(transaction.pb.GetBodyBytes())
 
 	transaction.pb.SigMap.SigPair = append(transaction.pb.SigMap.SigPair, &proto.SignaturePair{
@@ -160,16 +176,28 @@ func (transaction Transaction) Execute(client *Client) (TransactionID, error) {
 			continue
 		}
 
-		return id, Status(resp.NodeTransactionPrecheckCode).isExceptional(true)
+		status := Status(resp.NodeTransactionPrecheckCode)
+
+		if status.isExceptional(true) {
+			// precheck failed
+			return id, newErrHederaPreCheckStatus(transaction.ID, status)
+		}
+
+		// success
+		return id, nil
 	}
 
 	// Timed out
-	return id, Status(resp.NodeTransactionPrecheckCode).isExceptional(true)
+	return id, newErrHederaPreCheckStatus(transaction.ID, Status(resp.NodeTransactionPrecheckCode))
 }
 
 func (transaction Transaction) String() string {
 	return protobuf.MarshalTextString(transaction.pb) +
 		protobuf.MarshalTextString(transaction.body())
+}
+
+func (transaction Transaction) MarshalBinary() ([]byte, error) {
+	return protobuf.Marshal(transaction.pb)
 }
 
 // The protobuf stores the transaction body as raw bytes so we need to first
