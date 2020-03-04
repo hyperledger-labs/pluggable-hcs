@@ -41,7 +41,7 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 	}
 
 	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentId := getStateFromMetadata(metadata.Value, support.ChannelID())
-	ch, err := newChain(consenter, support, lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentId)
+	ch, err := newChain(consenter, support, defaultHcsClientFactory, lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentId)
 	if err != nil {
 		return nil, err
 	}

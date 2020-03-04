@@ -33,7 +33,8 @@ func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) []
 
 	sequence := fragment.Sequence
 	if sequence >= uint32(len(holder.fragments)) {
-		logger.Panicf("fragment sequence %d is out of bound %d", sequence, len(holder.fragments))
+		logger.Errorf("fragment sequence %d is out of bound %d", sequence, len(holder.fragments))
+		return nil
 	}
 
 	if holder.fragments[sequence] != nil {
@@ -61,35 +62,34 @@ func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) []
 }
 
 func (processor *fragmentSupport) makeFragments(data []byte, fragmentKey string, fragmentId uint64) []*ab.HcsMessageFragment {
-	fragments := make([]*ab.HcsMessageFragment, (len(data) + fragmentSize - 1) / fragmentSize)
+	fragments := make([]*ab.HcsMessageFragment, (len(data)+fragmentSize-1)/fragmentSize)
 	for i := 0; i < len(fragments); i++ {
 		first := i * fragmentSize
-		last := (i+1) * fragmentSize
+		last := (i + 1) * fragmentSize
 		if last > len(data) {
 			last = len(data)
 		}
 		fragments[i] = &ab.HcsMessageFragment{
-			Fragment:             data[first:last],
-			FragmentKey:          fragmentKey,
-			FragmentId:           fragmentId,
-			Sequence:             uint32(i),
-			TotalFragments:       uint32(len(fragments)),
+			Fragment:       data[first:last],
+			FragmentKey:    fragmentKey,
+			FragmentId:     fragmentId,
+			Sequence:       uint32(i),
+			TotalFragments: uint32(len(fragments)),
 		}
 	}
 	return fragments
 }
 
-
 type fragmentHolder struct {
-	fragments   []*ab.HcsMessageFragment
-	count       uint32
-	size        uint32
+	fragments []*ab.HcsMessageFragment
+	count     uint32
+	size      uint32
 }
 
-func newFragmentHolder(total uint32) *fragmentHolder{
+func newFragmentHolder(total uint32) *fragmentHolder {
 	return &fragmentHolder{
 		fragments: make([]*ab.HcsMessageFragment, total),
-		count: 0,
-		size: 0,
+		count:     0,
+		size:      0,
 	}
 }
