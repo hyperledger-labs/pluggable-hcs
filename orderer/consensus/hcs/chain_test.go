@@ -958,7 +958,8 @@ func TestProcessMessages(t *testing.T) {
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf)
 			done := make(chan struct{})
-			close(getRespSyncChan(chain.topicSubscriptionHandle))
+			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
+			defer close(respSyncChan)
 
 			go func() {
 				err = chain.processMessages()
@@ -970,6 +971,7 @@ func TestProcessMessages(t *testing.T) {
 			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), "test fragment key", 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, hcf.InjectMessage(chain.topicId, protoutil.MarshalOrPanic(fragments[0])), "Expect message injected successfully")
+			respSyncChan <- struct{}{}
 
 			logger.Debug("closing haltChan to exit processMessages")
 			close(chain.haltChan) // cause processMessages to exit
@@ -1155,13 +1157,13 @@ func TestProcessMessages(t *testing.T) {
 			t.Run("RevalidateConfigEnvInvalid", func(t *testing.T) {
 				lastCutBlockNumber := uint64(3)
 				mockSupport := &mockmultichannel.ConsenterSupport{
-					BlockCutterVal:  mockblockcutter.NewReceiver(),
-					Blocks:          make(chan *cb.Block),
-					ChannelIDVal:    channelNameForTest(t),
-					HeightVal:lastCutBlockNumber,
-					ClassifyMsgVal: msgprocessor.ConfigMsg,
-					SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
-					SequenceVal:     uint64(1), // config sequence 1
+					BlockCutterVal:      mockblockcutter.NewReceiver(),
+					Blocks:              make(chan *cb.Block),
+					ChannelIDVal:        channelNameForTest(t),
+					HeightVal:           lastCutBlockNumber,
+					ClassifyMsgVal:      msgprocessor.ConfigMsg,
+					SharedConfigVal:     newMockOrderer(shortTimeout/2, &goodHcsConfig),
+					SequenceVal:         uint64(1), // config sequence 1
 					ProcessConfigMsgErr: fmt.Errorf("invalid config message"),
 				}
 				hcf := newDefaultMockHcsClientFactory()
@@ -1263,7 +1265,7 @@ func TestResubmission(t *testing.T) {
 			ConsenterSupport: mockSupport,
 
 			lastOriginalSequenceProcessed: lastOriginalSequenceProcessed,
-			lastCutBlockNumber: lastCutBlockNumber,
+			lastCutBlockNumber:            lastCutBlockNumber,
 
 			topicId:                 topicId,
 			topicProducer:           topicProducer,
@@ -1271,10 +1273,10 @@ func TestResubmission(t *testing.T) {
 			topicConsumer:           topicConsumer,
 			topicSubscriptionHandle: topicSubscriptionHandle,
 
-			startChan:startChan,
-			errorChan:              errorChan,
-			haltChan:               haltChan,
-			doneProcessingMessages: make(chan struct{}),
+			startChan:                   startChan,
+			errorChan:                   errorChan,
+			haltChan:                    haltChan,
+			doneProcessingMessages:      make(chan struct{}),
 			doneReprocessingMsgInFlight: doneReprocessingMsgInFlight,
 
 			fragmenter: newFragmentSupport(),
@@ -1345,7 +1347,7 @@ func TestResubmission(t *testing.T) {
 				ChannelIDVal:    channelNameForTest(t),
 				HeightVal:       lastCutBlockNumber,
 				SharedConfigVal: newMockOrderer(longTimeout, &goodHcsConfig),
-				SequenceVal: uint64(0),
+				SequenceVal:     uint64(0),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastOriginalSequenceProcessed, false, mockSupport, hcf)
@@ -1401,12 +1403,12 @@ func TestResubmission(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(5)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				HeightVal:       lastCutBlockNumber,
-				SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
-				SequenceVal:     uint64(1),
+				BlockCutterVal:      mockblockcutter.NewReceiver(),
+				Blocks:              make(chan *cb.Block),
+				ChannelIDVal:        channelNameForTest(t),
+				HeightVal:           lastCutBlockNumber,
+				SharedConfigVal:     newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				SequenceVal:         uint64(1),
 				ProcessNormalMsgErr: fmt.Errorf("invalid normal message"),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1488,8 +1490,8 @@ func TestResubmission(t *testing.T) {
 			respSyncChan <- struct{}{} // sync to make sure the message is received by processMessages, and unblock the resubmitted message
 
 			select {
-			case respSyncChan <-struct{}{}:
-			case <-time.After(100 *time.Millisecond):
+			case respSyncChan <- struct{}{}:
+			case <-time.After(100 * time.Millisecond):
 				t.Fatalf("Expected message is resubmitted")
 			}
 
@@ -1552,9 +1554,9 @@ func TestResubmission(t *testing.T) {
 			respSyncChan <- struct{}{}
 
 			select {
-			case <- mockSupport.Blocks:
+			case <-mockSupport.Blocks:
 				t.Fatalf("Expected no block cut")
-			case <-time.After(shortTimeout/2):
+			case <-time.After(shortTimeout / 2):
 			}
 
 			close(chain.haltChan)
@@ -1570,13 +1572,13 @@ func TestResubmission(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(4)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				HeightVal:       lastCutBlockNumber,
-				SharedConfigVal: newMockOrderer(longTimeout, &goodHcsConfig),
-				SequenceVal:     uint64(1),
-				ConfigSeqVal:    uint64(1),
+				BlockCutterVal:      mockblockcutter.NewReceiver(),
+				Blocks:              make(chan *cb.Block),
+				ChannelIDVal:        channelNameForTest(t),
+				HeightVal:           lastCutBlockNumber,
+				SharedConfigVal:     newMockOrderer(longTimeout, &goodHcsConfig),
+				SequenceVal:         uint64(1),
+				ConfigSeqVal:        uint64(1),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1605,7 +1607,7 @@ func TestResubmission(t *testing.T) {
 			select {
 			case <-mockSupport.Blocks:
 				t.Fatalf("Expected no block being cut")
-			case <-time.After(shortTimeout/2):
+			case <-time.After(shortTimeout / 2):
 			}
 
 			// check that WaitReady is still not blocked
@@ -1628,7 +1630,7 @@ func TestResubmission(t *testing.T) {
 
 				assert.Equal(t, lastOriginalSequenceProcessed+1, hcsMetadata.LastResubmittedConfigSequence, "Expected lastResubmittedConfigSequence correct")
 				assert.Equal(t, lastOriginalSequenceProcessed+1, hcsMetadata.LastOriginalSequenceProcessed, "Expected LastOriginalSequenceProcessed correct")
-			case <-time.After(shortTimeout/2):
+			case <-time.After(shortTimeout / 2):
 				t.Fatalf("Expected one block being cut")
 			}
 
@@ -1639,18 +1641,17 @@ func TestResubmission(t *testing.T) {
 			assert.NoError(t, err, "Expected processMessages call to return without error")
 		})
 
-
 		t.Run("ResubmittedMsgStillBehind", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(4)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				HeightVal:       lastCutBlockNumber,
-				SharedConfigVal: newMockOrderer(longTimeout, &goodHcsConfig),
-				SequenceVal:     uint64(2),
-				ConfigSeqVal:    uint64(2),
+				BlockCutterVal:      mockblockcutter.NewReceiver(),
+				Blocks:              make(chan *cb.Block),
+				ChannelIDVal:        channelNameForTest(t),
+				HeightVal:           lastCutBlockNumber,
+				SharedConfigVal:     newMockOrderer(longTimeout, &goodHcsConfig),
+				SequenceVal:         uint64(2),
+				ConfigSeqVal:        uint64(2),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1677,7 +1678,7 @@ func TestResubmission(t *testing.T) {
 			select {
 			case <-mockSupport.Blocks:
 				t.Fatalf("Expected no block being cut")
-			case <-time.After(shortTimeout/2):
+			case <-time.After(shortTimeout / 2):
 			}
 
 			// should still block since resubmitted config message is still behind current config seq
@@ -1686,7 +1687,7 @@ func TestResubmission(t *testing.T) {
 
 			select {
 			case <-mockSupport.Blocks:
-			case <-time.After(shortTimeout/2):
+			case <-time.After(shortTimeout / 2):
 				t.Fatalf("Expected block being cut")
 			}
 			respSyncChan <- struct{}{}
@@ -1705,13 +1706,13 @@ func TestResubmission(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(4)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				HeightVal:       lastCutBlockNumber,
-				SharedConfigVal: newMockOrderer(longTimeout, &goodHcsConfig),
-				SequenceVal:     uint64(1),
-				ConfigSeqVal: uint64(1),
+				BlockCutterVal:            mockblockcutter.NewReceiver(),
+				Blocks:                    make(chan *cb.Block),
+				ChannelIDVal:              channelNameForTest(t),
+				HeightVal:                 lastCutBlockNumber,
+				SharedConfigVal:           newMockOrderer(longTimeout, &goodHcsConfig),
+				SequenceVal:               uint64(1),
+				ConfigSeqVal:              uint64(1),
 				ProcessConfigUpdateMsgErr: fmt.Errorf("invalid config message"),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1737,7 +1738,7 @@ func TestResubmission(t *testing.T) {
 			select {
 			case <-mockSupport.Blocks:
 				t.Fatalf("Expected no block being cut")
-			case <-time.After(shortTimeout/2):
+			case <-time.After(shortTimeout / 2):
 			}
 			respSyncChan <- struct{}{}
 
@@ -1752,13 +1753,13 @@ func TestResubmission(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(4)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				HeightVal:       lastCutBlockNumber,
-				SharedConfigVal: newMockOrderer(longTimeout, &goodHcsConfig),
-				SequenceVal:     uint64(1),
-				ConfigSeqVal:    uint64(1),
+				BlockCutterVal:      mockblockcutter.NewReceiver(),
+				Blocks:              make(chan *cb.Block),
+				ChannelIDVal:        channelNameForTest(t),
+				HeightVal:           lastCutBlockNumber,
+				SharedConfigVal:     newMockOrderer(longTimeout, &goodHcsConfig),
+				SequenceVal:         uint64(1),
+				ConfigSeqVal:        uint64(1),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1790,7 +1791,7 @@ func TestResubmission(t *testing.T) {
 			select {
 			case <-mockSupport.Blocks:
 				t.Fatalf("Expected no block being cut")
-			case <-time.After(shortTimeout/2):
+			case <-time.After(shortTimeout / 2):
 			}
 
 			assert.Equal(t, 1, consensusClient.SubmitConsensusMessageCallCount(), "Expected SubmitConsensusMessage called once")
@@ -1804,7 +1805,7 @@ func TestResubmission(t *testing.T) {
 
 			select {
 			case <-mockSupport.Blocks:
-			case <-time.After(shortTimeout/2):
+			case <-time.After(shortTimeout / 2):
 				t.Fatalf("Expected block being cut")
 			}
 
@@ -2180,13 +2181,13 @@ func newMockHcsClientFactory(
 }
 
 type mockMirrorSubscriptionHandle struct {
-	transport          <-chan []byte
-	respChan           chan *hedera.MirrorConsensusTopicResponse
-	errChan            chan error
-	done               chan struct{}
+	transport              <-chan []byte
+	respChan               chan *hedera.MirrorConsensusTopicResponse
+	errChan                chan error
+	done                   chan struct{}
 	nextSequenceNumber     uint64
 	nextConsensusTimestamp time.Time
-	respSyncChan       chan struct{}
+	respSyncChan           chan struct{}
 }
 
 func (h *mockMirrorSubscriptionHandle) start() {
@@ -2231,13 +2232,13 @@ func (h *mockMirrorSubscriptionHandle) Errors() <-chan error {
 
 func newMockMirrorSubscriptionHandle(transport <-chan []byte) *mockMirrorSubscriptionHandle {
 	return &mockMirrorSubscriptionHandle{
-		transport:    transport,
-		respChan:     make(chan *hedera.MirrorConsensusTopicResponse),
-		errChan:      make(chan error),
-		done:         make(chan struct{}),
-		respSyncChan: make(chan struct{}),
+		transport:              transport,
+		respChan:               make(chan *hedera.MirrorConsensusTopicResponse),
+		errChan:                make(chan error),
+		done:                   make(chan struct{}),
+		respSyncChan:           make(chan struct{}),
 		nextConsensusTimestamp: time.Now(),
-		nextSequenceNumber: uint64(1),
+		nextSequenceNumber:     uint64(1),
 	}
 }
 
