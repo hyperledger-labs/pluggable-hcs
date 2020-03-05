@@ -508,11 +508,20 @@ func TestChain(t *testing.T) {
 			close(getRespSyncChan(chain.topicSubscriptionHandle))
 
 			assert.NoError(t, chain.Order(&cb.Envelope{}, uint64(0)), "Expect Order successfully")
+			select {
+			case <-mockSupport.Blocks:
+			case <-time.After(shortTimeout):
+				t.Fatalf("Expected one block written")
+			}
 			assert.NoError(t, chain.Order(&cb.Envelope{}, uint64(0)), "Expect Order successfully")
-			numBlocksWritten := waitNumBlocksUntil(mockSupport.Blocks, 2, shortTimeout)
+			select {
+			case <-mockSupport.Blocks:
+			case <-time.After(shortTimeout):
+				t.Fatalf("Expected one block written")
+			}
+
 			chain.Halt()
-			assert.Equal(t, savedLastCubBlockNumber+2, chain.lastCutBlockNumber, "Expect two blocks cut")
-			assert.Equal(t, 2, numBlocksWritten, "Expect two blocks written")
+			assert.Equal(t, savedLastCubBlockNumber+2, chain.lastCutBlockNumber, "Expected two blocks cut")
 		})
 
 		t.Run("BatchLengthTwo", func(t *testing.T) {
@@ -647,16 +656,7 @@ func TestChain(t *testing.T) {
 			hcf := newMockHcsClientFactory(mockGetConsensusClient, nil)
 			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentId)
 
-			chain.Start()
-			select {
-			case <-chain.startChan:
-				logger.Debug("startChan is closed as it should be")
-			case <-time.After(shortTimeout):
-				t.Fatal("startChan should have been closed by now")
-			}
-
 			assert.Error(t, chain.sendTimeToCut(), "Expect error from sendTimeToCut")
-			chain.Halt()
 		})
 	})
 }
@@ -1351,7 +1351,7 @@ func TestResubmission(t *testing.T) {
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastOriginalSequenceProcessed, false, mockSupport, hcf)
-			close(mockSupport.BlockCutterVal.Block)
+			defer close(mockSupport.BlockCutterVal.Block)
 			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 			defer close(respSyncChan)
 			done := make(chan struct{})
@@ -1366,6 +1366,7 @@ func TestResubmission(t *testing.T) {
 			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), "test fragment key", 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, hcf.InjectMessage(chain.topicId, protoutil.MarshalOrPanic(fragments[0])), "Expect message injected successfully")
+			mockSupport.BlockCutterVal.Block <- struct{}{}
 			respSyncChan <- struct{}{} // sync to make sure the message is received by processMessages
 
 			select {
@@ -1379,6 +1380,7 @@ func TestResubmission(t *testing.T) {
 			fragments = chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), "test fragment key", 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, hcf.InjectMessage(chain.topicId, protoutil.MarshalOrPanic(fragments[0])), "Expect message injected successfully")
+			mockSupport.BlockCutterVal.Block <- struct{}{}
 			respSyncChan <- struct{}{} // sync to make sure the message is received by processMessages
 
 			select {
