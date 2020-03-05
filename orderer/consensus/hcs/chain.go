@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	unixEpoch = time.Unix(0, 0)
+	unixEpoch               = time.Unix(0, 0)
 	defaultHcsClientFactory = &hcsClientFactoryImpl{}
 )
 
@@ -154,7 +154,7 @@ type chainImpl struct {
 	fragmenter  *fragmentSupport
 	fragmentKey string
 
-	gcmCipher cipher.AEAD
+	gcmCipher   cipher.AEAD
 	nonceReader io.Reader
 }
 
@@ -502,7 +502,9 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts *tim
 	env := &cb.Envelope{}
 	if err := proto.Unmarshal(msg.Payload, env); err != nil {
 		// This shouldn't happen, it should be filtered at ingress
-		return errors.Errorf("failed to unmarshal payload of regular message because = %s", err)
+		err = errors.Errorf("failed to unmarshal payload of regular message because = %s", err)
+		logger.Errorf("[channel: %s] %v", chain.ChannelID(), err)
+		return err
 	}
 
 	logger.Debugf("[channel: %s] Processing regular HCS message of type %s with ConfigSeq %d, curConfigSeq %d",

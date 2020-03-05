@@ -87,7 +87,7 @@ func (c *mirrorClientImpl) SubscribeTopic(
 // implements factory.MirrorSubscriptionHandle
 type mirrorSubscriptionHandleImpl struct {
 	hedera.MirrorSubscriptionHandle
-	errChan chan error
+	errChan  chan error
 	respChan chan *hedera.MirrorConsensusTopicResponse
 }
 
