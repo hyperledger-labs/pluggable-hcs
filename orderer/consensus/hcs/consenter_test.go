@@ -6,6 +6,9 @@ package hcs
 
 import (
 	"fmt"
+	"strings"
+	"testing"
+
 	"github.com/golang/protobuf/ptypes/timestamp"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/orderer"
@@ -18,8 +21,6 @@ import (
 	mockmultichannel "github.com/hyperledger/fabric/orderer/mocks/common/multichannel"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/stretchr/testify/assert"
-	"strings"
-	"testing"
 )
 
 //go:generate counterfeiter -o mock/orderer_config.go --fake-name OrdererConfig . ordererConfig
@@ -56,7 +57,7 @@ func TestHandleChain(t *testing.T) {
 		},
 		LastOriginalSequenceProcessed: 0,
 		LastResubmittedConfigSequence: 0,
-		LastFragmentId:                0,
+		LastFragmentFreeBlockNumber:   0,
 	})}
 	mockEmptyMetadata := &cb.Metadata{}
 	mockCorruptedMetadata := &cb.Metadata{Value: []byte("corrupted data")}
@@ -64,7 +65,7 @@ func TestHandleChain(t *testing.T) {
 		LastConsensusTimestampPersisted: nil,
 		LastOriginalSequenceProcessed:   0,
 		LastResubmittedConfigSequence:   0,
-		LastFragmentId:                  0,
+		LastFragmentFreeBlockNumber:     0,
 	})}
 
 	t.Run("With Valid Config", func(t *testing.T) {

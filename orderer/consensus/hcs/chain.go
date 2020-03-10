@@ -11,12 +11,13 @@ import (
 	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"github.com/hyperledger/fabric/orderer/consensus/hcs/factory"
 	"io"
 	"io/ioutil"
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/hyperledger/fabric/orderer/consensus/hcs/factory"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
@@ -52,7 +53,7 @@ func getStateFromMetadata(metadataValue []byte, chainID string) (time.Time, uint
 		return timestamp,
 			hcsMetadata.GetLastOriginalSequenceProcessed(),
 			hcsMetadata.GetLastResubmittedConfigSequence(),
-			hcsMetadata.GetLastFragmentId()
+			hcsMetadata.GetLastFragmentFreeBlockNumber()
 	}
 
 	// defaults
@@ -75,21 +76,22 @@ func newChain(
 	lastConsensusTimestampPersisted time.Time,
 	lastOriginalSequenceProcessed uint64,
 	lastResubmittedConfigSequence uint64,
-	lastFragmentId uint64,
+	lastFragmentFreeBlockNumber uint64,
 ) (*chainImpl, error) {
 	lastCutBlockNumber := support.Height() - 1
 	logger.Infof("[channel: %s] starting chain with last persisted consensus timestamp %d and "+
 		"last recorded block [%d]", support.ChannelID(), lastConsensusTimestampPersisted.UnixNano(), lastCutBlockNumber)
 
 	doneReprocessingMsgInFlight := make(chan struct{})
-	// In either one of following cases, we should unblock ingress messages:
+	// If there are no fragments pending reassembly and one of the following cases is true, we should unblock ingress messages:
 	// - lastResubmittedConfigOffset == 0, where we've never resubmitted any config messages
 	// - lastResubmittedConfigOffset == lastOriginalOffsetProcessed, where the latest config message we resubmitted
 	//   has been processed already
 	// - lastResubmittedConfigOffset < lastOriginalOffsetProcessed, where we've processed one or more resubmitted
 	//   normal messages after the latest resubmitted config message. (we advance `lastResubmittedConfigOffset` for
 	//   config messages, but not normal messages)
-	if lastResubmittedConfigSequence == 0 || lastResubmittedConfigSequence <= lastOriginalSequenceProcessed {
+	if (lastCutBlockNumber == lastFragmentFreeBlockNumber) &&
+		(lastResubmittedConfigSequence == 0 || lastResubmittedConfigSequence <= lastOriginalSequenceProcessed) {
 		// If we've already caught up with the reprocessing resubmitted messages, close the channel to unblock broadcast
 		close(doneReprocessingMsgInFlight)
 	}
@@ -102,7 +104,7 @@ func newChain(
 		lastConsensusTimestamp:          lastConsensusTimestampPersisted,
 		lastOriginalSequenceProcessed:   lastOriginalSequenceProcessed,
 		lastResubmittedConfigSequence:   lastResubmittedConfigSequence,
-		lastFragmentId:                  lastFragmentId,
+		lastFragmentFreeBlockNumber:     lastFragmentFreeBlockNumber,
 		lastCutBlockNumber:              lastCutBlockNumber,
 		haltChan:                        make(chan struct{}),
 		startChan:                       make(chan struct{}),
@@ -124,7 +126,8 @@ type chainImpl struct {
 	lastConsensusTimestamp          time.Time
 	lastOriginalSequenceProcessed   uint64
 	lastResubmittedConfigSequence   uint64
-	lastFragmentId                  uint64
+	lastFragmentFreeBlockNumber     uint64
+	lastFragmentID                  uint64
 	lastCutBlockNumber              uint64
 
 	// mutex used when changing the doneReprocessingMsgInFlight
@@ -143,9 +146,9 @@ type chainImpl struct {
 	timer <-chan time.Time
 
 	network                 map[string]hedera.AccountID
-	operatorId              hedera.AccountID
+	operatorID              hedera.AccountID
 	operatorPrivateKey      hedera.Ed25519PrivateKey
-	topicId                 hedera.ConsensusTopicID
+	topicID                 hedera.ConsensusTopicID
 	topicProducer           factory.ConsensusClient
 	singleNodeTopicProducer factory.ConsensusClient
 	topicConsumer           factory.MirrorClient
@@ -176,7 +179,7 @@ func (chain *chainImpl) WaitReady() error {
 		select {
 		case <-chain.haltChan:
 			return fmt.Errorf("consenter for this channel has been halted")
-		case <-chain.doneReprocessing(): // Block waiting for all re-submitted messages to be reprocessed
+		case <-chain.doneReprocessing(): // Block waiting for all re-submitted messages or pending fragments to be reprocessed
 			return nil
 		}
 	default:
@@ -224,40 +227,13 @@ func (chain *chainImpl) Errored() <-chan struct{} {
 	}
 }
 
-func parseConfig(chain *chainImpl) {
-	config := chain.consenter.sharedHcsConfig()
-	nodes := config.Nodes
-	if len(nodes) == 0 {
-		logger.Panicf("[channel: %s] empty nodes in sharedHcsConfig", chain.ChannelID())
-	}
-	chain.network = make(map[string]hedera.AccountID, len(nodes))
-	for addr, acc := range nodes {
-		accountId, err := hedera.AccountIDFromString(acc)
-		if err != nil {
-			logger.Panicf("[channel: %s] invalid account ID = %v", chain.ChannelID(), err)
-		}
-		chain.network[addr] = accountId
-	}
-
-	var err error
-	if chain.operatorId, err = hedera.AccountIDFromString(config.Operator.Id); err != nil {
-		logger.Panicf("[channel: %s] invalid operator ID = %v", chain.ChannelID(), err)
-	}
-	if chain.operatorPrivateKey, err = hedera.Ed25519PrivateKeyFromString(config.Operator.PrivateKey.Key); err != nil {
-		logger.Panicf("[channel: %s] invalid operator private key = %v", chain.ChannelID(), err)
-	}
-	if chain.topicId, err = hedera.TopicIDFromString(chain.SharedConfig().Hcs().TopicId); err != nil {
-		logger.Panicf("[channel: %s] invalid hcs topic id = %v", chain.ChannelID(), err)
-	}
-}
-
 func startThread(chain *chainImpl) {
 	var err error
 
 	parseConfig(chain)
 
 	// create topicProducer
-	chain.topicProducer, chain.singleNodeTopicProducer, err = setupTopicProducer(chain.hcf, chain.network, chain.operatorId, chain.operatorPrivateKey)
+	chain.topicProducer, chain.singleNodeTopicProducer, err = setupTopicProducer(chain.hcf, chain.network, chain.operatorID, chain.operatorPrivateKey)
 	if err != nil {
 		logger.Panicf("[channel: %s] failed to set up topic producer, %s", chain.ChannelID(), err)
 	}
@@ -271,27 +247,12 @@ func startThread(chain *chainImpl) {
 		chain.ChannelID(), chain.consenter.sharedHcsConfig().MirrorNodeAddress)
 
 	// subscribe to the hcs topic
-	logger.Infof("[channel: %s] the HCS topic ID is %v", chain.ChannelID(), chain.topicId)
-	startTime := chain.lastConsensusTimestampPersisted
-	if !startTime.Equal(unixEpoch) {
-		startTime = startTime.Add(time.Nanosecond)
-	}
-	handle, err := chain.topicConsumer.SubscribeTopic(chain.topicId, &startTime, nil)
-	if err != nil {
-		logger.Panicf("[channel: %s] failed to subscribe to hcs topic %v", chain.ChannelID(), chain.topicId)
-	}
-
-	if err != nil {
-		logger.Panicf("[channel: %s] failed to subscribe to hcs topic %v", chain.ChannelID(),
-			chain.topicId)
-	}
-	chain.topicSubscriptionHandle = handle
+	logger.Infof("[channel: %s] the HCS topic ID is %v", chain.ChannelID(), chain.topicID)
+	startSubscription(chain)
 
 	chain.doneProcessingMessages = make(chan struct{})
-
 	chain.errorChan = make(chan struct{})
 	close(chain.startChan)
-
 	logger.Infof("[channel: %s] Start phase completed successfully", chain.ChannelID())
 
 	chain.processMessages()
@@ -318,8 +279,17 @@ func (chain *chainImpl) processMessages() error {
 		}
 	}()
 
+	var recollectPendingFragments bool
+	if chain.lastFragmentFreeBlockNumber != chain.lastCutBlockNumber {
+		// recollect fragments pending reassembly at the time of last shutdown / crash, handle it by adding all messages
+		// in the range (lastFragmentFreeBlock.LastConsensusTimestampPersisted, chain.LastConsensusTimestampPersisted] to fragmenter
+		recollectPendingFragments = true
+		logger.Debugf("[channel: %s] going to collect fragments pending reassembly at the time of last shutdown / crash", chain.ChannelID())
+	} else {
+		recollectPendingFragments = false
+		logger.Debugf("[channel: %s] going into the normal message processing loop", chain.ChannelID())
+	}
 	msg := new(ab.HcsMessage)
-	logger.Debugf("[channel: %s] going into the processMessages loop", chain.ChannelID())
 	for {
 		select {
 		case <-chain.haltChan:
@@ -364,19 +334,35 @@ func (chain *chainImpl) processMessages() error {
 			if err := proto.Unmarshal(plain, msg); err != nil {
 				logger.Criticalf("[channel: %s] unable to unmarshal ordered message", chain.ChannelID())
 				continue
-			} else {
-				logger.Debugf("[channel %s] successfully unmarshalled ordered message, "+
-					"consensus timestamp %v", chain.ChannelID(), resp.ConsensusTimeStamp)
 			}
-			switch msg.Type.(type) {
-			case *ab.HcsMessage_Regular:
-				if err := chain.processRegularMessage(msg.GetRegular(), &resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
-					logger.Warningf("[channel: %s] error when processing incoming message of type REGULAR = %s", chain.ChannelID(), err)
+			logger.Debugf("[channel %s] successfully unmarshaled ordered message, consensus timestamp %d",
+				chain.ChannelID(), resp.ConsensusTimeStamp.Nanosecond())
+			if !recollectPendingFragments {
+				// use ConseusTimestamp and SequenceNumber of the last received fragment for that of a message
+				switch msg.Type.(type) {
+				case *ab.HcsMessage_Regular:
+					if err := chain.processRegularMessage(msg.GetRegular(), &resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
+						logger.Warningf("[channel: %s] error when processing incoming message of type REGULAR = %s", chain.ChannelID(), err)
+					}
+				case *ab.HcsMessage_TimeToCut:
+					if err := chain.processTimeToCutMessage(msg.GetTimeToCut(), &resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
+						logger.Criticalf("[channel: %s] consenter for channel exiting, %s", chain.ChannelID(), err)
+						return err
+					}
 				}
-			case *ab.HcsMessage_TimeToCut:
-				if err := chain.processTimeToCutMessage(msg.GetTimeToCut(), &resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
-					logger.Criticalf("[channel: %s] consenter for channel exiting, %s", chain.ChannelID(), err)
-					return err
+			} else {
+				if resp.ConsensusTimeStamp.Equal(chain.lastConsensusTimestamp) {
+					recollectPendingFragments = false
+					logger.Debugf("[channel: %s] switching to the normal message processing loop", chain.ChannelID())
+					if chain.lastResubmittedConfigSequence == 0 || chain.lastResubmittedConfigSequence <= chain.lastOriginalSequenceProcessed {
+						// unblock ingress
+						logger.Debugf("[channel: %s] unblock ingress", chain.ChannelID())
+						chain.reprocessComplete()
+					}
+				} else if resp.ConsensusTimeStamp.After(chain.lastConsensusTimestamp) {
+					logger.Panicf("[channel: %s] consensus timestamp (%d) of last processed message is later "+
+						"than chain.lastConsensusTimestampPersisted (%d)", chain.ChannelID(), resp.ConsensusTimeStamp.UnixNano(),
+						chain.lastConsensusTimestampPersisted.UnixNano())
 				}
 			}
 		case <-chain.timer:
@@ -387,14 +373,22 @@ func (chain *chainImpl) processMessages() error {
 	}
 }
 
-func (chain *chainImpl) WriteBlock(block *cb.Block, metadata *ab.HcsMetadata) {
-	chain.ConsenterSupport.WriteBlock(block, protoutil.MarshalOrPanic(metadata))
+func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTimestamp *timestamp.Timestamp) {
 	chain.lastCutBlockNumber++
-}
-
-func (chain *chainImpl) WriteConfigBlock(block *cb.Block, metadata *ab.HcsMetadata) {
-	chain.ConsenterSupport.WriteConfigBlock(block, protoutil.MarshalOrPanic(metadata))
-	chain.lastCutBlockNumber++
+	if !chain.fragmenter.isPending() {
+		chain.lastFragmentFreeBlockNumber = chain.lastCutBlockNumber
+	}
+	metadata := newHcsMetadata(
+		consensusTimestamp,
+		chain.lastOriginalSequenceProcessed,
+		chain.lastResubmittedConfigSequence,
+		chain.lastFragmentFreeBlockNumber)
+	marshaledMetadata := protoutil.MarshalOrPanic(metadata)
+	if !isConfig {
+		chain.ConsenterSupport.WriteBlock(block, marshaledMetadata)
+	} else {
+		chain.ConsenterSupport.WriteConfigBlock(block, marshaledMetadata)
+	}
 }
 
 func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTimestamp *time.Time, newOriginalSequenceProcessed uint64) {
@@ -439,15 +433,9 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTi
 
 	// Commit the first block
 	block := chain.CreateNextBlock(batches[0])
-	consensusTimestamp := timestampProtoOrPanic(&chain.lastConsensusTimestamp)
-	metadata := newHcsMetadata(
-		consensusTimestamp,
-		chain.lastOriginalSequenceProcessed,
-		chain.lastResubmittedConfigSequence,
-		chain.lastFragmentId)
-	chain.WriteBlock(block, metadata)
+	chain.WriteBlock(block, false, timestampProtoOrPanic(&chain.lastConsensusTimestamp))
 	logger.Debugf("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus timestamp"+
-		"is now %v", chain.ChannelID(), chain.lastCutBlockNumber, *consensusTimestamp)
+		" is now %d", chain.ChannelID(), chain.lastCutBlockNumber, chain.lastConsensusTimestamp.UnixNano())
 
 	// Commit the second block if exists
 	if len(batches) == 2 {
@@ -455,15 +443,9 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTi
 		chain.lastConsensusTimestamp = *curConsensusTimestamp
 
 		block := chain.CreateNextBlock(batches[1])
-		consensusTimestamp = timestampProtoOrPanic(curConsensusTimestamp)
-		metadata := newHcsMetadata(
-			consensusTimestamp,
-			chain.lastOriginalSequenceProcessed,
-			chain.lastResubmittedConfigSequence,
-			chain.lastFragmentId)
-		chain.WriteBlock(block, metadata)
+		chain.WriteBlock(block, false, timestampProtoOrPanic(curConsensusTimestamp))
 		logger.Debugf("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus "+
-			"timestamp is now %v", chain.ChannelID(), chain.lastCutBlockNumber, *consensusTimestamp)
+			"timestamp is now %d", chain.ChannelID(), chain.lastCutBlockNumber, curConsensusTimestamp.UnixNano())
 	}
 }
 
@@ -474,26 +456,14 @@ func (chain *chainImpl) commitConfigMessage(message *cb.Envelope, curConsensusTi
 	if batch != nil {
 		logger.Debugf("[channel: %s] Cut pending messages into block", chain.ChannelID())
 		block := chain.CreateNextBlock(batch)
-		consensusTimestamp := timestampProtoOrPanic(&chain.lastConsensusTimestamp)
-		metadata := newHcsMetadata(
-			consensusTimestamp,
-			chain.lastOriginalSequenceProcessed,
-			chain.lastResubmittedConfigSequence,
-			chain.lastFragmentId)
-		chain.WriteBlock(block, metadata)
+		chain.WriteBlock(block, false, timestampProtoOrPanic(&chain.lastConsensusTimestamp))
 	}
 
 	logger.Debugf("[channel: %s] Creating isolated block for config message", chain.ChannelID())
 	chain.lastOriginalSequenceProcessed = newOriginalSequenceProcessed
 	chain.lastConsensusTimestamp = *curConsensusTimestamp
 	block := chain.CreateNextBlock([]*cb.Envelope{message})
-	consensusTimestamp := timestampProtoOrPanic(curConsensusTimestamp)
-	metadata := newHcsMetadata(
-		consensusTimestamp,
-		chain.lastOriginalSequenceProcessed,
-		chain.lastResubmittedConfigSequence,
-		chain.lastFragmentId)
-	chain.WriteConfigBlock(block, metadata)
+	chain.WriteBlock(block, true, timestampProtoOrPanic(curConsensusTimestamp))
 	chain.timer = nil
 }
 
@@ -585,7 +555,7 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts *tim
 				msg.ConfigSeq == curConfigSeq { // AND we don't need to resubmit it again
 				logger.Debugf("[channel: %s] Config message with original offset %d is the last in-flight resubmitted message"+
 					"and it does not require revalidation, unblock ingress messages now", chain.ChannelID(), msg.OriginalSeq)
-				chain.reprocessConfigComplete() // Therefore, we could finally unblock broadcast
+				chain.reprocessComplete() // Therefore, we could finally unblock broadcast
 			}
 
 			// Somebody resubmitted message at offset X, whereas we didn't. This is due to non-determinism where
@@ -613,7 +583,7 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts *tim
 
 			logger.Debugf("[channel: %s] Resubmitted config message with sequence %d, block ingress messages", chain.ChannelID(), receivedSequence)
 			chain.lastResubmittedConfigSequence = receivedSequence // Keep track of last resubmitted message offset
-			chain.reprocessConfigPending()                         // Begin blocking ingress messages
+			chain.reprocessPending()                               // Begin blocking ingress messages
 
 			return nil
 		}
@@ -648,13 +618,7 @@ func (chain *chainImpl) processTimeToCutMessage(msg *ab.HcsMessageTimeToCut, ts 
 		block := chain.CreateNextBlock(batch)
 		chain.lastConsensusTimestamp = *ts
 		chain.lastOriginalSequenceProcessed = sequence
-		consensusTimestamp := timestampProtoOrPanic(ts)
-		metadata := &ab.HcsMetadata{
-			LastConsensusTimestampPersisted: consensusTimestamp,
-			LastOriginalSequenceProcessed:   chain.lastOriginalSequenceProcessed,
-			LastResubmittedConfigSequence:   chain.lastResubmittedConfigSequence,
-		}
-		chain.WriteBlock(block, metadata)
+		chain.WriteBlock(block, false, timestampProtoOrPanic(ts))
 		logger.Debugf("[channel: %s] successfully cut block %d, triggered by time-to-cut",
 			chain.ChannelID(), blockNumber)
 	} else if blockNumber > chain.lastCutBlockNumber+1 {
@@ -671,42 +635,10 @@ func (chain *chainImpl) sendTimeToCut() error {
 	if !chain.enqueue(msg, false) {
 		return errors.Errorf("[channel: %s] failed to send time-to-cut with block number %d",
 			chain.ChannelID(), chain.lastCutBlockNumber+1)
-	} else {
-		logger.Infof("[channel: %s] time to cut with block number %d sent to topic %v",
-			chain.ChannelID(), chain.lastCutBlockNumber+1, chain.topicId)
 	}
+	logger.Infof("[channel: %s] time to cut with block number %d sent to topic %v",
+		chain.ChannelID(), chain.lastCutBlockNumber+1, chain.topicID)
 	return nil
-}
-
-func setupTopicProducer(
-	hcf factory.HcsClientFactory,
-	network map[string]hedera.AccountID,
-	operator hedera.AccountID,
-	privateKey hedera.Ed25519PrivateKey,
-) (client factory.ConsensusClient, singleNodeClient factory.ConsensusClient, err error) {
-	if client, err = hcf.GetConsensusClient(network, operator, privateKey); err != nil {
-		return nil, nil, err
-	}
-
-	address, id := getRandomNode(network)
-	singleNetwork := map[string]hedera.AccountID{address: id}
-	if singleNodeClient, err = hcf.GetConsensusClient(singleNetwork, operator, privateKey); err != nil {
-		client.Close()
-		return nil, nil, err
-	}
-
-	return client, singleNodeClient, nil
-}
-
-func getRandomNode(network map[string]hedera.AccountID) (string, hedera.AccountID) {
-	index := rand.Intn(len(network))
-	for address, id := range network {
-		if index == 0 {
-			return address, id
-		}
-		index--
-	}
-	return "", hedera.AccountID{}
 }
 
 func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset uint64) error {
@@ -735,7 +667,7 @@ func makeGCMCipher(filename string) cipher.AEAD {
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		logger.Panicf("failed to create the GCM cipehr, err = %v", err)
+		logger.Panicf("failed to create the GCM cipher, err = %v", err)
 	}
 
 	return gcm
@@ -801,8 +733,8 @@ func (chain *chainImpl) enqueue(message *ab.HcsMessage, isResubmission bool) boo
 				return false
 			}
 
-			fragments := chain.fragmenter.makeFragments(encrypted, chain.fragmentKey, chain.lastFragmentId)
-			chain.lastFragmentId++
+			fragments := chain.fragmenter.makeFragments(encrypted, chain.fragmentKey, chain.lastFragmentID)
+			chain.lastFragmentID++
 			logger.Debugf("[channel: %s] the payload of %d bytes is cut into %d fragments, resubmission ? %v",
 				chain.ChannelID(), len(encrypted), len(fragments), isResubmission)
 			for _, fragment := range fragments {
@@ -811,7 +743,7 @@ func (chain *chainImpl) enqueue(message *ab.HcsMessage, isResubmission bool) boo
 				if isResubmission {
 					producer = chain.singleNodeTopicProducer
 				}
-				if err = producer.SubmitConsensusMessage(data, chain.topicId); err != nil {
+				if err = producer.SubmitConsensusMessage(data, chain.topicID); err != nil {
 					logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
 					return false
 				}
@@ -823,6 +755,102 @@ func (chain *chainImpl) enqueue(message *ab.HcsMessage, isResubmission bool) boo
 	default: // Not ready yet
 		logger.Warningf("[channel: %s] Will not enqueue, consenter for this channel hasn't started yet", chain.ChannelID())
 		return false
+	}
+}
+
+func parseConfig(chain *chainImpl) {
+	config := chain.consenter.sharedHcsConfig()
+	nodes := config.Nodes
+	if len(nodes) == 0 {
+		logger.Panicf("[channel: %s] empty nodes in sharedHcsConfig", chain.ChannelID())
+	}
+	chain.network = make(map[string]hedera.AccountID, len(nodes))
+	for addr, acc := range nodes {
+		accountID, err := hedera.AccountIDFromString(acc)
+		if err != nil {
+			logger.Panicf("[channel: %s] invalid account ID = %v", chain.ChannelID(), err)
+		}
+		chain.network[addr] = accountID
+	}
+
+	var err error
+	if chain.operatorID, err = hedera.AccountIDFromString(config.Operator.Id); err != nil {
+		logger.Panicf("[channel: %s] invalid operator ID = %v", chain.ChannelID(), err)
+	}
+	if chain.operatorPrivateKey, err = hedera.Ed25519PrivateKeyFromString(config.Operator.PrivateKey.Key); err != nil {
+		logger.Panicf("[channel: %s] invalid operator private key = %v", chain.ChannelID(), err)
+	}
+	if chain.topicID, err = hedera.TopicIDFromString(chain.SharedConfig().Hcs().TopicId); err != nil {
+		logger.Panicf("[channel: %s] invalid hcs topic id = %v", chain.ChannelID(), err)
+	}
+}
+
+func setupTopicProducer(
+	hcf factory.HcsClientFactory,
+	network map[string]hedera.AccountID,
+	operator hedera.AccountID,
+	privateKey hedera.Ed25519PrivateKey,
+) (client factory.ConsensusClient, singleNodeClient factory.ConsensusClient, err error) {
+	if client, err = hcf.GetConsensusClient(network, operator, privateKey); err != nil {
+		return nil, nil, err
+	}
+
+	address, id := getRandomNode(network)
+	singleNetwork := map[string]hedera.AccountID{address: id}
+	if singleNodeClient, err = hcf.GetConsensusClient(singleNetwork, operator, privateKey); err != nil {
+		client.Close()
+		return nil, nil, err
+	}
+
+	return client, singleNodeClient, nil
+}
+
+func getRandomNode(network map[string]hedera.AccountID) (string, hedera.AccountID) {
+	index := rand.Intn(len(network))
+	for address, id := range network {
+		if index == 0 {
+			return address, id
+		}
+		index--
+	}
+	return "", hedera.AccountID{}
+}
+
+func startSubscription(chain *chainImpl) {
+	var startTime time.Time
+	if chain.lastCutBlockNumber == chain.lastFragmentFreeBlockNumber {
+		startTime = chain.lastConsensusTimestampPersisted
+	} else {
+		if chain.lastFragmentFreeBlockNumber > chain.lastCutBlockNumber {
+			logger.Panicf("[channel: %s] corrupted metadata? chain.lastFragmentFreeBlockNumber(%d) > chain.lastCutBlockNumber(%d)",
+				chain.ChannelID(), chain.lastFragmentFreeBlockNumber, chain.lastCutBlockNumber)
+		}
+		block := chain.Block(chain.lastFragmentFreeBlockNumber)
+		if block == nil {
+			logger.Panicf("[channel: %s] failed to read last fragment free block (%d)", chain.ChannelID(), chain.lastFragmentFreeBlockNumber)
+		}
+		metadata, err := protoutil.GetMetadataFromBlock(block, cb.BlockMetadataIndex_ORDERER)
+		if err != nil {
+			logger.Panicf("[channel: %s] failed to get metadata for block %d = %v", chain.ChannelID(), chain.lastFragmentFreeBlockNumber, err)
+		}
+		hcsMetadata := &ab.HcsMetadata{}
+		if err = proto.Unmarshal(metadata.GetValue(), hcsMetadata); err != nil {
+			logger.Panicf("[channel: %s] failed to unmarshal metadata to HcsMetadata = %v", chain.ChannelID(), err)
+		}
+		if startTime, err = ptypes.Timestamp(hcsMetadata.GetLastConsensusTimestampPersisted()); err != nil {
+			logger.Panicf("[channel: %s] failed to convert proto timestamp to time.Time = %v", chain.ChannelID(), err)
+		}
+		if !startTime.Before(chain.lastConsensusTimestampPersisted) {
+			logger.Panicf("[channel: %s] corrupted metadata? consensus timestamp of last fragment free block "+
+				"must be before chain.lastConsensusTimestampPersisted", chain.ChannelID())
+		}
+	}
+	if !startTime.Equal(unixEpoch) {
+		startTime = startTime.Add(time.Nanosecond)
+	}
+	var err error
+	if chain.topicSubscriptionHandle, err = chain.topicConsumer.SubscribeTopic(chain.topicID, &startTime, nil); err != nil {
+		logger.Panicf("[channel: %s] failed to subscribe to hcs topic %v", chain.ChannelID(), chain.topicID)
 	}
 }
 
@@ -866,22 +894,23 @@ func newHcsMetadata(
 	lastConsensusTimestampPersisted *timestamp.Timestamp,
 	lastOriginalSequenceProcessed uint64,
 	lastResubmittedConfigSequence uint64,
-	lastFragmentId uint64) *ab.HcsMetadata {
+	lastFragmentFreeBlockNumber uint64,
+) *ab.HcsMetadata {
 	return &ab.HcsMetadata{
 		LastConsensusTimestampPersisted: lastConsensusTimestampPersisted,
 		LastOriginalSequenceProcessed:   lastOriginalSequenceProcessed,
 		LastResubmittedConfigSequence:   lastResubmittedConfigSequence,
-		LastFragmentId:                  lastFragmentId,
+		LastFragmentFreeBlockNumber:     lastFragmentFreeBlockNumber,
 	}
 }
 
 func timestampProtoOrPanic(t *time.Time) *timestamp.Timestamp {
-	if ts, err := ptypes.TimestampProto(*t); err != nil {
-		logger.Panicf("failed to convert time.Time %v to google.protobuf.Timestamp = %v", t, err)
+	ts, err := ptypes.TimestampProto(*t)
+	if err != nil {
+		logger.Panicf("failed to convert time.Time to google.protobuf.Timestamp = %v", err)
 		return nil
-	} else {
-		return ts
 	}
+	return ts
 }
 
 func (chain *chainImpl) doneReprocessing() <-chan struct{} {
@@ -890,13 +919,13 @@ func (chain *chainImpl) doneReprocessing() <-chan struct{} {
 	return chain.doneReprocessingMsgInFlight
 }
 
-func (chain *chainImpl) reprocessConfigComplete() {
+func (chain *chainImpl) reprocessComplete() {
 	chain.doneReprocessingMutex.Lock()
 	defer chain.doneReprocessingMutex.Unlock()
 	close(chain.doneReprocessingMsgInFlight)
 }
 
-func (chain *chainImpl) reprocessConfigPending() {
+func (chain *chainImpl) reprocessPending() {
 	chain.doneReprocessingMutex.Lock()
 	defer chain.doneReprocessingMutex.Unlock()
 	chain.doneReprocessingMsgInFlight = make(chan struct{})
