@@ -6,6 +6,7 @@ package hcs
 
 import (
 	"fmt"
+
 	"github.com/hashgraph/hedera-sdk-go"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/flogging"
@@ -40,8 +41,16 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 		return nil, fmt.Errorf("invalid hcs topic id %s", support.SharedConfig().Hcs().TopicId)
 	}
 
-	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentId := getStateFromMetadata(metadata.Value, support.ChannelID())
-	ch, err := newChain(consenter, support, defaultHcsClientFactory, lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentId)
+	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentFreeBlockNumber := getStateFromMetadata(metadata.Value, support.ChannelID())
+	ch, err := newChain(
+		consenter,
+		support,
+		defaultHcsClientFactory,
+		lastConsensusTimestampPersisted,
+		lastOriginalSequenceProcessed,
+		lastResubmittedConfigSequence,
+		lastFragmentFreeBlockNumber,
+	)
 	if err != nil {
 		return nil, err
 	}

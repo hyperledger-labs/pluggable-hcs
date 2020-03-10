@@ -6,6 +6,7 @@ package hcs
 
 import (
 	"fmt"
+
 	ab "github.com/hyperledger/fabric-protos-go/orderer"
 )
 
@@ -17,6 +18,10 @@ func newFragmentSupport() *fragmentSupport {
 
 type fragmentSupport struct {
 	holders map[string]*fragmentHolder
+}
+
+func (processor *fragmentSupport) isPending() bool {
+	return len(processor.holders) != 0
 }
 
 func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) []byte {
@@ -56,12 +61,11 @@ func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) []
 		}
 		delete(processor.holders, holderKey)
 		return payload
-	} else {
-		return nil
 	}
+	return nil
 }
 
-func (processor *fragmentSupport) makeFragments(data []byte, fragmentKey string, fragmentId uint64) []*ab.HcsMessageFragment {
+func (processor *fragmentSupport) makeFragments(data []byte, fragmentKey string, fragmentID uint64) []*ab.HcsMessageFragment {
 	fragments := make([]*ab.HcsMessageFragment, (len(data)+fragmentSize-1)/fragmentSize)
 	for i := 0; i < len(fragments); i++ {
 		first := i * fragmentSize
@@ -72,7 +76,7 @@ func (processor *fragmentSupport) makeFragments(data []byte, fragmentKey string,
 		fragments[i] = &ab.HcsMessageFragment{
 			Fragment:       data[first:last],
 			FragmentKey:    fragmentKey,
-			FragmentId:     fragmentId,
+			FragmentId:     fragmentID,
 			Sequence:       uint32(i),
 			TotalFragments: uint32(len(fragments)),
 		}
