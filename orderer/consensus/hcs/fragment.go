@@ -13,23 +13,99 @@ import (
 const fragmentSize = 3800
 
 func newFragmentSupport() *fragmentSupport {
-	return &fragmentSupport{holders: make(map[string]*fragmentHolder)}
+	return &fragmentSupport{
+		holders:    map[string]*fragmentHolder{},
+		holderAges: []map[string]*holderAgeInfo{},
+	}
 }
 
 type fragmentSupport struct {
-	holders map[string]*fragmentHolder
+	holders    map[string]*fragmentHolder
+	holderAges []map[string]*holderAgeInfo
 }
 
 func (processor *fragmentSupport) isPending() bool {
 	return len(processor.holders) != 0
 }
 
-func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) []byte {
-	if fragment.TotalFragments == 1 {
-		return fragment.Fragment
+func (processor *fragmentSupport) ageAll(holder *fragmentHolder, holderKey string, completed bool) {
+	if holder != nil {
+		if holder.ageInfo.ageInfoRef != nil {
+			// delete it from the current holderAgeInfo map
+			delete(holder.ageInfo.ageInfoRef, holderKey)
+		}
+		// create a new age zero entry and prepend age zero to the array
+		var ageZero map[string]*holderAgeInfo
+		if !completed {
+			// the holder is pending complete reassembly
+			ageZero = map[string]*holderAgeInfo{holderKey: &holder.ageInfo}
+		}
+		holder.ageInfo.ageInfoRef = ageZero
+		processor.holderAges = append([]map[string]*holderAgeInfo{ageZero}, processor.holderAges...)
+	} else {
+		// aging caused by a single-fragment message, so holder is nil
+		processor.holderAges = append([]map[string]*holderAgeInfo{nil}, processor.holderAges...)
+	}
+}
+
+func (processor *fragmentSupport) expire(maxAge int) {
+	if maxAge <= 0 {
+		logger.Errorf("invalid maxAge - %d", maxAge)
+		return
 	}
 
-	holderKey := fmt.Sprintf("%s%d", fragment.FragmentKey, fragment.FragmentId)
+	lastIndex := len(processor.holderAges) - 1
+	for {
+		if lastIndex < maxAge {
+			break
+		}
+
+		if oldest := processor.holderAges[lastIndex]; oldest != nil {
+			for holderKey := range oldest {
+				if _, ok := processor.holders[holderKey]; !ok {
+					logger.Errorf("unable to find fragment holder with key \"%s\"", holderKey)
+				} else {
+					delete(processor.holders, holderKey)
+					logger.Infof("drop fragments with key(%s) per the expiring policy", holderKey)
+				}
+			}
+		}
+		processor.holderAges[lastIndex] = nil
+		processor.holderAges = processor.holderAges[:lastIndex]
+		lastIndex--
+	}
+
+	// remove consecutive trailing empty/nil entries
+	for {
+		if lastIndex < 0 ||
+			(processor.holderAges[lastIndex] != nil && len(processor.holderAges[lastIndex]) != 0) {
+			break
+		}
+
+		processor.holderAges[lastIndex] = nil
+		processor.holderAges = processor.holderAges[:lastIndex]
+		lastIndex--
+	}
+}
+
+func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) (reassembled []byte) {
+	holderKey := ""
+	isFragmentValid := true
+	var holder *fragmentHolder
+	completed := false
+	defer func() {
+		if isFragmentValid {
+			processor.ageAll(holder, holderKey, completed)
+		}
+	}()
+
+	if fragment.TotalFragments == 1 {
+		reassembled = fragment.Fragment
+		completed = true
+		return
+	}
+
+	holderKey = makeHolderKey(fragment.FragmentKey, fragment.FragmentId)
 	holder, ok := processor.holders[holderKey]
 	if !ok {
 		holder = newFragmentHolder(fragment.TotalFragments)
@@ -39,12 +115,14 @@ func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) []
 	sequence := fragment.Sequence
 	if sequence >= uint32(len(holder.fragments)) {
 		logger.Errorf("fragment sequence %d is out of bound %d", sequence, len(holder.fragments))
-		return nil
+		isFragmentValid = false
+		return
 	}
 
 	if holder.fragments[sequence] != nil {
-		logger.Warningf("bug, duplicate wrap at index %d received", sequence)
-		return nil
+		logger.Warningf("bug, duplicate fragment at index %d received", sequence)
+		isFragmentValid = false
+		return
 	}
 
 	holder.fragments[sequence] = fragment
@@ -54,15 +132,15 @@ func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) []
 	logger.Debugf("processed %d fragment of fragment id %d, total of %d fragments, %d bytes of data",
 		sequence, fragment.FragmentId, fragment.TotalFragments, holder.size)
 	if holder.count == uint32(len(holder.fragments)) {
-		payload := make([]byte, 0, holder.size)
+		reassembled = make([]byte, 0, holder.size)
 		for _, f := range holder.fragments {
-			payload = append(payload, f.Fragment...)
-			logger.Debugf("seq %d, add %d bytes, payload size is now %d, cap %d", f.Sequence, len(f.Fragment), len(payload), cap(payload))
+			reassembled = append(reassembled, f.Fragment...)
+			logger.Debugf("seq %d, add %d bytes, payload size is now %d, cap %d", f.Sequence, len(f.Fragment), len(reassembled), cap(reassembled))
 		}
 		delete(processor.holders, holderKey)
-		return payload
+		completed = true
 	}
-	return nil
+	return
 }
 
 func (processor *fragmentSupport) makeFragments(data []byte, fragmentKey string, fragmentID uint64) []*ab.HcsMessageFragment {
@@ -88,12 +166,18 @@ type fragmentHolder struct {
 	fragments []*ab.HcsMessageFragment
 	count     uint32
 	size      uint32
+	ageInfo   holderAgeInfo
 }
 
 func newFragmentHolder(total uint32) *fragmentHolder {
-	return &fragmentHolder{
-		fragments: make([]*ab.HcsMessageFragment, total),
-		count:     0,
-		size:      0,
-	}
+	return &fragmentHolder{fragments: make([]*ab.HcsMessageFragment, total)}
+}
+
+type holderAgeInfo struct {
+	ageInfoRef map[string]*holderAgeInfo
+}
+
+// helper functions
+func makeHolderKey(fragmentKey string, fragmentID uint64) string {
+	return fmt.Sprintf("%s%d", fragmentKey, fragmentID)
 }

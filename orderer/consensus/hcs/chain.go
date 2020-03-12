@@ -60,15 +60,6 @@ func getStateFromMetadata(metadataValue []byte, chainID string) (time.Time, uint
 	return unixEpoch, 0, 0, 0
 }
 
-func makeRandomKey(prefix string) string {
-	data := make([]byte, 128)
-	rand.Seed(time.Now().UnixNano())
-	rand.Read(data)
-	data = append(data, []byte(prefix)...)
-	sum := md5.Sum(data)
-	return hex.EncodeToString(sum[:])[0:16]
-}
-
 func newChain(
 	consenter commonConsenter,
 	support consensus.ConsenterSupport,
@@ -110,6 +101,7 @@ func newChain(
 		startChan:                       make(chan struct{}),
 		doneReprocessingMsgInFlight:     doneReprocessingMsgInFlight,
 		fragmenter:                      newFragmentSupport(),
+		maxFragmentAge:                  calcMaxFragmentAge(200, len(support.ChannelConfig().OrdererAddresses())),
 		fragmentKey:                     makeRandomKey(consenter.sharedHcsConfig().Operator.Id),
 		gcmCipher:                       makeGCMCipher(aesKeyFilename),
 		nonceReader:                     crand.Reader,
@@ -154,8 +146,9 @@ type chainImpl struct {
 	topicConsumer           factory.MirrorClient
 	topicSubscriptionHandle factory.MirrorSubscriptionHandle
 
-	fragmenter  *fragmentSupport
-	fragmentKey string
+	fragmenter     *fragmentSupport
+	maxFragmentAge int
+	fragmentKey    string
 
 	gcmCipher   cipher.AEAD
 	nonceReader io.Reader
@@ -320,6 +313,7 @@ func (chain *chainImpl) processMessages() error {
 				logger.Panicf("[channel: %s] failed to unmarshal ordered message into HCS fragment = %v", chain.ChannelID(), err)
 			}
 			encrypted := chain.fragmenter.reassemble(fragment)
+			chain.fragmenter.expire(chain.maxFragmentAge)
 			if encrypted == nil {
 				logger.Debugf("need more fragments to reassemble the HCS message")
 				continue
@@ -598,6 +592,9 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts *tim
 		}
 
 		chain.commitConfigMessage(env, ts, newSeq)
+		// new configuration is applied, number of orderers may have changed
+		chain.maxFragmentAge = calcMaxFragmentAge(200, len(chain.ChannelConfig().OrdererAddresses()))
+		logger.Debugf("[channel: %s] channel configuration has changed, updated maxFragmentAge to %d", chain.ChannelID(), chain.maxFragmentAge)
 
 	default:
 		return errors.Errorf("unsupported regular HCS message type: %v", msg.Class.String())
@@ -785,37 +782,6 @@ func parseConfig(chain *chainImpl) {
 	}
 }
 
-func setupTopicProducer(
-	hcf factory.HcsClientFactory,
-	network map[string]hedera.AccountID,
-	operator hedera.AccountID,
-	privateKey hedera.Ed25519PrivateKey,
-) (client factory.ConsensusClient, singleNodeClient factory.ConsensusClient, err error) {
-	if client, err = hcf.GetConsensusClient(network, operator, privateKey); err != nil {
-		return nil, nil, err
-	}
-
-	address, id := getRandomNode(network)
-	singleNetwork := map[string]hedera.AccountID{address: id}
-	if singleNodeClient, err = hcf.GetConsensusClient(singleNetwork, operator, privateKey); err != nil {
-		client.Close()
-		return nil, nil, err
-	}
-
-	return client, singleNodeClient, nil
-}
-
-func getRandomNode(network map[string]hedera.AccountID) (string, hedera.AccountID) {
-	index := rand.Intn(len(network))
-	for address, id := range network {
-		if index == 0 {
-			return address, id
-		}
-		index--
-	}
-	return "", hedera.AccountID{}
-}
-
 func startSubscription(chain *chainImpl) {
 	var startTime time.Time
 	if chain.lastCutBlockNumber == chain.lastFragmentFreeBlockNumber {
@@ -852,6 +818,55 @@ func startSubscription(chain *chainImpl) {
 	if chain.topicSubscriptionHandle, err = chain.topicConsumer.SubscribeTopic(chain.topicID, &startTime, nil); err != nil {
 		logger.Panicf("[channel: %s] failed to subscribe to hcs topic %v", chain.ChannelID(), chain.topicID)
 	}
+}
+
+func (chain *chainImpl) doneReprocessing() <-chan struct{} {
+	chain.doneReprocessingMutex.Lock()
+	defer chain.doneReprocessingMutex.Unlock()
+	return chain.doneReprocessingMsgInFlight
+}
+
+func (chain *chainImpl) reprocessComplete() {
+	chain.doneReprocessingMutex.Lock()
+	defer chain.doneReprocessingMutex.Unlock()
+	close(chain.doneReprocessingMsgInFlight)
+}
+
+func (chain *chainImpl) reprocessPending() {
+	chain.doneReprocessingMutex.Lock()
+	defer chain.doneReprocessingMutex.Unlock()
+	chain.doneReprocessingMsgInFlight = make(chan struct{})
+}
+
+func setupTopicProducer(
+	hcf factory.HcsClientFactory,
+	network map[string]hedera.AccountID,
+	operator hedera.AccountID,
+	privateKey hedera.Ed25519PrivateKey,
+) (client factory.ConsensusClient, singleNodeClient factory.ConsensusClient, err error) {
+	if client, err = hcf.GetConsensusClient(network, operator, privateKey); err != nil {
+		return nil, nil, err
+	}
+
+	address, id := getRandomNode(network)
+	singleNetwork := map[string]hedera.AccountID{address: id}
+	if singleNodeClient, err = hcf.GetConsensusClient(singleNetwork, operator, privateKey); err != nil {
+		client.Close()
+		return nil, nil, err
+	}
+
+	return client, singleNodeClient, nil
+}
+
+func getRandomNode(network map[string]hedera.AccountID) (string, hedera.AccountID) {
+	index := rand.Intn(len(network))
+	for address, id := range network {
+		if index == 0 {
+			return address, id
+		}
+		index--
+	}
+	return "", hedera.AccountID{}
 }
 
 func newConfigMessage(config []byte, configSeq uint64, originalSeq uint64) *ab.HcsMessage {
@@ -913,20 +928,15 @@ func timestampProtoOrPanic(t *time.Time) *timestamp.Timestamp {
 	return ts
 }
 
-func (chain *chainImpl) doneReprocessing() <-chan struct{} {
-	chain.doneReprocessingMutex.Lock()
-	defer chain.doneReprocessingMutex.Unlock()
-	return chain.doneReprocessingMsgInFlight
+func makeRandomKey(prefix string) string {
+	data := make([]byte, 128)
+	rand.Seed(time.Now().UnixNano())
+	rand.Read(data)
+	data = append(data, []byte(prefix)...)
+	sum := md5.Sum(data)
+	return hex.EncodeToString(sum[:])[0:16]
 }
 
-func (chain *chainImpl) reprocessComplete() {
-	chain.doneReprocessingMutex.Lock()
-	defer chain.doneReprocessingMutex.Unlock()
-	close(chain.doneReprocessingMsgInFlight)
-}
-
-func (chain *chainImpl) reprocessPending() {
-	chain.doneReprocessingMutex.Lock()
-	defer chain.doneReprocessingMutex.Unlock()
-	chain.doneReprocessingMsgInFlight = make(chan struct{})
+func calcMaxFragmentAge(maxAgeBase int, numOrderers int) int {
+	return maxAgeBase * numOrderers
 }

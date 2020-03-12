@@ -46,8 +46,9 @@ func TestHandleChain(t *testing.T) {
 	mockOrdererHcs := &orderer.Hcs{TopicId: "0.0.19718"}
 	mockInvalidOrdererHcs := &orderer.Hcs{TopicId: "invalid hcs topic id"}
 	mockSupport := &mockmultichannel.ConsenterSupport{
-		SharedConfigVal: mockOrderer,
-		ChannelIDVal:    channelNameForTest(t),
+		SharedConfigVal:  mockOrderer,
+		ChannelIDVal:     channelNameForTest(t),
+		ChannelConfigVal: newMockChannel(),
 	}
 
 	mockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&ab.HcsMetadata{

@@ -88,6 +88,7 @@ func newMockChannel() *mockhcs.ChannelConfig {
 	mockCapabilities.ConsensusTypeMigrationReturns(false)
 	mockChannel := &mockhcs.ChannelConfig{}
 	mockChannel.CapabilitiesReturns(mockCapabilities)
+	mockChannel.OrdererAddressesReturns([]string{"127.0.0.1:8086", "127.0.0.2:8086", "127.0.0.3:8086"})
 	return mockChannel
 }
 
@@ -1079,7 +1080,8 @@ func TestProcessMessages(t *testing.T) {
 			haltChan:               haltChan,
 			doneProcessingMessages: make(chan struct{}),
 
-			fragmenter: newFragmentSupport(),
+			fragmenter:     newFragmentSupport(),
+			maxFragmentAge: 4 * len(mockSupport.ChannelConfig().OrdererAddresses()),
 		}
 
 		if lastConsensusTimestampPersisted != nil {
@@ -1093,10 +1095,11 @@ func TestProcessMessages(t *testing.T) {
 		t.Run("PendingMsgToCutProper", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				BlockCutterVal:   mockblockcutter.NewReceiver(),
+				Blocks:           make(chan *cb.Block),
+				ChannelIDVal:     channelNameForTest(t),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
@@ -1143,10 +1146,11 @@ func TestProcessMessages(t *testing.T) {
 		t.Run("ReceiveTimeToCutProper", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				BlockCutterVal:   mockblockcutter.NewReceiver(),
+				Blocks:           make(chan *cb.Block),
+				ChannelIDVal:     channelNameForTest(t),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
@@ -1182,10 +1186,11 @@ func TestProcessMessages(t *testing.T) {
 		t.Run("ReceiveTimeToCutZeroBatch", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				BlockCutterVal:   mockblockcutter.NewReceiver(),
+				Blocks:           make(chan *cb.Block),
+				ChannelIDVal:     channelNameForTest(t),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				ChannelConfigVal: newMockChannel(),
 			}
 			defer close(mockSupport.BlockCutterVal.Block)
 			hcf := newDefaultMockHcsClientFactory()
@@ -1217,10 +1222,11 @@ func TestProcessMessages(t *testing.T) {
 		t.Run("ReceiveTimeToCutLargerThanExpected", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				BlockCutterVal:   mockblockcutter.NewReceiver(),
+				Blocks:           make(chan *cb.Block),
+				ChannelIDVal:     channelNameForTest(t),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				ChannelConfigVal: newMockChannel(),
 			}
 			defer close(mockSupport.BlockCutterVal.Block)
 			hcf := newDefaultMockHcsClientFactory()
@@ -1252,10 +1258,11 @@ func TestProcessMessages(t *testing.T) {
 
 		t.Run("ReceiveTimeToCutStale", func(t *testing.T) {
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				BlockCutterVal:   mockblockcutter.NewReceiver(),
+				Blocks:           make(chan *cb.Block),
+				ChannelIDVal:     channelNameForTest(t),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				ChannelConfigVal: newMockChannel(),
 			}
 			lastCutBlockNumber := uint64(3)
 			hcf := newDefaultMockHcsClientFactory()
@@ -1291,10 +1298,11 @@ func TestProcessMessages(t *testing.T) {
 		t.Run("Error", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				BlockCutterVal:   mockblockcutter.NewReceiver(),
+				Blocks:           make(chan *cb.Block),
+				ChannelIDVal:     channelNameForTest(t),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
@@ -1327,10 +1335,11 @@ func TestProcessMessages(t *testing.T) {
 			t.Run("ReceiveTwoRegularAndCutTwoBlocks", func(t *testing.T) {
 				lastCutBlockNumber := uint64(3)
 				mockSupport := &mockmultichannel.ConsenterSupport{
-					BlockCutterVal:  mockblockcutter.NewReceiver(),
-					Blocks:          make(chan *cb.Block),
-					ChannelIDVal:    channelNameForTest(t),
-					SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
+					BlockCutterVal:   mockblockcutter.NewReceiver(),
+					Blocks:           make(chan *cb.Block),
+					ChannelIDVal:     channelNameForTest(t),
+					SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
 				chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
@@ -1391,10 +1400,11 @@ func TestProcessMessages(t *testing.T) {
 			t.Run("ReceiveRegularAndQueue", func(t *testing.T) {
 				lastCutBlockNumber := uint64(3)
 				mockSupport := &mockmultichannel.ConsenterSupport{
-					BlockCutterVal:  mockblockcutter.NewReceiver(),
-					Blocks:          make(chan *cb.Block),
-					ChannelIDVal:    channelNameForTest(t),
-					SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
+					BlockCutterVal:   mockblockcutter.NewReceiver(),
+					Blocks:           make(chan *cb.Block),
+					ChannelIDVal:     channelNameForTest(t),
+					SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
 				chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
@@ -1429,10 +1439,11 @@ func TestProcessMessages(t *testing.T) {
 			t.Run("ReceiveConfigEnvelopeAndCut", func(t *testing.T) {
 				lastCutBlockNumber := uint64(3)
 				mockSupport := &mockmultichannel.ConsenterSupport{
-					BlockCutterVal:  mockblockcutter.NewReceiver(),
-					Blocks:          make(chan *cb.Block),
-					ChannelIDVal:    channelNameForTest(t),
-					SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
+					BlockCutterVal:   mockblockcutter.NewReceiver(),
+					Blocks:           make(chan *cb.Block),
+					ChannelIDVal:     channelNameForTest(t),
+					SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
 				chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
@@ -1498,6 +1509,7 @@ func TestProcessMessages(t *testing.T) {
 					SharedConfigVal:     newMockOrderer(shortTimeout/2, &goodHcsConfig),
 					SequenceVal:         uint64(1), // config sequence 1
 					ProcessConfigMsgErr: fmt.Errorf("invalid config message"),
+					ChannelConfigVal:    newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
 				chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
@@ -1536,10 +1548,11 @@ func TestProcessMessages(t *testing.T) {
 			lastFragmentFreeBlockNumber := uint64(1)
 			lastCutBlockNumber := uint64(3)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				BlockCutterVal:   mockblockcutter.NewReceiver(),
+				Blocks:           make(chan *cb.Block),
+				ChannelIDVal:     channelNameForTest(t),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			lastConsensusTimestampPersisted := time.Now().Add(-time.Hour)
@@ -1649,7 +1662,8 @@ func TestResubmission(t *testing.T) {
 			doneProcessingMessages:      make(chan struct{}),
 			doneReprocessingMsgInFlight: doneReprocessingMsgInFlight,
 
-			fragmenter: newFragmentSupport(),
+			fragmenter:     newFragmentSupport(),
+			maxFragmentAge: 4 * len(mockSupport.ChannelConfig().OrdererAddresses()),
 		}
 	}
 	var err error
@@ -1661,10 +1675,11 @@ func TestResubmission(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(5)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				SharedConfigVal: newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				BlockCutterVal:   mockblockcutter.NewReceiver(),
+				Blocks:           make(chan *cb.Block),
+				ChannelIDVal:     channelNameForTest(t),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastOriginalSequenceProcessed, false, mockSupport, hcf)
@@ -1712,12 +1727,13 @@ func TestResubmission(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(5)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				HeightVal:       lastCutBlockNumber,
-				SharedConfigVal: newMockOrderer(longTimeout, &goodHcsConfig),
-				SequenceVal:     uint64(0),
+				BlockCutterVal:   mockblockcutter.NewReceiver(),
+				Blocks:           make(chan *cb.Block),
+				ChannelIDVal:     channelNameForTest(t),
+				HeightVal:        lastCutBlockNumber,
+				SharedConfigVal:  newMockOrderer(longTimeout, &goodHcsConfig),
+				SequenceVal:      uint64(0),
+				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastOriginalSequenceProcessed, false, mockSupport, hcf)
@@ -1782,6 +1798,7 @@ func TestResubmission(t *testing.T) {
 				SharedConfigVal:     newMockOrderer(shortTimeout/2, &goodHcsConfig),
 				SequenceVal:         uint64(1),
 				ProcessNormalMsgErr: fmt.Errorf("invalid normal message"),
+				ChannelConfigVal:    newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastOriginalSequenceProcessed, false, mockSupport, hcf)
@@ -1821,13 +1838,14 @@ func TestResubmission(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(0)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				HeightVal:       lastCutBlockNumber,
-				SharedConfigVal: newMockOrderer(longTimeout, &goodHcsConfig),
-				SequenceVal:     uint64(1),
-				ConfigSeqVal:    uint64(1),
+				BlockCutterVal:   mockblockcutter.NewReceiver(),
+				Blocks:           make(chan *cb.Block),
+				ChannelIDVal:     channelNameForTest(t),
+				HeightVal:        lastCutBlockNumber,
+				SharedConfigVal:  newMockOrderer(longTimeout, &goodHcsConfig),
+				SequenceVal:      uint64(1),
+				ConfigSeqVal:     uint64(1),
+				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastOriginalSequenceProcessed, false, mockSupport, hcf)
@@ -1898,13 +1916,14 @@ func TestResubmission(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(5)
 			mockSupport := &mockmultichannel.ConsenterSupport{
-				BlockCutterVal:  mockblockcutter.NewReceiver(),
-				Blocks:          make(chan *cb.Block),
-				ChannelIDVal:    channelNameForTest(t),
-				HeightVal:       lastCutBlockNumber,
-				SharedConfigVal: newMockOrderer(longTimeout, &goodHcsConfig),
-				SequenceVal:     uint64(1),
-				ConfigSeqVal:    uint64(1),
+				BlockCutterVal:   mockblockcutter.NewReceiver(),
+				Blocks:           make(chan *cb.Block),
+				ChannelIDVal:     channelNameForTest(t),
+				HeightVal:        lastCutBlockNumber,
+				SharedConfigVal:  newMockOrderer(longTimeout, &goodHcsConfig),
+				SequenceVal:      uint64(1),
+				ConfigSeqVal:     uint64(1),
+				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastOriginalSequenceProcessed, false, mockSupport, hcf)
@@ -1952,6 +1971,7 @@ func TestResubmission(t *testing.T) {
 				SequenceVal:         uint64(1),
 				ConfigSeqVal:        uint64(1),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
+				ChannelConfigVal:    newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastOriginalSequenceProcessed, false, mockSupport, hcf)
@@ -2025,6 +2045,7 @@ func TestResubmission(t *testing.T) {
 				SequenceVal:         uint64(2),
 				ConfigSeqVal:        uint64(2),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
+				ChannelConfigVal:    newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastOriginalSequenceProcessed, true, mockSupport, hcf)
@@ -2086,6 +2107,7 @@ func TestResubmission(t *testing.T) {
 				SequenceVal:               uint64(1),
 				ConfigSeqVal:              uint64(1),
 				ProcessConfigUpdateMsgErr: fmt.Errorf("invalid config message"),
+				ChannelConfigVal:          newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastOriginalSequenceProcessed, false, mockSupport, hcf)
@@ -2133,6 +2155,7 @@ func TestResubmission(t *testing.T) {
 				SequenceVal:         uint64(1),
 				ConfigSeqVal:        uint64(1),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
+				ChannelConfigVal:    newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
 			chain := newBareMinimumChain(t, lastCutBlockNumber, lastOriginalSequenceProcessed, false, mockSupport, hcf)
