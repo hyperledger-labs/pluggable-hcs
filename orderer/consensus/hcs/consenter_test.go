@@ -51,22 +51,20 @@ func TestHandleChain(t *testing.T) {
 		ChannelConfigVal: newMockChannel(),
 	}
 
+	zeroTimestamp := timestamp.Timestamp{Seconds: 0, Nanos: 0}
 	mockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&ab.HcsMetadata{
-		LastConsensusTimestampPersisted: &timestamp.Timestamp{
-			Seconds: 0,
-			Nanos:   0,
-		},
-		LastOriginalSequenceProcessed: 0,
-		LastResubmittedConfigSequence: 0,
-		LastFragmentFreeBlockNumber:   0,
+		LastConsensusTimestampPersisted:             &zeroTimestamp,
+		LastOriginalSequenceProcessed:               0,
+		LastResubmittedConfigSequence:               0,
+		LastFragmentFreeConsensusTimestampPersisted: &zeroTimestamp,
 	})}
 	mockEmptyMetadata := &cb.Metadata{}
 	mockCorruptedMetadata := &cb.Metadata{Value: []byte("corrupted data")}
 	mockInvalidTimestampMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&ab.HcsMetadata{
-		LastConsensusTimestampPersisted: nil,
-		LastOriginalSequenceProcessed:   0,
-		LastResubmittedConfigSequence:   0,
-		LastFragmentFreeBlockNumber:     0,
+		LastConsensusTimestampPersisted:             nil,
+		LastOriginalSequenceProcessed:               0,
+		LastResubmittedConfigSequence:               0,
+		LastFragmentFreeConsensusTimestampPersisted: nil,
 	})}
 
 	t.Run("With Valid Config", func(t *testing.T) {
