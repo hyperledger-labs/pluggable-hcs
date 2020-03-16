@@ -108,9 +108,8 @@ func TestChain(t *testing.T) {
 	newestConsensusTimestamp := unixEpoch.Add(time.Hour * 1000)
 	lastOriginalOffsetProcessed := uint64(0)
 	lastResubmittedConfigOffset := uint64(0)
-	lastFragmentFreeBlockNumber := uint64(2)
 
-	newMocks := func(t *testing.T, channelBlockHeight uint64) (mockConsenter *consenterImpl, mockSupport *mockmultichannel.ConsenterSupport) {
+	newMocks := func(t *testing.T) (mockConsenter *consenterImpl, mockSupport *mockmultichannel.ConsenterSupport) {
 		mockConsenter = &consenterImpl{
 			&localconfig.Hcs{
 				Nodes:             map[string]string{"127.0.0.1:50211": "0.0.3", "127.0.0.2:50211": "0.0.4"},
@@ -130,7 +129,7 @@ func TestChain(t *testing.T) {
 			BlockCutterVal:   mockblockcutter.NewReceiver(),
 			Blocks:           make(chan *cb.Block),
 			ChannelIDVal:     channelNameForTest(t),
-			HeightVal:        channelBlockHeight,
+			HeightVal:        uint64(3),
 			SharedConfigVal:  newMockOrderer(shortTimeout, &goodHcsConfig),
 			ChannelConfigVal: newMockChannel(),
 		}
@@ -159,9 +158,17 @@ func TestChain(t *testing.T) {
 	}
 
 	t.Run("New", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		hcf := newDefaultMockHcsClientFactory()
-		chain, err := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, err := newChain(
+			mockConsenter,
+			mockSupport,
+			hcf,
+			oldestConsensusTimestamp,
+			lastOriginalOffsetProcessed,
+			lastResubmittedConfigOffset,
+			oldestConsensusTimestamp,
+		)
 
 		assert.NoError(t, err, "Expected newChain to return without errors")
 		select {
@@ -186,14 +193,14 @@ func TestChain(t *testing.T) {
 		}
 
 		assert.Equal(t, chain.lastCutBlockNumber, mockSupport.Height()-1)
-		assert.Equal(t, chain.lastConsensusTimestampPersisted, unixEpoch)
+		assert.Equal(t, chain.lastConsensusTimestampPersisted, oldestConsensusTimestamp)
 		assert.Equal(t, chain.lastOriginalSequenceProcessed, lastOriginalOffsetProcessed)
 		assert.Equal(t, chain.lastResubmittedConfigSequence, lastResubmittedConfigOffset)
-		assert.Equal(t, chain.lastFragmentFreeBlockNumber, lastFragmentFreeBlockNumber)
+		assert.Equal(t, chain.lastFragmentFreeConsensusTimestamp, oldestConsensusTimestamp)
 	})
 
 	t.Run("Start", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		hcf := newDefaultMockHcsClientFactory()
 		chain, _ := newChain(
 			mockConsenter,
@@ -202,7 +209,7 @@ func TestChain(t *testing.T) {
 			oldestConsensusTimestamp,
 			lastOriginalOffsetProcessed,
 			lastResubmittedConfigOffset,
-			lastFragmentFreeBlockNumber,
+			oldestConsensusTimestamp,
 		)
 
 		chain.Start()
@@ -228,9 +235,17 @@ func TestChain(t *testing.T) {
 	})
 
 	t.Run("StartWithNonUnixEpochLastConsensusTimestamp", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		hcf := newDefaultMockHcsClientFactory()
-		chain, _ := newChain(mockConsenter, mockSupport, hcf, newestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, _ := newChain(
+			mockConsenter,
+			mockSupport,
+			hcf,
+			newestConsensusTimestamp,
+			lastOriginalOffsetProcessed,
+			lastResubmittedConfigOffset,
+			newestConsensusTimestamp,
+		)
 
 		chain.Start()
 		select {
@@ -254,105 +269,35 @@ func TestChain(t *testing.T) {
 	})
 
 	t.Run("RecollectPendingFragments", func(t *testing.T) {
-		t.Run("StartWithIncorrectLastFragmentFreeBlockNumber", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber)
+		t.Run("StartWithInvalidLastFragmentFreeConsensusTimestamp", func(t *testing.T) {
+			mockConsenter, mockSupport := newMocks(t)
 			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
-
-			assert.Panics(t, func() { startThread(chain) }, "Expected panic when lastFragmentFreeBlockNumber > chain.lastButBlockNumber")
-		})
-
-		t.Run("StartWithMissingLastFragmentFreeBlock", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+2)
-			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
-
-			assert.Panics(t, func() { startThread(chain) }, "Expected panic when missing last fragment free block")
-		})
-
-		t.Run("StartWithLastFragmentFreeBlockConsensusTimestampNotBeforeLastConsensusTimestampPersisted", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+2)
-			hcf := newDefaultMockHcsClientFactory()
-			lastFragmentFreeBlockConsensusTimestamp := time.Now().Add(-time.Hour)
-			lastConsensusTimestampPersisted := lastFragmentFreeBlockConsensusTimestamp.Add(-time.Millisecond)
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, lastConsensusTimestampPersisted, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
-
-			// create empty last fragment free block with metadata
-			protoTimestamp, err := ptypes.TimestampProto(lastFragmentFreeBlockConsensusTimestamp)
-			if err != nil {
-				t.Fatal("Expected time.Time to proto timestamp.Timestamp conversion successfull")
-			}
-			hcsMetadata := newHcsMetadata(
-				protoTimestamp,
+			chain, _ := newChain(
+				mockConsenter,
+				mockSupport,
+				hcf,
+				oldestConsensusTimestamp,
 				lastOriginalOffsetProcessed,
 				lastResubmittedConfigOffset,
-				lastFragmentFreeBlockNumber,
+				oldestConsensusTimestamp.Add(time.Nanosecond),
 			)
-			mockSupport.BlockByIndex = map[uint64]*cb.Block{lastFragmentFreeBlockNumber: newMockEmptyBlockWithMetadata(protoutil.MarshalOrPanic(hcsMetadata))}
 
-			assert.Panics(t, func() { startThread(chain) }, "Expected panic with incorrect last fragment free block consensus timestamp")
-		})
-
-		t.Run("StartWithInvalidOrdrerMetadataInLastFragmentFreeBlock", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+2)
-			hcf := newDefaultMockHcsClientFactory()
-			lastFragmentFreeBlockConsensusTimestamp := time.Now().Add(-time.Hour)
-			lastConsensusTimestampPersisted := lastFragmentFreeBlockConsensusTimestamp.Add(-time.Millisecond)
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, lastConsensusTimestampPersisted, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
-
-			// create empty last fragment free block with metadata )
-			block := protoutil.NewBlock(0, nil)
-			block.Metadata.Metadata[cb.BlockMetadataIndex_ORDERER] = []byte("invalid orderer metadata")
-			mockSupport.BlockByIndex = map[uint64]*cb.Block{lastFragmentFreeBlockNumber: block}
-
-			assert.Panics(t, func() { startThread(chain) }, "Expected panic with malformat metadata")
-		})
-
-		t.Run("StartWithMalformatMetadataInLastFragmentFreeBlock", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+2)
-			hcf := newDefaultMockHcsClientFactory()
-			lastFragmentFreeBlockConsensusTimestamp := time.Now().Add(-time.Hour)
-			lastConsensusTimestampPersisted := lastFragmentFreeBlockConsensusTimestamp.Add(-time.Millisecond)
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, lastConsensusTimestampPersisted, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
-
-			// create empty last fragment free block with metadata
-			mockSupport.BlockByIndex = map[uint64]*cb.Block{lastFragmentFreeBlockNumber: newMockEmptyBlockWithMetadata([]byte("malformat metadata"))}
-
-			assert.Panics(t, func() { startThread(chain) }, "Expected panic with malformat metadata")
-		})
-
-		t.Run("StartWithNilConsensusTimestampInLastFragmentFreeBlock", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+2)
-			hcf := newDefaultMockHcsClientFactory()
-			lastFragmentFreeBlockConsensusTimestamp := time.Now().Add(-time.Hour)
-			lastConsensusTimestampPersisted := lastFragmentFreeBlockConsensusTimestamp.Add(-time.Millisecond)
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, lastConsensusTimestampPersisted, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
-
-			// create empty last fragment free block with metadata )
-			mockSupport.BlockByIndex = map[uint64]*cb.Block{lastFragmentFreeBlockNumber: newMockEmptyBlockWithMetadata(nil)}
-
-			assert.Panics(t, func() { startThread(chain) }, "Expected panic with nil last fragment free block consensus timestamp")
+			assert.Panics(t, func() { startThread(chain) }, "Expected panic when lastFragmentFreeConsensusTimestamp > lastConsensusTimestampPersisted")
 		})
 
 		t.Run("StartProper", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+2)
+			mockConsenter, mockSupport := newMocks(t)
 			hcf := newDefaultMockHcsClientFactory()
-			lastFragmentFreeBlockConsensusTimestamp := time.Now().Add(-time.Hour)
-			lastConsensusTimestampPersisted := lastFragmentFreeBlockConsensusTimestamp.Add(10 * time.Millisecond)
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, lastConsensusTimestampPersisted, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
-
-			// create empty last fragment free block with metadata
-			protoTimestamp, err := ptypes.TimestampProto(lastFragmentFreeBlockConsensusTimestamp)
-			if err != nil {
-				t.Fatal("Expected time.Time to proto timestamp.Timestamp conversion successfull")
-			}
-			hcsMetadata := newHcsMetadata(
-				protoTimestamp,
+			lastFragmentFreeBlockConsensusTimestamp := newestConsensusTimestamp.Add(-10 * time.Minute)
+			chain, _ := newChain(
+				mockConsenter,
+				mockSupport,
+				hcf,
+				newestConsensusTimestamp,
 				lastOriginalOffsetProcessed,
 				lastResubmittedConfigOffset,
-				lastFragmentFreeBlockNumber,
+				lastFragmentFreeBlockConsensusTimestamp,
 			)
-			mockSupport.BlockByIndex = map[uint64]*cb.Block{lastFragmentFreeBlockNumber: newMockEmptyBlockWithMetadata(protoutil.MarshalOrPanic(hcsMetadata))}
 
 			chain.Start()
 			select {
@@ -362,6 +307,7 @@ func TestChain(t *testing.T) {
 				t.Fatal("startChan should have been closed by now")
 			}
 
+			var err error
 			doneWait := make(chan struct{})
 			go func() {
 				err = chain.WaitReady()
@@ -393,24 +339,19 @@ func TestChain(t *testing.T) {
 
 		// verifies when started with pending fragments to recollect, the orderer can
 		t.Run("ProperReprocess", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+2)
+			mockConsenter, mockSupport := newMocks(t)
 			hcf := newDefaultMockHcsClientFactory()
-			lastFragmentFreeBlockConsensusTimestamp := time.Now().Add(-time.Hour)
-			lastConsensusTimestampPersisted := lastFragmentFreeBlockConsensusTimestamp.Add(10 * time.Millisecond)
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, lastConsensusTimestampPersisted, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
-
-			// create empty last fragment free block with metadata
-			protoTimestamp, err := ptypes.TimestampProto(lastFragmentFreeBlockConsensusTimestamp)
-			if err != nil {
-				t.Fatal("Expected time.Time to proto timestamp.Timestamp conversion successfull")
-			}
-			hcsMetadata := newHcsMetadata(
-				protoTimestamp,
+			lastFragmentFreeBlockConsensusTimestamp := newestConsensusTimestamp.Add(-10 * time.Minute)
+			chain, _ := newChain(
+				mockConsenter,
+				mockSupport,
+				hcf,
+				newestConsensusTimestamp,
 				lastOriginalOffsetProcessed,
 				lastResubmittedConfigOffset,
-				lastFragmentFreeBlockNumber,
+				lastFragmentFreeBlockConsensusTimestamp,
 			)
-			mockSupport.BlockByIndex = map[uint64]*cb.Block{lastFragmentFreeBlockNumber: newMockEmptyBlockWithMetadata(protoutil.MarshalOrPanic(hcsMetadata))}
+			lastCutBlockNumber := chain.lastCutBlockNumber
 
 			chain.Start()
 			select {
@@ -420,6 +361,7 @@ func TestChain(t *testing.T) {
 				t.Fatal("startChan should have been closed by now")
 			}
 
+			var err error
 			doneWait := make(chan struct{})
 			go func() {
 				err = chain.WaitReady()
@@ -474,16 +416,24 @@ func TestChain(t *testing.T) {
 			assert.Equal(t, 1, waitNumBlocksUntil(mockSupport.Blocks, 1, shortTimeout), "Expected one block cut")
 
 			chain.Halt()
-			assert.Equal(t, lastFragmentFreeBlockNumber+2, chain.lastCutBlockNumber, "Expected lastCutBlockNumber increased by 1")
+			assert.Equal(t, lastCutBlockNumber+1, chain.lastCutBlockNumber, "Expected lastCutBlockNumber increased by 1")
 			assert.Equal(t, 0, len(chain.fragmenter.holders), "Expected no more pending fragments")
 		})
 
 		t.Run("ProperBlockMetadataWhenHaltWithPendingFragments", func(t *testing.T) {
 			// start with no pending fragments to recollect
-			lastCutBlockNumber := lastFragmentFreeBlockNumber
-			mockConsenter, mockSupport := newMocks(t, lastCutBlockNumber+1)
+			mockConsenter, mockSupport := newMocks(t)
 			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+			chain, _ := newChain(
+				mockConsenter,
+				mockSupport,
+				hcf,
+				oldestConsensusTimestamp,
+				lastOriginalOffsetProcessed,
+				lastResubmittedConfigOffset,
+				oldestConsensusTimestamp,
+			)
+			lastCutBlockNumber := chain.lastCutBlockNumber
 
 			chain.Start()
 			select {
@@ -498,7 +448,6 @@ func TestChain(t *testing.T) {
 			defer close(respSyncChan)
 			mockSupport.BlockCutterVal.CutNext = true
 
-			setNextConsensusTimestamp(chain.topicSubscriptionHandle, oldestConsensusTimestamp.Add(time.Nanosecond))
 			fragmentID := uint64(1)
 			data := make([]byte, fragmentSize*2+10)
 			hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
@@ -518,6 +467,7 @@ func TestChain(t *testing.T) {
 			assert.True(t, len(fragmentsOfMsg3) > 1, "Expected more than one fragments created for message 3")
 
 			// send all fragments of message 1, one block should be cut
+			setNextConsensusTimestamp(chain.topicSubscriptionHandle, oldestConsensusTimestamp.Add(time.Nanosecond))
 			var expectedBlock1ConsensusTimestamp time.Time
 			for index, fragment := range fragmentsOfMsg1 {
 				if index == len(fragmentsOfMsg1)-1 {
@@ -561,15 +511,15 @@ func TestChain(t *testing.T) {
 			assert.Equal(t, lastCutBlockNumber+2, chain.lastCutBlockNumber, "Expected lastCutBlockNumber increased by 2")
 			assert.Equal(t, timestampProtoOrPanic(&expectedBlock1ConsensusTimestamp), extractConsensusTimestamp(block1), "Expected consensus timestamp of block one to match")
 			assert.Equal(t, timestampProtoOrPanic(&expectedBlock2ConsensusTimestamp), extractConsensusTimestamp(block2), "Expected consensus timestamp of block two to match")
-			assert.Equal(t, lastCutBlockNumber+1, extractLastFragmentFreeBlockNumber(block1), "Expected correct lastFragmentFreeBlockNumber in block1")
-			assert.Equal(t, lastCutBlockNumber+1, extractLastFragmentFreeBlockNumber(block2), "Expected correct lastFragmentFreeBlockNumber in block2")
+			assert.Equal(t, timestampProtoOrPanic(&expectedBlock1ConsensusTimestamp), extractLastFragmentFreeConsensusTimestamp(block1), "Expected correct lastFragmentFreeBlockNumber in block1")
+			assert.Equal(t, timestampProtoOrPanic(&expectedBlock1ConsensusTimestamp), extractLastFragmentFreeConsensusTimestamp(block2), "Expected correct lastFragmentFreeBlockNumber in block2")
 		})
 	})
 
 	t.Run("Halt", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		hcf := newDefaultMockHcsClientFactory()
-		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 		chain.Start()
 		select {
@@ -616,9 +566,9 @@ func TestChain(t *testing.T) {
 	})
 
 	t.Run("DoubleHalt", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		hcf := newDefaultMockHcsClientFactory()
-		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 		chain.Start()
 		select {
@@ -633,9 +583,9 @@ func TestChain(t *testing.T) {
 	})
 
 	t.Run("HaltBeforeStart", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		hcf := newDefaultMockHcsClientFactory()
-		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 		go func() {
 			time.Sleep(shortTimeout)
@@ -664,29 +614,29 @@ func TestChain(t *testing.T) {
 	})
 
 	t.Run("StartWithTopicProducerError", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		getConsensusClient := func(network map[string]hedera.AccountID, operator hedera.AccountID, privateKey hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
 			return nil, fmt.Errorf("foo error")
 		}
 		hcf := newMockHcsClientFactory(getConsensusClient, nil)
-		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 		assert.Panics(t, func() { startThread(chain) }, "Expected the Start() call to panic")
 	})
 
 	t.Run("StartWithTopicConsumerError", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		getMirrorClient := func(endpoint string) (factory.MirrorClient, error) {
 			return nil, fmt.Errorf("foo error")
 		}
 		hcf := newMockHcsClientFactory(nil, getMirrorClient)
-		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 		assert.Panics(t, func() { startThread(chain) }, "Expected the Start() call to panic")
 	})
 
 	t.Run("StartWithTopicSubscriptionError", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		getMirrorClient := func(endpoint string) (factory.MirrorClient, error) {
 			mc := mockhcs.MirrorClient{}
 			mc.SubscribeTopicCalls(func(
@@ -699,22 +649,22 @@ func TestChain(t *testing.T) {
 			return &mc, nil
 		}
 		hcf := newMockHcsClientFactory(nil, getMirrorClient)
-		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 		assert.Panics(t, func() { startThread(chain) }, "Expected the Start() call to panic")
 	})
 
 	t.Run("enqueueIfNotStarted", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		hcf := newDefaultMockHcsClientFactory()
-		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 		// We don't need to create a legit envelope here as it's not inspected during this test
 		assert.False(t, chain.enqueue(newNormalMessage([]byte("testMessage"), uint64(1), uint64(0)), false), "Expected enqueue call to return false")
 	})
 
 	t.Run("enqueueProper", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		getConsensusClient := func(network map[string]hedera.AccountID, operator hedera.AccountID, privateKey hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
 			cs := mockhcs.ConsensusClient{}
 			cs.CloseCalls(func() error { return nil })
@@ -724,7 +674,7 @@ func TestChain(t *testing.T) {
 			return &cs, nil
 		}
 		hcf := newMockHcsClientFactory(getConsensusClient, nil)
-		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 		chain.Start()
 		select {
@@ -739,9 +689,9 @@ func TestChain(t *testing.T) {
 	})
 
 	t.Run("enqueueIfHalted", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		hcf := newDefaultMockHcsClientFactory()
-		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 		chain.Start()
 		select {
@@ -758,7 +708,7 @@ func TestChain(t *testing.T) {
 	})
 
 	t.Run("enqueueError", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+		mockConsenter, mockSupport := newMocks(t)
 		getConsensusClient := func(network map[string]hedera.AccountID, operator hedera.AccountID, privateKey hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
 			cs := mockhcs.ConsensusClient{}
 			cs.CloseCalls(func() error { return nil })
@@ -768,7 +718,7 @@ func TestChain(t *testing.T) {
 			return &cs, nil
 		}
 		hcf := newMockHcsClientFactory(getConsensusClient, nil)
-		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+		chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 		chain.Start()
 		select {
@@ -784,19 +734,19 @@ func TestChain(t *testing.T) {
 
 	t.Run("Order", func(t *testing.T) {
 		t.Run("ErrorIfNotStarted", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+			mockConsenter, mockSupport := newMocks(t)
 			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 			// We don't need to create a legit envelope here as it's not inspected during this test
 			assert.Error(t, chain.Order(&cb.Envelope{}, uint64(0)))
 		})
 
 		t.Run("Proper", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+			mockConsenter, mockSupport := newMocks(t)
 			mockSupport.BlockCutterVal = mockblockcutter.NewReceiver()
 			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 			savedLastCubBlockNumber := chain.lastCutBlockNumber
 
 			chain.Start()
@@ -814,12 +764,12 @@ func TestChain(t *testing.T) {
 		})
 
 		t.Run("TwoSingleEnvBlocks", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+			mockConsenter, mockSupport := newMocks(t)
 			mockSupport.Blocks = make(chan *cb.Block)
 			mockSupport.BlockCutterVal = mockblockcutter.NewReceiver()
 			mockSupport.BlockCutterVal.CutNext = true
 			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 			savedLastCubBlockNumber := chain.lastCutBlockNumber
 			close(mockSupport.BlockCutterVal.Block)
 
@@ -850,11 +800,11 @@ func TestChain(t *testing.T) {
 		})
 
 		t.Run("BatchLengthTwo", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+			mockConsenter, mockSupport := newMocks(t)
 			mockSupport.Blocks = make(chan *cb.Block)
 			mockSupport.BlockCutterVal = mockblockcutter.NewReceiver()
 			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 			savedLastCubBlockNumber := chain.lastCutBlockNumber
 
 			chain.Start()
@@ -880,20 +830,20 @@ func TestChain(t *testing.T) {
 
 	t.Run("Configure", func(t *testing.T) {
 		t.Run("ErrorIfNotStarted", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+			mockConsenter, mockSupport := newMocks(t)
 			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 			// We don't need to create a legit envelope here as it's not inspected during this test
 			assert.Error(t, chain.Configure(&cb.Envelope{}, uint64(0)))
 		})
 
 		t.Run("Proper", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+			mockConsenter, mockSupport := newMocks(t)
 			mockSupport.Blocks = make(chan *cb.Block)
 			mockSupport.BlockCutterVal = mockblockcutter.NewReceiver()
 			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 			savedLastCutBlockNumber := chain.lastCutBlockNumber
 			// no synchronization with blockcutter needed
 			close(mockSupport.BlockCutterVal.Block)
@@ -916,11 +866,11 @@ func TestChain(t *testing.T) {
 		})
 
 		t.Run("ProperWithPendingNormalMessage", func(*testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+			mockConsenter, mockSupport := newMocks(t)
 			mockSupport.Blocks = make(chan *cb.Block)
 			mockSupport.BlockCutterVal = mockblockcutter.NewReceiver()
 			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 			savedLastCutBlockNumber := chain.lastCutBlockNumber
 			// no synchronization with blockcutter needed
 			close(mockSupport.BlockCutterVal.Block)
@@ -945,11 +895,11 @@ func TestChain(t *testing.T) {
 
 	t.Run("TimeToCut", func(t *testing.T) {
 		t.Run("Proper", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+			mockConsenter, mockSupport := newMocks(t)
 			mockSupport.Blocks = make(chan *cb.Block)
 			mockSupport.BlockCutterVal = mockblockcutter.NewReceiver()
 			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 			savedLastCubBlockNumber := chain.lastCutBlockNumber
 			close(mockSupport.BlockCutterVal.Block)
 
@@ -970,7 +920,7 @@ func TestChain(t *testing.T) {
 		})
 
 		t.Run("WithError", func(t *testing.T) {
-			mockConsenter, mockSupport := newMocks(t, lastFragmentFreeBlockNumber+1)
+			mockConsenter, mockSupport := newMocks(t)
 			mockGetConsensusClient := func(network map[string]hedera.AccountID, operator hedera.AccountID, privateKey hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
 				mc := mockhcs.ConsensusClient{}
 				mc.SubmitConsensusMessageCalls(func(data []byte, topicId hedera.ConsensusTopicID) error {
@@ -979,7 +929,7 @@ func TestChain(t *testing.T) {
 				return &mc, nil
 			}
 			hcf := newMockHcsClientFactory(mockGetConsensusClient, nil)
-			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, lastFragmentFreeBlockNumber)
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 
 			assert.Error(t, chain.sendTimeToCut(), "Expect error from sendTimeToCut")
 		})
@@ -1030,11 +980,11 @@ func TestSetupProducerForChannel(t *testing.T) {
 func TestProcessMessages(t *testing.T) {
 	newBareMinimumChain := func(
 		t *testing.T,
-		lastFragmentFreeBlockNumber uint64,
 		lastCutBlockNumber uint64,
 		mockSupport consensus.ConsenterSupport,
 		hcf *hcsClientFactoryWithRecord,
 		lastConsensusTimestampPersisted *time.Time,
+		lastFragmentFreeConsensusTimestamp *time.Time,
 	) *chainImpl {
 		errorChan := make(chan struct{})
 		close(errorChan)
@@ -1067,8 +1017,7 @@ func TestProcessMessages(t *testing.T) {
 			consenter:        mockConsenter,
 			ConsenterSupport: mockSupport,
 
-			lastFragmentFreeBlockNumber: lastFragmentFreeBlockNumber,
-			lastCutBlockNumber:          lastCutBlockNumber,
+			lastCutBlockNumber: lastCutBlockNumber,
 
 			topicID:                 topicID,
 			topicProducer:           topicProducer,
@@ -1087,6 +1036,9 @@ func TestProcessMessages(t *testing.T) {
 		if lastConsensusTimestampPersisted != nil {
 			chain.lastConsensusTimestampPersisted = *lastConsensusTimestampPersisted
 		}
+		if lastFragmentFreeConsensusTimestamp != nil {
+			chain.lastFragmentFreeConsensusTimestamp = *lastFragmentFreeConsensusTimestamp
+		}
 		return chain
 	}
 	var err error
@@ -1102,7 +1054,7 @@ func TestProcessMessages(t *testing.T) {
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
-			chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
+			chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 
 			done := make(chan struct{})
 			go func() {
@@ -1153,7 +1105,7 @@ func TestProcessMessages(t *testing.T) {
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
-			chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
+			chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 			done := make(chan struct{})
 
 			go func() {
@@ -1194,7 +1146,7 @@ func TestProcessMessages(t *testing.T) {
 			}
 			defer close(mockSupport.BlockCutterVal.Block)
 			hcf := newDefaultMockHcsClientFactory()
-			chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
+			chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 			done := make(chan struct{})
 			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 			defer close(respSyncChan)
@@ -1230,7 +1182,7 @@ func TestProcessMessages(t *testing.T) {
 			}
 			defer close(mockSupport.BlockCutterVal.Block)
 			hcf := newDefaultMockHcsClientFactory()
-			chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
+			chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 			done := make(chan struct{})
 			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 			defer close(respSyncChan)
@@ -1266,7 +1218,7 @@ func TestProcessMessages(t *testing.T) {
 			}
 			lastCutBlockNumber := uint64(3)
 			hcf := newDefaultMockHcsClientFactory()
-			chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
+			chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 			done := make(chan struct{})
 			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 			defer close(respSyncChan)
@@ -1305,7 +1257,7 @@ func TestProcessMessages(t *testing.T) {
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
-			chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
+			chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 			done := make(chan struct{})
 			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 			defer close(respSyncChan)
@@ -1342,7 +1294,7 @@ func TestProcessMessages(t *testing.T) {
 					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
-				chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
+				chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 				done := make(chan struct{})
 				defer close(mockSupport.BlockCutterVal.Block)
 				respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
@@ -1407,7 +1359,7 @@ func TestProcessMessages(t *testing.T) {
 					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
-				chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
+				chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 				done := make(chan struct{})
 				close(mockSupport.BlockCutterVal.Block)
 				close(getRespSyncChan(chain.topicSubscriptionHandle))
@@ -1446,7 +1398,7 @@ func TestProcessMessages(t *testing.T) {
 					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
-				chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
+				chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 				done := make(chan struct{})
 				close(mockSupport.BlockCutterVal.Block)
 				respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
@@ -1512,7 +1464,7 @@ func TestProcessMessages(t *testing.T) {
 					ChannelConfigVal:    newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
-				chain := newBareMinimumChain(t, lastCutBlockNumber, lastCutBlockNumber, mockSupport, hcf, nil)
+				chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 				done := make(chan struct{})
 				close(mockSupport.BlockCutterVal.Block)
 				close(getRespSyncChan(chain.topicSubscriptionHandle))
@@ -1544,8 +1496,7 @@ func TestProcessMessages(t *testing.T) {
 	})
 
 	t.Run("RecollectPendingFragments", func(t *testing.T) {
-		t.Run("NoMessageMatchingLastConsensusTimestampPersisted", func(t *testing.T) {
-			lastFragmentFreeBlockNumber := uint64(1)
+		t.Run("ReceiveMessageWithFutureConsensusTimestamp", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
@@ -1555,8 +1506,9 @@ func TestProcessMessages(t *testing.T) {
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
-			lastConsensusTimestampPersisted := time.Now().Add(-time.Hour)
-			chain := newBareMinimumChain(t, lastFragmentFreeBlockNumber, lastCutBlockNumber, mockSupport, hcf, &lastConsensusTimestampPersisted)
+			lastConsensusTimestampPersisted := unixEpoch.Add(100 * time.Hour)
+			lastFragmentFreeConsensusTimestamp := lastConsensusTimestampPersisted.Add(-30 * time.Minute)
+			chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, &lastConsensusTimestampPersisted, &lastFragmentFreeConsensusTimestamp)
 			done := make(chan struct{})
 			close(mockSupport.BlockCutterVal.Block)
 			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
@@ -1647,7 +1599,6 @@ func TestResubmission(t *testing.T) {
 			ConsenterSupport: mockSupport,
 
 			lastOriginalSequenceProcessed: lastOriginalSequenceProcessed,
-			lastFragmentFreeBlockNumber:   lastCutBlockNumber,
 			lastCutBlockNumber:            lastCutBlockNumber,
 
 			topicID:                 topicID,
@@ -2216,6 +2167,59 @@ func TestResubmission(t *testing.T) {
 	})
 }
 
+func TestGetStateFromMetadata(t *testing.T) {
+	lastConsensusTimestampPersisted := unixEpoch.Add(4 * time.Hour)
+	lastOriginalSequenceProcessed := uint64(8)
+	lastResubmittedConfigSequence := uint64(6)
+	lastFragmentFreeConsensusTimestamp := unixEpoch.Add(3 * time.Hour)
+
+	t.Run("NilMetadataExpectDetaultsReturned", func(t *testing.T) {
+		lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentFreeConsensusTimestamp := getStateFromMetadata(nil, "test-channeL")
+		assert.Equal(t, unixEpoch, lastConsensusTimestampPersisted, "Expected lastConsensusTimestampPersisted to be unix epoch")
+		assert.Equal(t, uint64(0), lastOriginalSequenceProcessed, "Expected lastOriginalSequenceProcessed to be 0")
+		assert.Equal(t, uint64(0), lastResubmittedConfigSequence, "Expected lastResubmittedConfigSequence to be 0")
+		assert.Equal(t, unixEpoch, lastFragmentFreeConsensusTimestamp, "Expected lastFragmentFreeConsensusTimestamp to be unix epoch")
+	})
+
+	t.Run("ValidMetadataProper", func(t *testing.T) {
+		metadataValue := protoutil.MarshalOrPanic(newHcsMetadata(
+			timestampProtoOrPanic(&lastConsensusTimestampPersisted),
+			lastOriginalSequenceProcessed,
+			lastResubmittedConfigSequence,
+			timestampProtoOrPanic(&lastFragmentFreeConsensusTimestamp),
+		))
+		returnedLastConsensusTimestampPersisted, returnedLastOriginalSequenceProcessed, returnedLastResubmittedConfigSequence, returnedLastFragmentFreeConsensusTimestamp := getStateFromMetadata(metadataValue, "test-channel")
+		assert.Equal(t, lastConsensusTimestampPersisted.UnixNano(), returnedLastConsensusTimestampPersisted.UnixNano(), "Expected returned lastConsensusTimestampPersisted match")
+		assert.Equal(t, lastOriginalSequenceProcessed, returnedLastOriginalSequenceProcessed, "Expected returned lastOriginalSequenceProcessed match")
+		assert.Equal(t, lastResubmittedConfigSequence, returnedLastResubmittedConfigSequence, "Expected returned lastOriginalSequenceProcessed match")
+		assert.Equal(t, lastFragmentFreeConsensusTimestamp.UnixNano(), returnedLastFragmentFreeConsensusTimestamp.UnixNano(), "Expected returned lastFragmentFreeConsensusTimestamp match")
+	})
+
+	t.Run("CorruptedMetadata", func(t *testing.T) {
+		assert.Panics(t, func() { getStateFromMetadata(make([]byte, 4), "test-channel") }, "Expected getStateFromMetadata panic with corrupted metadata")
+	})
+
+	t.Run("NilLastConsensusTimestampPersisted", func(t *testing.T) {
+		metadataValue := protoutil.MarshalOrPanic(newHcsMetadata(
+			nil,
+			lastOriginalSequenceProcessed,
+			lastResubmittedConfigSequence,
+			timestampProtoOrPanic(&lastFragmentFreeConsensusTimestamp),
+		))
+		assert.Panics(t, func() { getStateFromMetadata(metadataValue, "test-channel") }, "Expected getStateFromMetadata panic with nil LastConsensusTimestampPersisted")
+	})
+
+	t.Run("NilLastFragmentFreeConsensusTimestamp", func(t *testing.T) {
+		metadataValue := protoutil.MarshalOrPanic(newHcsMetadata(
+			timestampProtoOrPanic(&lastConsensusTimestampPersisted),
+			lastOriginalSequenceProcessed,
+			lastResubmittedConfigSequence,
+			nil,
+		))
+		assert.Panics(t, func() { getStateFromMetadata(metadataValue, "test-channel") }, "Expected getStateFromMetadata panic with nil LastFragmentFreeConsensusTimestamp")
+	})
+}
+
 func TestParseConfig(t *testing.T) {
 	mockHcsConfig := localconfig.Hcs{
 		Nodes:             map[string]string{"127.0.0.1:50211": "0.0.3", "127.0.0.2:50211": "0.0.4"},
@@ -2329,17 +2333,17 @@ func TestNewHcsMetadata(t *testing.T) {
 	lastConsensusTimestampPersisted := ptypes.TimestampNow()
 	lastOriginalSequenceProcessed := uint64(12)
 	lastResubmittedConfigSequence := uint64(25)
-	lastFragmentFreeBlockNumber := uint64(7)
+	lastFragmentFreeConsensusTimestamp := lastConsensusTimestampPersisted
 	metadata := newHcsMetadata(
 		lastConsensusTimestampPersisted,
 		lastOriginalSequenceProcessed,
 		lastResubmittedConfigSequence,
-		lastFragmentFreeBlockNumber,
+		lastFragmentFreeConsensusTimestamp,
 	)
 	assert.Equal(t, lastConsensusTimestampPersisted, metadata.LastConsensusTimestampPersisted, "Exepcted correct LastConsensusTimestampPersisted")
 	assert.Equal(t, lastOriginalSequenceProcessed, metadata.LastOriginalSequenceProcessed, "Expected correct LastOriginalSequenceProcessed")
 	assert.Equal(t, lastResubmittedConfigSequence, metadata.LastResubmittedConfigSequence, "Expected correct LastResubmittedConfigSequence")
-	assert.Equal(t, lastFragmentFreeBlockNumber, metadata.LastFragmentFreeBlockNumber, "Expected correct LastFragmentFreeBlockNumber")
+	assert.Equal(t, lastFragmentFreeConsensusTimestamp, metadata.LastFragmentFreeConsensusTimestampPersisted, "Expected correct LastFragmentFreeConsensusTimestampPersisted")
 }
 
 func TestTimestampProtoOrPanic(t *testing.T) {
@@ -2712,12 +2716,6 @@ func newMockConfigEnvelope() *cb.Envelope {
 	})}
 }
 
-func newMockEmptyBlockWithMetadata(encodedMetadataValue []byte) *cb.Block {
-	block := protoutil.NewBlock(0, nil)
-	block.Metadata.Metadata[cb.BlockMetadataIndex_ORDERER] = protoutil.MarshalOrPanic(&cb.Metadata{Value: encodedMetadataValue})
-	return block
-}
-
 func extractConsensusTimestamp(block *cb.Block) *timestamp.Timestamp {
 	omd, _ := protoutil.GetMetadataFromBlock(block, cb.BlockMetadataIndex_ORDERER)
 	metadata := &ab.HcsMetadata{}
@@ -2725,9 +2723,9 @@ func extractConsensusTimestamp(block *cb.Block) *timestamp.Timestamp {
 	return metadata.LastConsensusTimestampPersisted
 }
 
-func extractLastFragmentFreeBlockNumber(block *cb.Block) uint64 {
+func extractLastFragmentFreeConsensusTimestamp(block *cb.Block) *timestamp.Timestamp {
 	omd, _ := protoutil.GetMetadataFromBlock(block, cb.BlockMetadataIndex_ORDERER)
 	metadata := &ab.HcsMetadata{}
 	_ = proto.Unmarshal(omd.GetValue(), metadata)
-	return metadata.GetLastFragmentFreeBlockNumber()
+	return metadata.GetLastFragmentFreeConsensusTimestampPersisted()
 }

@@ -38,26 +38,31 @@ var (
 
 const aesKeyFilename = "/var/hyperledger/fabric/orderer/aes.key"
 
-func getStateFromMetadata(metadataValue []byte, chainID string) (time.Time, uint64, uint64, uint64) {
+func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, uint64, uint64, time.Time) {
 	if metadataValue != nil {
 		hcsMetadata := &ab.HcsMetadata{}
 		if err := proto.Unmarshal(metadataValue, hcsMetadata); err != nil {
 			logger.Panicf("[channel: %s] Ledger may be corrupted: "+
-				"cannot unmarshal orderer metadata in most recent block", chainID)
+				"cannot unmarshal orderer metadata in most recent block", channelID)
 		}
 		timestamp, err := ptypes.Timestamp(hcsMetadata.GetLastConsensusTimestampPersisted())
 		if err != nil {
 			logger.Panicf("[channel: %s] Ledger may be corrupted: "+
-				"invalid timestamp in most recent block, %v", chainID, err)
+				"invalid last consensus timestamp in most recent block, %v", channelID, err)
+		}
+		lastFragmentFreeTimestamp, err := ptypes.Timestamp(hcsMetadata.LastFragmentFreeConsensusTimestampPersisted)
+		if err != nil {
+			logger.Panicf("[channel: %s] Ledger may be corrupted: "+
+				"invalid last fragment free consensus timestamp in most recent block, %v", channelID, err)
 		}
 		return timestamp,
 			hcsMetadata.GetLastOriginalSequenceProcessed(),
 			hcsMetadata.GetLastResubmittedConfigSequence(),
-			hcsMetadata.GetLastFragmentFreeBlockNumber()
+			lastFragmentFreeTimestamp
 	}
 
 	// defaults
-	return unixEpoch, 0, 0, 0
+	return unixEpoch, 0, 0, unixEpoch
 }
 
 func newChain(
@@ -67,7 +72,7 @@ func newChain(
 	lastConsensusTimestampPersisted time.Time,
 	lastOriginalSequenceProcessed uint64,
 	lastResubmittedConfigSequence uint64,
-	lastFragmentFreeBlockNumber uint64,
+	lastFragmentFreeConsensusTimestamp time.Time,
 ) (*chainImpl, error) {
 	lastCutBlockNumber := support.Height() - 1
 	logger.Infof("[channel: %s] starting chain with last persisted consensus timestamp %d and "+
@@ -81,30 +86,30 @@ func newChain(
 	// - lastResubmittedConfigOffset < lastOriginalOffsetProcessed, where we've processed one or more resubmitted
 	//   normal messages after the latest resubmitted config message. (we advance `lastResubmittedConfigOffset` for
 	//   config messages, but not normal messages)
-	if (lastCutBlockNumber == lastFragmentFreeBlockNumber) &&
+	if lastConsensusTimestampPersisted.Equal(lastFragmentFreeConsensusTimestamp) &&
 		(lastResubmittedConfigSequence == 0 || lastResubmittedConfigSequence <= lastOriginalSequenceProcessed) {
 		// If we've already caught up with the reprocessing resubmitted messages, close the channel to unblock broadcast
 		close(doneReprocessingMsgInFlight)
 	}
 
 	return &chainImpl{
-		consenter:                       consenter,
-		ConsenterSupport:                support,
-		hcf:                             hcf,
-		lastConsensusTimestampPersisted: lastConsensusTimestampPersisted,
-		lastConsensusTimestamp:          lastConsensusTimestampPersisted,
-		lastOriginalSequenceProcessed:   lastOriginalSequenceProcessed,
-		lastResubmittedConfigSequence:   lastResubmittedConfigSequence,
-		lastFragmentFreeBlockNumber:     lastFragmentFreeBlockNumber,
-		lastCutBlockNumber:              lastCutBlockNumber,
-		haltChan:                        make(chan struct{}),
-		startChan:                       make(chan struct{}),
-		doneReprocessingMsgInFlight:     doneReprocessingMsgInFlight,
-		fragmenter:                      newFragmentSupport(),
-		maxFragmentAge:                  calcMaxFragmentAge(200, len(support.ChannelConfig().OrdererAddresses())),
-		fragmentKey:                     makeRandomKey(consenter.sharedHcsConfig().Operator.Id),
-		gcmCipher:                       makeGCMCipher(aesKeyFilename),
-		nonceReader:                     crand.Reader,
+		consenter:                          consenter,
+		ConsenterSupport:                   support,
+		hcf:                                hcf,
+		lastConsensusTimestampPersisted:    lastConsensusTimestampPersisted,
+		lastConsensusTimestamp:             lastConsensusTimestampPersisted,
+		lastOriginalSequenceProcessed:      lastOriginalSequenceProcessed,
+		lastResubmittedConfigSequence:      lastResubmittedConfigSequence,
+		lastFragmentFreeConsensusTimestamp: lastFragmentFreeConsensusTimestamp,
+		lastCutBlockNumber:                 lastCutBlockNumber,
+		haltChan:                           make(chan struct{}),
+		startChan:                          make(chan struct{}),
+		doneReprocessingMsgInFlight:        doneReprocessingMsgInFlight,
+		fragmenter:                         newFragmentSupport(),
+		maxFragmentAge:                     calcMaxFragmentAge(200, len(support.ChannelConfig().OrdererAddresses())),
+		fragmentKey:                        makeRandomKey(consenter.sharedHcsConfig().Operator.Id),
+		gcmCipher:                          makeGCMCipher(aesKeyFilename),
+		nonceReader:                        crand.Reader,
 	}, nil
 }
 
@@ -114,13 +119,13 @@ type chainImpl struct {
 
 	hcf factory.HcsClientFactory
 
-	lastConsensusTimestampPersisted time.Time
-	lastConsensusTimestamp          time.Time
-	lastOriginalSequenceProcessed   uint64
-	lastResubmittedConfigSequence   uint64
-	lastFragmentFreeBlockNumber     uint64
-	lastFragmentID                  uint64
-	lastCutBlockNumber              uint64
+	lastConsensusTimestampPersisted    time.Time
+	lastConsensusTimestamp             time.Time
+	lastOriginalSequenceProcessed      uint64
+	lastResubmittedConfigSequence      uint64
+	lastFragmentFreeConsensusTimestamp time.Time
+	lastFragmentID                     uint64
+	lastCutBlockNumber                 uint64
 
 	// mutex used when changing the doneReprocessingMsgInFlight
 	doneReprocessingMutex sync.Mutex
@@ -272,14 +277,12 @@ func (chain *chainImpl) processMessages() error {
 		}
 	}()
 
-	var recollectPendingFragments bool
-	if chain.lastFragmentFreeBlockNumber != chain.lastCutBlockNumber {
+	recollectPendingFragments := !chain.lastConsensusTimestampPersisted.Equal(chain.lastFragmentFreeConsensusTimestamp)
+	if recollectPendingFragments {
 		// recollect fragments pending reassembly at the time of last shutdown / crash, handle it by adding all messages
 		// in the range (lastFragmentFreeBlock.LastConsensusTimestampPersisted, chain.LastConsensusTimestampPersisted] to fragmenter
-		recollectPendingFragments = true
 		logger.Debugf("[channel: %s] going to collect fragments pending reassembly at the time of last shutdown / crash", chain.ChannelID())
 	} else {
-		recollectPendingFragments = false
 		logger.Debugf("[channel: %s] going into the normal message processing loop", chain.ChannelID())
 	}
 	msg := new(ab.HcsMessage)
@@ -367,16 +370,16 @@ func (chain *chainImpl) processMessages() error {
 	}
 }
 
-func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTimestamp *timestamp.Timestamp) {
+func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTimestamp *time.Time) {
 	chain.lastCutBlockNumber++
 	if !chain.fragmenter.isPending() {
-		chain.lastFragmentFreeBlockNumber = chain.lastCutBlockNumber
+		chain.lastFragmentFreeConsensusTimestamp = *consensusTimestamp
 	}
 	metadata := newHcsMetadata(
-		consensusTimestamp,
+		timestampProtoOrPanic(consensusTimestamp),
 		chain.lastOriginalSequenceProcessed,
 		chain.lastResubmittedConfigSequence,
-		chain.lastFragmentFreeBlockNumber)
+		timestampProtoOrPanic(&chain.lastFragmentFreeConsensusTimestamp))
 	marshaledMetadata := protoutil.MarshalOrPanic(metadata)
 	if !isConfig {
 		chain.ConsenterSupport.WriteBlock(block, marshaledMetadata)
@@ -427,7 +430,7 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTi
 
 	// Commit the first block
 	block := chain.CreateNextBlock(batches[0])
-	chain.WriteBlock(block, false, timestampProtoOrPanic(&chain.lastConsensusTimestamp))
+	chain.WriteBlock(block, false, &chain.lastConsensusTimestamp)
 	logger.Debugf("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus timestamp"+
 		" is now %d", chain.ChannelID(), chain.lastCutBlockNumber, chain.lastConsensusTimestamp.UnixNano())
 
@@ -437,7 +440,7 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTi
 		chain.lastConsensusTimestamp = *curConsensusTimestamp
 
 		block := chain.CreateNextBlock(batches[1])
-		chain.WriteBlock(block, false, timestampProtoOrPanic(curConsensusTimestamp))
+		chain.WriteBlock(block, false, curConsensusTimestamp)
 		logger.Debugf("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus "+
 			"timestamp is now %d", chain.ChannelID(), chain.lastCutBlockNumber, curConsensusTimestamp.UnixNano())
 	}
@@ -450,14 +453,14 @@ func (chain *chainImpl) commitConfigMessage(message *cb.Envelope, curConsensusTi
 	if batch != nil {
 		logger.Debugf("[channel: %s] Cut pending messages into block", chain.ChannelID())
 		block := chain.CreateNextBlock(batch)
-		chain.WriteBlock(block, false, timestampProtoOrPanic(&chain.lastConsensusTimestamp))
+		chain.WriteBlock(block, false, &chain.lastConsensusTimestamp)
 	}
 
 	logger.Debugf("[channel: %s] Creating isolated block for config message", chain.ChannelID())
 	chain.lastOriginalSequenceProcessed = newOriginalSequenceProcessed
 	chain.lastConsensusTimestamp = *curConsensusTimestamp
 	block := chain.CreateNextBlock([]*cb.Envelope{message})
-	chain.WriteBlock(block, true, timestampProtoOrPanic(curConsensusTimestamp))
+	chain.WriteBlock(block, true, curConsensusTimestamp)
 	chain.timer = nil
 }
 
@@ -615,7 +618,7 @@ func (chain *chainImpl) processTimeToCutMessage(msg *ab.HcsMessageTimeToCut, ts 
 		block := chain.CreateNextBlock(batch)
 		chain.lastConsensusTimestamp = *ts
 		chain.lastOriginalSequenceProcessed = sequence
-		chain.WriteBlock(block, false, timestampProtoOrPanic(ts))
+		chain.WriteBlock(block, false, ts)
 		logger.Debugf("[channel: %s] successfully cut block %d, triggered by time-to-cut",
 			chain.ChannelID(), blockNumber)
 	} else if blockNumber > chain.lastCutBlockNumber+1 {
@@ -783,34 +786,11 @@ func parseConfig(chain *chainImpl) {
 }
 
 func startSubscription(chain *chainImpl) {
-	var startTime time.Time
-	if chain.lastCutBlockNumber == chain.lastFragmentFreeBlockNumber {
-		startTime = chain.lastConsensusTimestampPersisted
-	} else {
-		if chain.lastFragmentFreeBlockNumber > chain.lastCutBlockNumber {
-			logger.Panicf("[channel: %s] corrupted metadata? chain.lastFragmentFreeBlockNumber(%d) > chain.lastCutBlockNumber(%d)",
-				chain.ChannelID(), chain.lastFragmentFreeBlockNumber, chain.lastCutBlockNumber)
-		}
-		block := chain.Block(chain.lastFragmentFreeBlockNumber)
-		if block == nil {
-			logger.Panicf("[channel: %s] failed to read last fragment free block (%d)", chain.ChannelID(), chain.lastFragmentFreeBlockNumber)
-		}
-		metadata, err := protoutil.GetMetadataFromBlock(block, cb.BlockMetadataIndex_ORDERER)
-		if err != nil {
-			logger.Panicf("[channel: %s] failed to get metadata for block %d = %v", chain.ChannelID(), chain.lastFragmentFreeBlockNumber, err)
-		}
-		hcsMetadata := &ab.HcsMetadata{}
-		if err = proto.Unmarshal(metadata.GetValue(), hcsMetadata); err != nil {
-			logger.Panicf("[channel: %s] failed to unmarshal metadata to HcsMetadata = %v", chain.ChannelID(), err)
-		}
-		if startTime, err = ptypes.Timestamp(hcsMetadata.GetLastConsensusTimestampPersisted()); err != nil {
-			logger.Panicf("[channel: %s] failed to convert proto timestamp to time.Time = %v", chain.ChannelID(), err)
-		}
-		if !startTime.Before(chain.lastConsensusTimestampPersisted) {
-			logger.Panicf("[channel: %s] corrupted metadata? consensus timestamp of last fragment free block "+
-				"must be before chain.lastConsensusTimestampPersisted", chain.ChannelID())
-		}
+	if chain.lastFragmentFreeConsensusTimestamp.After(chain.lastConsensusTimestampPersisted) {
+		logger.Panicf("[channel: %s] corrupted metadata? chain.lastFragmentFreeConsensusTimestamp is after "+
+			"chain.lastConsensusTimestampPersisted", chain.ChannelID())
 	}
+	startTime := chain.lastFragmentFreeConsensusTimestamp
 	if !startTime.Equal(unixEpoch) {
 		startTime = startTime.Add(time.Nanosecond)
 	}
@@ -909,13 +889,13 @@ func newHcsMetadata(
 	lastConsensusTimestampPersisted *timestamp.Timestamp,
 	lastOriginalSequenceProcessed uint64,
 	lastResubmittedConfigSequence uint64,
-	lastFragmentFreeBlockNumber uint64,
+	lastFragmentFreeConsensusTimestampPersisted *timestamp.Timestamp,
 ) *ab.HcsMetadata {
 	return &ab.HcsMetadata{
-		LastConsensusTimestampPersisted: lastConsensusTimestampPersisted,
-		LastOriginalSequenceProcessed:   lastOriginalSequenceProcessed,
-		LastResubmittedConfigSequence:   lastResubmittedConfigSequence,
-		LastFragmentFreeBlockNumber:     lastFragmentFreeBlockNumber,
+		LastConsensusTimestampPersisted:             lastConsensusTimestampPersisted,
+		LastOriginalSequenceProcessed:               lastOriginalSequenceProcessed,
+		LastResubmittedConfigSequence:               lastResubmittedConfigSequence,
+		LastFragmentFreeConsensusTimestampPersisted: lastFragmentFreeConsensusTimestampPersisted,
 	}
 }
 

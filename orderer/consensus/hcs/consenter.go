@@ -41,7 +41,7 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 		return nil, fmt.Errorf("invalid hcs topic id %s", support.SharedConfig().Hcs().TopicId)
 	}
 
-	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentFreeBlockNumber := getStateFromMetadata(metadata.Value, support.ChannelID())
+	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentFreeConsensusTimestamp := getStateFromMetadata(metadata.Value, support.ChannelID())
 	ch, err := newChain(
 		consenter,
 		support,
@@ -49,7 +49,7 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 		lastConsensusTimestampPersisted,
 		lastOriginalSequenceProcessed,
 		lastResubmittedConfigSequence,
-		lastFragmentFreeBlockNumber,
+		lastFragmentFreeConsensusTimestamp,
 	)
 	if err != nil {
 		return nil, err
