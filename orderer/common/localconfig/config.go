@@ -180,22 +180,21 @@ type Topic struct {
 
 // Hcs contains configuration for the HCS-based orderer.
 type Hcs struct {
-	Nodes               map[string]string
-	MirrorNodeAddress   string
-	Operator            HcsOperator
+	Nodes             map[string]string
+	MirrorNodeAddress string
+	Operator          HcsOperator
 }
 
 // HcsOperator contains HCS operator accountId and key
 type HcsOperator struct {
-	Id          string
-	PrivateKey  HcsPrivateKey
+	Id         string
+	PrivateKey HcsPrivateKey
 }
 
 // HcsPrivateKey contains key type and key data
 type HcsPrivateKey struct {
-	Enabled bool
-	Type    string
-	Key     string
+	Type string
+	Key  string
 }
 
 // Debug contains configuration for the orderer's debug parameters.
@@ -465,10 +464,6 @@ func (c *TopLevel) completeInitialization(configDir string) {
 			logger.Infof("Kafka.Version unset, setting to %v", Defaults.Kafka.Version)
 			c.Kafka.Version = Defaults.Kafka.Version
 
-		case c.Hcs.Operator.PrivateKey.Enabled && c.Hcs.Operator.PrivateKey.Type == "":
-			logger.Panic("Hcs.Operator.PrivateKey.Type must be set if Hcs.Operator.PrivateKey.Enabled is set to true.")
-		case c.Hcs.Operator.PrivateKey.Enabled && c.Hcs.Operator.PrivateKey.Key == "":
-			logger.Panic("Hcs.Operator.PrivateKey.Key must be set if Hcs.Operator.PrivateKey.Enabled is set to true.")
 		default:
 			return
 		}

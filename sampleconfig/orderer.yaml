@@ -289,10 +289,9 @@ Hcs:
     Operator:
         Id: 0.0.1998
         PrivateKey:
-            Enabled: false
             # type of the private key
             Type: ed25519
-            # path to the key file
+            # the key string or path to the key file
             Key:
 
 ################################################################################
