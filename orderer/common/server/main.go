@@ -47,9 +47,9 @@ import (
 	"github.com/hyperledger/fabric/orderer/common/multichannel"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/orderer/consensus/etcdraft"
+	"github.com/hyperledger/fabric/orderer/consensus/hcs"
 	"github.com/hyperledger/fabric/orderer/consensus/kafka"
 	"github.com/hyperledger/fabric/orderer/consensus/solo"
-	"github.com/hyperledger/fabric/orderer/consensus/hcs"
 	"github.com/hyperledger/fabric/protoutil"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
@@ -205,6 +205,7 @@ func Main() {
 		clusterGRPCServer,
 		conf,
 		signer,
+		signer.GetPublicVersion(),
 		metricsProvider,
 		opsSystem,
 		lf,
@@ -696,6 +697,7 @@ func initializeMultichannelRegistrar(
 	srv *comm.GRPCServer,
 	conf *localconfig.TopLevel,
 	signer identity.SignerSerializer,
+	publicIdentity msp.Identity,
 	metricsProvider metrics.Provider,
 	healthChecker healthChecker,
 	lf blockledger.Factory,
@@ -708,7 +710,7 @@ func initializeMultichannelRegistrar(
 	consenters["solo"] = solo.New()
 	var kafkaMetrics *kafka.Metrics
 	consenters["kafka"], kafkaMetrics = kafka.New(conf.Kafka, metricsProvider, healthChecker)
-	consenters["hcs"] = hcs.New(conf.Hcs)
+	consenters["hcs"] = hcs.New(conf.Hcs, publicIdentity)
 	// Note, we pass a 'nil' channel here, we could pass a channel that
 	// closes if we wished to cleanup this routine on exit.
 	go kafkaMetrics.PollGoMetricsUntilStop(time.Minute, nil)

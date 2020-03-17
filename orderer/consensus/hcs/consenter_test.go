@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hyperledger/fabric/msp"
+
 	"github.com/golang/protobuf/ptypes/timestamp"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/orderer"
@@ -29,18 +31,36 @@ type ordererConfig interface {
 	channelconfig.Orderer
 }
 
+//go:generate counterfeiter -o mock/identity.go --fake-name Identity . identity
+
+type identity interface {
+	msp.Identity
+}
+
 func init() {
 	mockLocalConfig = newMockLocalConfig(false)
-	setupTestLogging("ERROR")
+	setupTestLogging("DEBUG")
 }
 
 func TestNew(t *testing.T) {
-	c := New(mockLocalConfig.Hcs)
-	_ = consensus.Consenter(c)
+	publicIdentity := &mock.Identity{}
+
+	t.Run("Proper", func(t *testing.T) {
+		publicIdentity.SerializeReturns(make([]byte, 16), nil)
+		c := New(mockLocalConfig.Hcs, publicIdentity)
+		_ = consensus.Consenter(c)
+	})
+
+	t.Run("IdentityError", func(t *testing.T) {
+		publicIdentity.SerializeReturns(nil, fmt.Errorf("can't serialize identity"))
+		assert.Panics(t, func() { New(mockLocalConfig.Hcs, publicIdentity) }, "Expected New panics when identity.Serialize returns errors")
+	})
 }
 
 func TestHandleChain(t *testing.T) {
-	consenter := New(mockLocalConfig.Hcs)
+	publicIdentity := &mock.Identity{}
+	publicIdentity.SerializeReturns(make([]byte, 16), nil)
+	consenter := New(mockLocalConfig.Hcs, publicIdentity)
 
 	mockOrderer := &mock.OrdererConfig{}
 	mockOrdererHcs := &orderer.Hcs{TopicId: "0.0.19718"}
