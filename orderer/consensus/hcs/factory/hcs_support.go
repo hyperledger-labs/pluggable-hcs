@@ -7,19 +7,19 @@ import (
 
 // hcs abstraction layer
 type HcsClientFactory interface {
-	GetConsensusClient(network map[string]hedera.AccountID, operator hedera.AccountID, privateKey hedera.Ed25519PrivateKey) (ConsensusClient, error)
+	GetConsensusClient(network map[string]hedera.AccountID, operator *hedera.AccountID, privateKey *hedera.Ed25519PrivateKey) (ConsensusClient, error)
 	GetMirrorClient(address string) (MirrorClient, error)
 }
 
 type ConsensusClient interface {
 	Close() error
-	SubmitConsensusMessage(message []byte, topicId hedera.ConsensusTopicID) error
+	SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID) error
 }
 
 type MirrorClient interface {
 	Close() error
 	SubscribeTopic(
-		topicId hedera.ConsensusTopicID,
+		topicID *hedera.ConsensusTopicID,
 		startTime *time.Time,
 		endTime *time.Time,
 	) (MirrorSubscriptionHandle, error)

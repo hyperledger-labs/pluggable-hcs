@@ -20,10 +20,10 @@ type MirrorClient struct {
 	closeReturnsOnCall map[int]struct {
 		result1 error
 	}
-	SubscribeTopicStub        func(hedera.ConsensusTopicID, *time.Time, *time.Time) (factory.MirrorSubscriptionHandle, error)
+	SubscribeTopicStub        func(*hedera.ConsensusTopicID, *time.Time, *time.Time) (factory.MirrorSubscriptionHandle, error)
 	subscribeTopicMutex       sync.RWMutex
 	subscribeTopicArgsForCall []struct {
-		arg1 hedera.ConsensusTopicID
+		arg1 *hedera.ConsensusTopicID
 		arg2 *time.Time
 		arg3 *time.Time
 	}
@@ -91,11 +91,11 @@ func (fake *MirrorClient) CloseReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
-func (fake *MirrorClient) SubscribeTopic(arg1 hedera.ConsensusTopicID, arg2 *time.Time, arg3 *time.Time) (factory.MirrorSubscriptionHandle, error) {
+func (fake *MirrorClient) SubscribeTopic(arg1 *hedera.ConsensusTopicID, arg2 *time.Time, arg3 *time.Time) (factory.MirrorSubscriptionHandle, error) {
 	fake.subscribeTopicMutex.Lock()
 	ret, specificReturn := fake.subscribeTopicReturnsOnCall[len(fake.subscribeTopicArgsForCall)]
 	fake.subscribeTopicArgsForCall = append(fake.subscribeTopicArgsForCall, struct {
-		arg1 hedera.ConsensusTopicID
+		arg1 *hedera.ConsensusTopicID
 		arg2 *time.Time
 		arg3 *time.Time
 	}{arg1, arg2, arg3})
@@ -117,13 +117,13 @@ func (fake *MirrorClient) SubscribeTopicCallCount() int {
 	return len(fake.subscribeTopicArgsForCall)
 }
 
-func (fake *MirrorClient) SubscribeTopicCalls(stub func(hedera.ConsensusTopicID, *time.Time, *time.Time) (factory.MirrorSubscriptionHandle, error)) {
+func (fake *MirrorClient) SubscribeTopicCalls(stub func(*hedera.ConsensusTopicID, *time.Time, *time.Time) (factory.MirrorSubscriptionHandle, error)) {
 	fake.subscribeTopicMutex.Lock()
 	defer fake.subscribeTopicMutex.Unlock()
 	fake.SubscribeTopicStub = stub
 }
 
-func (fake *MirrorClient) SubscribeTopicArgsForCall(i int) (hedera.ConsensusTopicID, *time.Time, *time.Time) {
+func (fake *MirrorClient) SubscribeTopicArgsForCall(i int) (*hedera.ConsensusTopicID, *time.Time, *time.Time) {
 	fake.subscribeTopicMutex.RLock()
 	defer fake.subscribeTopicMutex.RUnlock()
 	argsForCall := fake.subscribeTopicArgsForCall[i]

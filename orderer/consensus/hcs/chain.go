@@ -11,6 +11,7 @@ import (
 	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -81,6 +82,12 @@ func newChain(
 	logger.Infof("[channel: %s] starting chain with last persisted consensus timestamp %d and "+
 		"last recorded block [%d]", support.ChannelID(), lastConsensusTimestampPersisted.UnixNano(), lastCutBlockNumber)
 
+	network, operatorID, operatorPrivateKey, topicID, err := parseConfig(consenter.sharedHcsConfig(), support.SharedConfig().Hcs().TopicId)
+	if err != nil {
+		logger.Errorf("[channel: %s] err parsing config = %v", support.ChannelID(), err)
+		return nil, err
+	}
+
 	doneReprocessingMsgInFlight := make(chan struct{})
 	// If there are no fragments pending reassembly and one of the following cases is true, we should unblock ingress messages:
 	// - lastResubmittedConfigOffset == 0, where we've never resubmitted any config messages
@@ -120,6 +127,10 @@ func newChain(
 		lastResubmittedConfigSequence:      lastResubmittedConfigSequence,
 		lastFragmentFreeConsensusTimestamp: lastFragmentFreeConsensusTimestamp,
 		lastCutBlockNumber:                 lastCutBlockNumber,
+		network:                            network,
+		operatorID:                         operatorID,
+		operatorPrivateKey:                 operatorPrivateKey,
+		topicID:                            topicID,
 		haltChan:                           make(chan struct{}),
 		startChan:                          make(chan struct{}),
 		doneReprocessingMsgInFlight:        doneReprocessingMsgInFlight,
@@ -161,9 +172,9 @@ type chainImpl struct {
 	timer <-chan time.Time
 
 	network                 map[string]hedera.AccountID
-	operatorID              hedera.AccountID
-	operatorPrivateKey      hedera.Ed25519PrivateKey
-	topicID                 hedera.ConsensusTopicID
+	operatorID              *hedera.AccountID
+	operatorPrivateKey      *hedera.Ed25519PrivateKey
+	topicID                 *hedera.ConsensusTopicID
 	topicProducer           factory.ConsensusClient
 	singleNodeTopicProducer factory.ConsensusClient
 	topicConsumer           factory.MirrorClient
@@ -781,8 +792,6 @@ func (chain *chainImpl) reprocessPending() {
 func startThread(chain *chainImpl) {
 	var err error
 
-	parseConfig(chain)
-
 	// create topicProducer
 	chain.topicProducer, chain.singleNodeTopicProducer, err = setupTopicProducer(chain.hcf, chain.network, chain.operatorID, chain.operatorPrivateKey)
 	if err != nil {
@@ -814,31 +823,52 @@ func startThread(chain *chainImpl) {
 	chain.processMessages()
 }
 
-func parseConfig(chain *chainImpl) {
-	config := chain.consenter.sharedHcsConfig()
+func parseConfig(
+	config *localconfig.Hcs,
+	channelTopicID string,
+) (network map[string]hedera.AccountID, operatorID *hedera.AccountID, privateKey *hedera.Ed25519PrivateKey, topicID *hedera.ConsensusTopicID, err error) {
 	nodes := config.Nodes
 	if len(nodes) == 0 {
-		logger.Panicf("[channel: %s] empty nodes in sharedHcsConfig", chain.ChannelID())
+		err = fmt.Errorf("empty nodes list in hcs config")
+		return
 	}
-	chain.network = make(map[string]hedera.AccountID, len(nodes))
+	tmpNetwork := make(map[string]hedera.AccountID)
 	for addr, acc := range nodes {
-		accountID, err := hedera.AccountIDFromString(acc)
-		if err != nil {
-			logger.Panicf("[channel: %s] invalid account ID = %v", chain.ChannelID(), err)
+		accountID, err1 := hedera.AccountIDFromString(acc)
+		if err1 != nil {
+			err = fmt.Errorf("invalid account ID = %v", err1)
+			return
 		}
-		chain.network[addr] = accountID
+		tmpNetwork[addr] = accountID
 	}
 
-	var err error
-	if chain.operatorID, err = hedera.AccountIDFromString(config.Operator.Id); err != nil {
-		logger.Panicf("[channel: %s] invalid operator ID = %v", chain.ChannelID(), err)
+	tmpOperatorID, err := hedera.AccountIDFromString(config.Operator.Id)
+	if err != nil {
+		err = fmt.Errorf("invalid operator ID = %v", err)
+		return
 	}
-	if chain.operatorPrivateKey, err = hedera.Ed25519PrivateKeyFromString(config.Operator.PrivateKey.Key); err != nil {
-		logger.Panicf("[channel: %s] invalid operator private key = %v", chain.ChannelID(), err)
+
+	if config.Operator.PrivateKey.Type != "ed25519" {
+		err = fmt.Errorf("private key type \"%s\" is not supported", config.Operator.PrivateKey.Type)
+		return
 	}
-	if chain.topicID, err = hedera.TopicIDFromString(chain.SharedConfig().Hcs().TopicId); err != nil {
-		logger.Panicf("[channel: %s] invalid hcs topic id = %v", chain.ChannelID(), err)
+
+	tmpPrivateKey, err := hedera.Ed25519PrivateKeyFromString(config.Operator.PrivateKey.Key)
+	if err != nil {
+		err = fmt.Errorf("invalid operator private key = %v", err)
+		return
 	}
+	tmpTopicID, err := hedera.TopicIDFromString(channelTopicID)
+	if err != nil {
+		err = fmt.Errorf("invalid hcs topic ID = %v", err)
+		return
+	}
+
+	network = tmpNetwork
+	operatorID = &tmpOperatorID
+	privateKey = &tmpPrivateKey
+	topicID = &tmpTopicID
+	return
 }
 
 func startSubscription(chain *chainImpl) {
@@ -859,8 +889,8 @@ func startSubscription(chain *chainImpl) {
 func setupTopicProducer(
 	hcf factory.HcsClientFactory,
 	network map[string]hedera.AccountID,
-	operator hedera.AccountID,
-	privateKey hedera.Ed25519PrivateKey,
+	operator *hedera.AccountID,
+	privateKey *hedera.Ed25519PrivateKey,
 ) (client factory.ConsensusClient, singleNodeClient factory.ConsensusClient, err error) {
 	if client, err = hcf.GetConsensusClient(network, operator, privateKey); err != nil {
 		return nil, nil, err

@@ -9,12 +9,12 @@ import (
 )
 
 type HcsClientFactory struct {
-	GetConsensusClientStub        func(map[string]hedera.AccountID, hedera.AccountID, hedera.Ed25519PrivateKey) (factory.ConsensusClient, error)
+	GetConsensusClientStub        func(map[string]hedera.AccountID, *hedera.AccountID, *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error)
 	getConsensusClientMutex       sync.RWMutex
 	getConsensusClientArgsForCall []struct {
 		arg1 map[string]hedera.AccountID
-		arg2 hedera.AccountID
-		arg3 hedera.Ed25519PrivateKey
+		arg2 *hedera.AccountID
+		arg3 *hedera.Ed25519PrivateKey
 	}
 	getConsensusClientReturns struct {
 		result1 factory.ConsensusClient
@@ -41,13 +41,13 @@ type HcsClientFactory struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *HcsClientFactory) GetConsensusClient(arg1 map[string]hedera.AccountID, arg2 hedera.AccountID, arg3 hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
+func (fake *HcsClientFactory) GetConsensusClient(arg1 map[string]hedera.AccountID, arg2 *hedera.AccountID, arg3 *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
 	fake.getConsensusClientMutex.Lock()
 	ret, specificReturn := fake.getConsensusClientReturnsOnCall[len(fake.getConsensusClientArgsForCall)]
 	fake.getConsensusClientArgsForCall = append(fake.getConsensusClientArgsForCall, struct {
 		arg1 map[string]hedera.AccountID
-		arg2 hedera.AccountID
-		arg3 hedera.Ed25519PrivateKey
+		arg2 *hedera.AccountID
+		arg3 *hedera.Ed25519PrivateKey
 	}{arg1, arg2, arg3})
 	fake.recordInvocation("GetConsensusClient", []interface{}{arg1, arg2, arg3})
 	fake.getConsensusClientMutex.Unlock()
@@ -67,13 +67,13 @@ func (fake *HcsClientFactory) GetConsensusClientCallCount() int {
 	return len(fake.getConsensusClientArgsForCall)
 }
 
-func (fake *HcsClientFactory) GetConsensusClientCalls(stub func(map[string]hedera.AccountID, hedera.AccountID, hedera.Ed25519PrivateKey) (factory.ConsensusClient, error)) {
+func (fake *HcsClientFactory) GetConsensusClientCalls(stub func(map[string]hedera.AccountID, *hedera.AccountID, *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error)) {
 	fake.getConsensusClientMutex.Lock()
 	defer fake.getConsensusClientMutex.Unlock()
 	fake.GetConsensusClientStub = stub
 }
 
-func (fake *HcsClientFactory) GetConsensusClientArgsForCall(i int) (map[string]hedera.AccountID, hedera.AccountID, hedera.Ed25519PrivateKey) {
+func (fake *HcsClientFactory) GetConsensusClientArgsForCall(i int) (map[string]hedera.AccountID, *hedera.AccountID, *hedera.Ed25519PrivateKey) {
 	fake.getConsensusClientMutex.RLock()
 	defer fake.getConsensusClientMutex.RUnlock()
 	argsForCall := fake.getConsensusClientArgsForCall[i]

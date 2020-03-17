@@ -19,7 +19,6 @@ import (
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/common/channelconfig"
-	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/common/msgprocessor"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/orderer/consensus/hcs/factory"
@@ -68,10 +67,8 @@ type mirrorClient interface {
 }
 
 const (
-	GetConsensusClientFuncName = "GetConsensusClient"
-	GetMirrorClientFuncName    = "GetMirrorClient"
-
-	TestOperatorPrivateKey = "302e020100300506032b657004220420e373811ccb438637a4358db3cbb72dd899eeda6b764c0b8128c61063752b4fe4"
+	getConsensusClientFuncName = "GetConsensusClient"
+	getMirrorClientFuncName    = "GetMirrorClient"
 )
 
 func newMockOrderer(batchTimeout time.Duration, hcs *ab.Hcs) *mockhcs.OrdererConfig {
@@ -112,18 +109,7 @@ func TestChain(t *testing.T) {
 
 	newMocks := func(t *testing.T) (mockConsenter *consenterImpl, mockSupport *mockmultichannel.ConsenterSupport) {
 		mockConsenter = &consenterImpl{
-			&localconfig.Hcs{
-				Nodes:             map[string]string{"127.0.0.1:50211": "0.0.3", "127.0.0.2:50211": "0.0.4"},
-				MirrorNodeAddress: "127.0.0.5:5600",
-				Operator: localconfig.HcsOperator{
-					Id: "0.0.19882",
-					PrivateKey: localconfig.HcsPrivateKey{
-						Enabled: true,
-						Type:    "ed25519",
-						Key:     TestOperatorPrivateKey,
-					},
-				},
-			},
+			&mockLocalConfig.Hcs,
 			make([]byte, 16),
 		}
 
@@ -225,10 +211,10 @@ func TestChain(t *testing.T) {
 		// Trigger the haltChan clause in the processMessagesToBlocks goroutine
 		close(chain.haltChan)
 		returnValues := hcf.GetReturnValues()
-		assert.Equalf(t, 2, len(returnValues[GetConsensusClientFuncName]), "Expected %s called 2 times", GetConsensusClientFuncName)
-		assert.Equalf(t, 1, len(returnValues[GetMirrorClientFuncName]), "Expected %s called once", GetMirrorClientFuncName)
+		assert.Equalf(t, 2, len(returnValues[getConsensusClientFuncName]), "Expected %s called 2 times", getConsensusClientFuncName)
+		assert.Equalf(t, 1, len(returnValues[getMirrorClientFuncName]), "Expected %s called once", getMirrorClientFuncName)
 
-		v := reflect.ValueOf(returnValues[GetMirrorClientFuncName][0]).Index(0)
+		v := reflect.ValueOf(returnValues[getMirrorClientFuncName][0]).Index(0)
 		mc := v.Interface().(*mockhcs.MirrorClient)
 		assert.Equal(t, 1, mc.SubscribeTopicCallCount(), "Expected SubscribeTopic called once")
 		_, start, end := mc.SubscribeTopicArgsForCall(0)
@@ -260,9 +246,9 @@ func TestChain(t *testing.T) {
 		// Trigger the haltChan clause in the processMessagesToBlocks goroutine
 		close(chain.haltChan)
 		returnValues := hcf.GetReturnValues()
-		assert.Equalf(t, 1, len(returnValues[GetMirrorClientFuncName]), "Expected %s called once", GetMirrorClientFuncName)
+		assert.Equalf(t, 1, len(returnValues[getMirrorClientFuncName]), "Expected %s called once", getMirrorClientFuncName)
 
-		v := reflect.ValueOf(returnValues[GetMirrorClientFuncName][0]).Index(0)
+		v := reflect.ValueOf(returnValues[getMirrorClientFuncName][0]).Index(0)
 		mc := v.Interface().(*mockhcs.MirrorClient)
 		assert.Equal(t, 1, mc.SubscribeTopicCallCount(), "Expected SubscribeTopic called once")
 		_, start, end := mc.SubscribeTopicArgsForCall(0)
@@ -557,10 +543,10 @@ func TestChain(t *testing.T) {
 				numCalls := 0
 				v := reflect.ValueOf(ret).Index(0)
 				switch funcName {
-				case GetConsensusClientFuncName:
+				case getConsensusClientFuncName:
 					client := v.Interface().(*mockhcs.ConsensusClient)
 					numCalls = client.CloseCallCount()
-				case GetMirrorClientFuncName:
+				case getMirrorClientFuncName:
 					client := v.Interface().(*mockhcs.MirrorClient)
 					numCalls = client.CloseCallCount()
 				}
@@ -619,7 +605,7 @@ func TestChain(t *testing.T) {
 
 	t.Run("StartWithTopicProducerError", func(t *testing.T) {
 		mockConsenter, mockSupport := newMocks(t)
-		getConsensusClient := func(network map[string]hedera.AccountID, operator hedera.AccountID, privateKey hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
+		getConsensusClient := func(map[string]hedera.AccountID, *hedera.AccountID, *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
 			return nil, fmt.Errorf("foo error")
 		}
 		hcf := newMockHcsClientFactory(getConsensusClient, nil)
@@ -630,7 +616,7 @@ func TestChain(t *testing.T) {
 
 	t.Run("StartWithTopicConsumerError", func(t *testing.T) {
 		mockConsenter, mockSupport := newMocks(t)
-		getMirrorClient := func(endpoint string) (factory.MirrorClient, error) {
+		getMirrorClient := func(string) (factory.MirrorClient, error) {
 			return nil, fmt.Errorf("foo error")
 		}
 		hcf := newMockHcsClientFactory(nil, getMirrorClient)
@@ -641,13 +627,9 @@ func TestChain(t *testing.T) {
 
 	t.Run("StartWithTopicSubscriptionError", func(t *testing.T) {
 		mockConsenter, mockSupport := newMocks(t)
-		getMirrorClient := func(endpoint string) (factory.MirrorClient, error) {
+		getMirrorClient := func(string) (factory.MirrorClient, error) {
 			mc := mockhcs.MirrorClient{}
-			mc.SubscribeTopicCalls(func(
-				topicId hedera.ConsensusTopicID,
-				start *time.Time,
-				end *time.Time,
-			) (factory.MirrorSubscriptionHandle, error) {
+			mc.SubscribeTopicCalls(func(*hedera.ConsensusTopicID, *time.Time, *time.Time) (factory.MirrorSubscriptionHandle, error) {
 				return nil, fmt.Errorf("foo error")
 			})
 			return &mc, nil
@@ -669,10 +651,10 @@ func TestChain(t *testing.T) {
 
 	t.Run("enqueueProper", func(t *testing.T) {
 		mockConsenter, mockSupport := newMocks(t)
-		getConsensusClient := func(network map[string]hedera.AccountID, operator hedera.AccountID, privateKey hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
+		getConsensusClient := func(map[string]hedera.AccountID, *hedera.AccountID, *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
 			cs := mockhcs.ConsensusClient{}
 			cs.CloseCalls(func() error { return nil })
-			cs.SubmitConsensusMessageCalls(func(message []byte, id hedera.ConsensusTopicID) error {
+			cs.SubmitConsensusMessageCalls(func([]byte, *hedera.ConsensusTopicID) error {
 				return nil
 			})
 			return &cs, nil
@@ -921,9 +903,9 @@ func TestChain(t *testing.T) {
 
 		t.Run("WithError", func(t *testing.T) {
 			mockConsenter, mockSupport := newMocks(t)
-			mockGetConsensusClient := func(network map[string]hedera.AccountID, operator hedera.AccountID, privateKey hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
+			mockGetConsensusClient := func(map[string]hedera.AccountID, *hedera.AccountID, *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
 				mc := mockhcs.ConsensusClient{}
-				mc.SubmitConsensusMessageCalls(func(data []byte, topicId hedera.ConsensusTopicID) error {
+				mc.SubmitConsensusMessageCalls(func([]byte, *hedera.ConsensusTopicID) error {
 					return fmt.Errorf("foo error")
 				})
 				return &mc, nil
@@ -954,23 +936,20 @@ func TestSetupProducerForChannel(t *testing.T) {
 		Realm:   0,
 		Account: 20000,
 	}
-	operatorPrivateKey, _ := hedera.Ed25519PrivateKeyFromString(TestOperatorPrivateKey)
+	operatorPrivateKey, _ := hedera.Ed25519PrivateKeyFromString(testOperatorPrivateKey)
 
 	t.Run("Proper", func(t *testing.T) {
 		hcf := newDefaultMockHcsClientFactory()
-		p, sp, err := setupTopicProducer(hcf, network, operator, operatorPrivateKey)
-
+		_, _, err := setupTopicProducer(hcf, network, &operator, &operatorPrivateKey)
 		assert.NoError(t, err, "Expected the setupTopicProducer call to return without errors")
-		assert.NoError(t, p.Close(), "Expected to close the producer without errors")
-		assert.NoError(t, sp.Close(), "Expected to close the producer without errors")
 	})
 
 	t.Run("WithError", func(t *testing.T) {
-		getConsensusClient := func(network map[string]hedera.AccountID, operator hedera.AccountID, privateKey hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
+		getConsensusClient := func(map[string]hedera.AccountID, *hedera.AccountID, *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
 			return nil, fmt.Errorf("foo error")
 		}
 		hcf := newMockHcsClientFactory(getConsensusClient, nil)
-		p, sp, err := setupTopicProducer(hcf, network, operator, operatorPrivateKey)
+		p, sp, err := setupTopicProducer(hcf, network, &operator, &operatorPrivateKey)
 		assert.Error(t, err, "Expected the setupProducerForChannel call to return an error")
 		assert.Nil(t, p, "Expect the returned producter to be nil")
 		assert.Nil(t, sp, "Expect the returned producter to be nil")
@@ -991,26 +970,15 @@ func TestProcessMessages(t *testing.T) {
 		haltChan := make(chan struct{})
 
 		mockConsenter := &consenterImpl{
-			&localconfig.Hcs{
-				Nodes:             map[string]string{"127.0.0.1:50211": "0.0.3", "127.0.0.2:50211": "0.0.4"},
-				MirrorNodeAddress: "127.0.0.5:5600",
-				Operator: localconfig.HcsOperator{
-					Id: "0.0.19882",
-					PrivateKey: localconfig.HcsPrivateKey{
-						Enabled: true,
-						Type:    "ed25519",
-						Key:     TestOperatorPrivateKey,
-					},
-				},
-			},
+			&mockLocalConfig.Hcs,
 			make([]byte, 16),
 		}
 
-		topicProducer, _ := hcf.GetConsensusClient(nil, hedera.AccountID{}, hedera.Ed25519PrivateKey{})
+		topicProducer, _ := hcf.GetConsensusClient(nil, nil, nil)
 		assert.NotNil(t, topicProducer, "Expected topic producer created successfully")
 		topicConsumer, _ := hcf.GetMirrorClient("")
 		assert.NotNil(t, topicConsumer, "Expected topic consumer created successfully")
-		topicID := hedera.ConsensusTopicID{0, 0, 16381}
+		topicID := &hedera.ConsensusTopicID{0, 0, 16381}
 		topicSubscriptionHandle, _ := topicConsumer.SubscribeTopic(topicID, &unixEpoch, nil)
 		assert.NotNil(t, topicSubscriptionHandle, "Expected topic subscription handle created successfully")
 
@@ -1683,26 +1651,15 @@ func TestResubmission(t *testing.T) {
 		}
 
 		mockConsenter := &consenterImpl{
-			&localconfig.Hcs{
-				Nodes:             map[string]string{"127.0.0.1:50211": "0.0.3", "127.0.0.2:50211": "0.0.4"},
-				MirrorNodeAddress: "127.0.0.5:5600",
-				Operator: localconfig.HcsOperator{
-					Id: "0.0.19882",
-					PrivateKey: localconfig.HcsPrivateKey{
-						Enabled: true,
-						Type:    "ed25519",
-						Key:     TestOperatorPrivateKey,
-					},
-				},
-			},
+			&mockLocalConfig.Hcs,
 			make([]byte, 16),
 		}
 
-		topicProducer, _ := hcf.GetConsensusClient(nil, hedera.AccountID{}, hedera.Ed25519PrivateKey{})
+		topicProducer, _ := hcf.GetConsensusClient(nil, nil, nil)
 		assert.NotNil(t, topicProducer, "Expected topic producer created successfully")
 		topicConsumer, _ := hcf.GetMirrorClient("")
 		assert.NotNil(t, topicConsumer, "Expected topic consumer created successfully")
-		topicID := hedera.ConsensusTopicID{0, 0, 16381}
+		topicID := &hedera.ConsensusTopicID{0, 0, 16381}
 		topicSubscriptionHandle, _ := topicConsumer.SubscribeTopic(topicID, &unixEpoch, nil)
 		assert.NotNil(t, topicSubscriptionHandle, "Expected topic subscription handle created successfuly")
 
@@ -2334,41 +2291,26 @@ func TestGetStateFromMetadata(t *testing.T) {
 }
 
 func TestParseConfig(t *testing.T) {
-	mockHcsConfig := localconfig.Hcs{
-		Nodes:             map[string]string{"127.0.0.1:50211": "0.0.3", "127.0.0.2:50211": "0.0.4"},
-		MirrorNodeAddress: "127.0.0.5:5600",
-		Operator: localconfig.HcsOperator{
-			Id: "0.0.19882",
-			PrivateKey: localconfig.HcsPrivateKey{
-				Enabled: true,
-				Type:    "ed25519",
-				Key:     "302e020100300506032b657004220420e373811ccb438637a4358db3cbb72dd899eeda6b764c0b8128c61063752b4fe4",
-			},
-		},
-	}
-	mockSupport := mockmultichannel.ConsenterSupport{
-		ChannelIDVal:     "mock-channel",
-		HeightVal:        uint64(0),
-		SharedConfigVal:  newMockOrderer(shortTimeout, &goodHcsConfig),
-		ChannelConfigVal: newMockChannel(),
-	}
-	mockOrdererIdentity := make([]byte, 16)
+	mockHcsConfig := mockLocalConfig.Hcs
+	mockTopicIDStr := "0.0.18286"
 
 	t.Run("WithValidConfig", func(t *testing.T) {
-		chain := &chainImpl{consenter: &consenterImpl{&mockHcsConfig, mockOrdererIdentity}, ConsenterSupport: &mockSupport}
+		network, operatorID, privateKey, topicID, err := parseConfig(&mockHcsConfig, mockTopicIDStr)
 
-		assert.NotPanics(t, func() { parseConfig(chain) }, "Expect no panics")
-		assert.NotNil(t, chain.network, "Expect non-nil chain.network")
-		assert.Equal(t, len(mockHcsConfig.Nodes), len(chain.network), "Expect chain.network has correct number of entries")
-		assert.Equal(t, mockHcsConfig.Operator.Id, chain.operatorID.String(), "Expect correct operator ID string")
-		assert.Equal(t, mockHcsConfig.Operator.PrivateKey.Key, chain.operatorPrivateKey.String(), "Expect correct operator private key")
+		assert.NoError(t, err, "Expected parseConfig returns no errors")
+		assert.NotNil(t, network, "Expect non-nil chain.network")
+		assert.Equal(t, len(mockHcsConfig.Nodes), len(network), "Expect chain.network has correct number of entries")
+		assert.Equal(t, mockHcsConfig.Operator.Id, operatorID.String(), "Expect correct operator ID string")
+		assert.Equal(t, mockHcsConfig.Operator.PrivateKey.Key, privateKey.String(), "Expect correct operator private key")
+		assert.Equal(t, mockTopicIDStr, topicID.String(), "Expected correct topicID")
 	})
 
 	t.Run("WithEmptyNodes", func(t *testing.T) {
 		invalidMockHcsConfig := mockHcsConfig
 		invalidMockHcsConfig.Nodes = make(map[string]string)
-		chain := &chainImpl{consenter: &consenterImpl{&invalidMockHcsConfig, mockOrdererIdentity}, ConsenterSupport: &mockSupport}
-		assert.Panics(t, func() { parseConfig(chain) }, "Expect panic when Nodes is empty")
+		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockTopicIDStr)
+		assert.Error(t, err, "Expected parseConfig returns error when Nodes in HcsConfig is empty")
+
 	})
 
 	t.Run("WithInvalidAccountIDInNodes", func(t *testing.T) {
@@ -2377,29 +2319,28 @@ func TestParseConfig(t *testing.T) {
 			"127.0.0.1:50211": "0.0.3",
 			"127.0.0.2:50211": "invalid account id",
 		}
-		chain := &chainImpl{consenter: &consenterImpl{&invalidMockHcsConfig, mockOrdererIdentity}, ConsenterSupport: &mockSupport}
-		assert.Panics(t, func() { parseConfig(chain) }, "Expect panic when account ID in Nodes is invalid")
+		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockTopicIDStr)
+		assert.Error(t, err, "Expected parseConfig returns err when account ID in Nodes in invalid")
+
 	})
 
 	t.Run("WithInvalidOperatorID", func(t *testing.T) {
 		invalidMockHcsConfig := mockHcsConfig
 		invalidMockHcsConfig.Operator.Id = "invalid operator id"
-		chain := &chainImpl{consenter: &consenterImpl{&invalidMockHcsConfig, mockOrdererIdentity}, ConsenterSupport: &mockSupport}
-		assert.Panics(t, func() { parseConfig(chain) }, "Expect panic with invalid operator ID")
+		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockTopicIDStr)
+		assert.Error(t, err, "Expected parseConfig returns error when operator ID is invalid")
 	})
 
 	t.Run("WithInvalidPrivateKey", func(t *testing.T) {
 		invalidMockHcsConfig := mockHcsConfig
 		invalidMockHcsConfig.Operator.PrivateKey.Key = "invalid key string"
-		chain := &chainImpl{consenter: &consenterImpl{&invalidMockHcsConfig, mockOrdererIdentity}, ConsenterSupport: &mockSupport}
-		assert.Panics(t, func() { parseConfig(chain) }, "Expect panic with invalid operator private key")
+		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockTopicIDStr)
+		assert.Error(t, err, "Expected parseConfig returns error when operator private key is invalid")
 	})
 
 	t.Run("WithInvalidHCSTopicID", func(t *testing.T) {
-		invalidMockSupport := mockSupport
-		invalidMockSupport.SharedConfigVal.Hcs().TopicId = "invalid topic id"
-		chain := &chainImpl{consenter: &consenterImpl{&mockHcsConfig, mockOrdererIdentity}, ConsenterSupport: &invalidMockSupport}
-		assert.Panics(t, func() { parseConfig(chain) }, "Expect panic with invalid HCS topic ID")
+		_, _, _, _, err := parseConfig(&mockHcsConfig, "invalid hcs topic ID")
+		assert.Error(t, err, "Expected parseConfig returns error when hcs topic ID is invalid")
 	})
 }
 
@@ -2562,26 +2503,26 @@ type mockHcsTransport struct {
 	channels map[hedera.ConsensusTopicID]chan []byte
 }
 
-func (t *mockHcsTransport) tryGetTransportW(topicID hedera.ConsensusTopicID) chan<- []byte {
+func (t *mockHcsTransport) tryGetTransportW(topicID *hedera.ConsensusTopicID) chan<- []byte {
 	return t.getTransport(topicID, false)
 }
 
-func (t *mockHcsTransport) getTransportW(topicID hedera.ConsensusTopicID) chan<- []byte {
+func (t *mockHcsTransport) getTransportW(topicID *hedera.ConsensusTopicID) chan<- []byte {
 	return t.getTransport(topicID, true)
 }
 
-func (t *mockHcsTransport) getTransportR(topicID hedera.ConsensusTopicID) <-chan []byte {
+func (t *mockHcsTransport) getTransportR(topicID *hedera.ConsensusTopicID) <-chan []byte {
 	return t.getTransport(topicID, true)
 }
 
-func (t *mockHcsTransport) getTransport(topicID hedera.ConsensusTopicID, create bool) chan []byte {
+func (t *mockHcsTransport) getTransport(topicID *hedera.ConsensusTopicID, create bool) chan []byte {
 	t.l.Lock()
 	defer t.l.Unlock()
 
-	ch, ok := t.channels[topicID]
+	ch, ok := t.channels[*topicID]
 	if !ok && create {
 		ch = make(chan []byte)
-		t.channels[topicID] = ch
+		t.channels[*topicID] = ch
 	}
 	return ch
 }
@@ -2597,7 +2538,7 @@ type hcsClientFactoryWithRecord struct {
 	l            sync.Mutex
 }
 
-func (f *hcsClientFactoryWithRecord) InjectMessage(message []byte, topicID hedera.ConsensusTopicID) error {
+func (f *hcsClientFactoryWithRecord) InjectMessage(message []byte, topicID *hedera.ConsensusTopicID) error {
 	if message == nil {
 		return errors.Errorf("message is nil")
 	}
@@ -2622,7 +2563,7 @@ func newDefaultMockHcsClientFactory() *hcsClientFactoryWithRecord {
 }
 
 func newMockHcsClientFactoryWithNoopConsensusClient() *hcsClientFactoryWithRecord {
-	getConsensusClient := func(network map[string]hedera.AccountID, account hedera.AccountID, key hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
+	getConsensusClient := func(network map[string]hedera.AccountID, account *hedera.AccountID, key *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
 		cs := mockhcs.ConsensusClient{}
 		cs.CloseReturns(nil)
 		cs.SubmitConsensusMessageReturns(nil)
@@ -2632,7 +2573,7 @@ func newMockHcsClientFactoryWithNoopConsensusClient() *hcsClientFactoryWithRecor
 }
 
 func newMockHcsClientFactory(
-	getConsensusClient func(map[string]hedera.AccountID, hedera.AccountID, hedera.Ed25519PrivateKey) (factory.ConsensusClient, error),
+	getConsensusClient func(map[string]hedera.AccountID, *hedera.AccountID, *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error),
 	getMirrorClient func(string) (factory.MirrorClient, error),
 ) *hcsClientFactoryWithRecord {
 	mock := &hcsClientFactoryWithRecord{transport: newMockHcsTransport(), returnValues: make(map[string][]interface{})}
@@ -2648,14 +2589,14 @@ func newMockHcsClientFactory(
 		mock.returnValues[key] = append(mock.returnValues[key], returnValues)
 		mock.l.Unlock()
 	}
-	defaultGetConsensusClient := func(network map[string]hedera.AccountID, account hedera.AccountID, key hedera.Ed25519PrivateKey) (client factory.ConsensusClient, err error) {
+	defaultGetConsensusClient := func(network map[string]hedera.AccountID, account *hedera.AccountID, key *hedera.Ed25519PrivateKey) (client factory.ConsensusClient, err error) {
 		cs := mockhcs.ConsensusClient{}
 		cs.CloseReturns(nil)
-		cs.SubmitConsensusMessageCalls(func(message []byte, topicId hedera.ConsensusTopicID) error {
+		cs.SubmitConsensusMessageCalls(func(message []byte, topicID *hedera.ConsensusTopicID) error {
 			if message == nil {
 				return errors.Errorf("message is nil")
 			}
-			ch := mock.transport.getTransportW(topicId)
+			ch := mock.transport.getTransportW(topicID)
 			ch <- message
 			return nil
 		})
@@ -2666,11 +2607,11 @@ func newMockHcsClientFactory(
 		mc := mockhcs.MirrorClient{}
 		mc.CloseReturns(nil)
 		mc.SubscribeTopicCalls(func(
-			topicId hedera.ConsensusTopicID,
+			topicID *hedera.ConsensusTopicID,
 			start *time.Time,
 			end *time.Time,
 		) (factory.MirrorSubscriptionHandle, error) {
-			transport := mock.transport.getTransportR(topicId)
+			transport := mock.transport.getTransportR(topicID)
 			handle := newMockMirrorSubscriptionHandle(transport)
 			handle.start()
 			return handle, nil
@@ -2683,9 +2624,9 @@ func newMockHcsClientFactory(
 	if getConsensusClient != nil {
 		innerGetConsensusClient = getConsensusClient
 	}
-	getConsensusClientWithRecord := func(network map[string]hedera.AccountID, account hedera.AccountID, key hedera.Ed25519PrivateKey) (client factory.ConsensusClient, err error) {
+	getConsensusClientWithRecord := func(network map[string]hedera.AccountID, account *hedera.AccountID, key *hedera.Ed25519PrivateKey) (client factory.ConsensusClient, err error) {
 		defer func() {
-			recordReturnValue(GetConsensusClientFuncName, []interface{}{client, err})
+			recordReturnValue(getConsensusClientFuncName, []interface{}{client, err})
 		}()
 		client, err = innerGetConsensusClient(network, account, key)
 		return client, err
@@ -2697,7 +2638,7 @@ func newMockHcsClientFactory(
 	}
 	getMirrorClientWithRecord := func(endpoint string) (client factory.MirrorClient, err error) {
 		defer func() {
-			recordReturnValue(GetMirrorClientFuncName, []interface{}{client, err})
+			recordReturnValue(getMirrorClientFuncName, []interface{}{client, err})
 		}()
 		client, err = innerGetMirrorClient(endpoint)
 		return client, err

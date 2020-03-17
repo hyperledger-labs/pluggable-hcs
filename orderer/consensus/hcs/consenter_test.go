@@ -37,6 +37,8 @@ type identity interface {
 	msp.Identity
 }
 
+const testOperatorPrivateKey = "302e020100300506032b657004220420e373811ccb438637a4358db3cbb72dd899eeda6b764c0b8128c61063752b4fe4"
+
 func init() {
 	mockLocalConfig = newMockLocalConfig(false)
 	setupTestLogging("DEBUG")
@@ -136,9 +138,8 @@ func newMockLocalConfig(enableTLS bool) *localconfig.TopLevel {
 			Operator: localconfig.HcsOperator{
 				Id: "0.0.19651",
 				PrivateKey: localconfig.HcsPrivateKey{
-					Enabled: true,
-					Type:    "ed25519",
-					Key:     "302e020100300506032b65700422042043233ca2cf898027adf303f6439bf4a48a16b5be3f695f98b985c1cba9beba43",
+					Type: "ed25519",
+					Key:  testOperatorPrivateKey,
 				},
 			},
 		},
