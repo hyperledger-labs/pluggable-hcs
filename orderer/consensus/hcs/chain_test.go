@@ -376,7 +376,7 @@ func TestChain(t *testing.T) {
 			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 			defer close(respSyncChan)
 			setNextConsensusTimestamp(chain.topicSubscriptionHandle, lastFragmentFreeBlockConsensusTimestamp.Add(time.Nanosecond))
-			data := make([]byte, fragmentSize*5+10)
+			data := make([]byte, maxConsensusMessageSize*5+10)
 			hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
 			fragmentsOfMsg1 := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, uint64(1))
 			assert.True(t, len(fragmentsOfMsg1) > 1, "Expected more than one fragments created for message 1")
@@ -453,19 +453,19 @@ func TestChain(t *testing.T) {
 			mockSupport.BlockCutterVal.CutNext = true
 
 			fragmentID := uint64(1)
-			data := make([]byte, fragmentSize*2+10)
+			data := make([]byte, maxConsensusMessageSize*2+10)
 			hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
 			fragmentsOfMsg1 := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, fragmentID)
 			assert.True(t, len(fragmentsOfMsg1) > 1, "Expected more than one fragments created for message 1")
 			fragmentID++
 
-			data = make([]byte, fragmentSize*3+10)
+			data = make([]byte, maxConsensusMessageSize*3+10)
 			hcsMessage = newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
 			fragmentsOfMsg2 := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, fragmentID)
 			assert.True(t, len(fragmentsOfMsg2) > 1, "Expected more than one fragments created for message 2")
 			fragmentID++
 
-			data = make([]byte, fragmentSize*2+10)
+			data = make([]byte, maxConsensusMessageSize*2+10)
 			hcsMessage = newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
 			fragmentsOfMsg3 := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, fragmentID)
 			assert.True(t, len(fragmentsOfMsg3) > 1, "Expected more than one fragments created for message 3")
@@ -1030,7 +1030,7 @@ func TestProcessMessages(t *testing.T) {
 			haltChan:               haltChan,
 			doneProcessingMessages: make(chan struct{}),
 
-			fragmenter:     newFragmentSupport(),
+			fragmenter:     newFragmentSupport(maxConsensusMessageSize),
 			maxFragmentAge: calcMaxFragmentAge(200, len(mockSupport.ChannelConfig().OrdererAddresses())),
 			fragmentKey:    []byte("test fragment key"),
 		}
@@ -1725,7 +1725,7 @@ func TestResubmission(t *testing.T) {
 			doneProcessingMessages:      make(chan struct{}),
 			doneReprocessingMsgInFlight: doneReprocessingMsgInFlight,
 
-			fragmenter:     newFragmentSupport(),
+			fragmenter:     newFragmentSupport(maxConsensusMessageSize),
 			maxFragmentAge: calcMaxFragmentAge(200, len(mockSupport.ChannelConfig().OrdererAddresses())),
 			fragmentKey:    []byte("test fragment key"),
 		}

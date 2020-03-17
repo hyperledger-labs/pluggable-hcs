@@ -12,10 +12,12 @@ import (
 	ab "github.com/hyperledger/fabric-protos-go/orderer"
 )
 
-const fragmentSize = 3800
-
-func newFragmentSupport() *fragmentSupport {
+func newFragmentSupport(fragmentSize int) *fragmentSupport {
+	if fragmentSize <= 0 {
+		return nil
+	}
 	return &fragmentSupport{
+		fragmentSize:           fragmentSize,
 		holders:                map[string]*fragmentHolder{},
 		holderMapByFragmentKey: map[string]map[string]struct{}{},
 		holderListByAge:        list.New(),
@@ -23,6 +25,7 @@ func newFragmentSupport() *fragmentSupport {
 }
 
 type fragmentSupport struct {
+	fragmentSize           int
 	holders                map[string]*fragmentHolder
 	holderMapByFragmentKey map[string]map[string]struct{}
 	holderListByAge        *list.List
@@ -153,6 +156,7 @@ func (processor *fragmentSupport) removeHolder(holder *fragmentHolder, removeFro
 }
 
 func (processor *fragmentSupport) makeFragments(data []byte, fragmentKey []byte, fragmentID uint64) []*ab.HcsMessageFragment {
+	fragmentSize := processor.fragmentSize
 	fragments := make([]*ab.HcsMessageFragment, (len(data)+fragmentSize-1)/fragmentSize)
 	for i := 0; i < len(fragments); i++ {
 		first := i * fragmentSize
