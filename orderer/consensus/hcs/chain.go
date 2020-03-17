@@ -48,7 +48,7 @@ func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, ui
 			logger.Panicf("[channel: %s] Ledger may be corrupted: "+
 				"cannot unmarshal orderer metadata in most recent block", channelID)
 		}
-		timestamp, err := ptypes.Timestamp(hcsMetadata.GetLastConsensusTimestampPersisted())
+		consensusTimestamp, err := ptypes.Timestamp(hcsMetadata.GetLastConsensusTimestampPersisted())
 		if err != nil {
 			logger.Panicf("[channel: %s] Ledger may be corrupted: "+
 				"invalid last consensus timestamp in most recent block, %v", channelID, err)
@@ -58,7 +58,7 @@ func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, ui
 			logger.Panicf("[channel: %s] Ledger may be corrupted: "+
 				"invalid last fragment free consensus timestamp in most recent block, %v", channelID, err)
 		}
-		return timestamp,
+		return consensusTimestamp,
 			hcsMetadata.GetLastOriginalSequenceProcessed(),
 			hcsMetadata.GetLastResubmittedConfigSequence(),
 			lastFragmentFreeTimestamp
