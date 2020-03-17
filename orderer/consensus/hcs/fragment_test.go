@@ -14,27 +14,34 @@ import (
 )
 
 func TestEmptyFragmentSupport(t *testing.T) {
-	fragmenter := newFragmentSupport()
+	t.Run("Proper", func(t *testing.T) {
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 
-	assert.NotNil(t, fragmenter.holders, "Expected new fragment support have non-nil holders map")
-	assert.Equal(t, 0, len(fragmenter.holders), "Expected new fragment support have an empty holders map")
-	assert.NotNil(t, fragmenter.holderMapByFragmentKey, "Expected new fragment support have non-nil holderMapByFragmentKey")
-	assert.Equal(t, 0, len(fragmenter.holderMapByFragmentKey), "Expected new fragment support have empty holderMapByFragmentKey")
-	assert.NotNil(t, fragmenter.holderListByAge, "Expected new fragment support have non-nil holderListByAge")
-	assert.Equal(t, 0, fragmenter.holderListByAge.Len(), "Expected new fragment support have empty holderListByAge")
+		assert.NotNil(t, fragmenter.holders, "Expected new fragment support have non-nil holders map")
+		assert.Equal(t, 0, len(fragmenter.holders), "Expected new fragment support have an empty holders map")
+		assert.NotNil(t, fragmenter.holderMapByFragmentKey, "Expected new fragment support have non-nil holderMapByFragmentKey")
+		assert.Equal(t, 0, len(fragmenter.holderMapByFragmentKey), "Expected new fragment support have empty holderMapByFragmentKey")
+		assert.NotNil(t, fragmenter.holderListByAge, "Expected new fragment support have non-nil holderListByAge")
+		assert.Equal(t, 0, fragmenter.holderListByAge.Len(), "Expected new fragment support have empty holderListByAge")
+	})
+
+	t.Run("NonPositiveFragmentSize", func(t *testing.T) {
+		assert.Nil(t, newFragmentSupport(0), "Expected newFragmentSupport returns nil when fragmentSize is 0")
+		assert.Nil(t, newFragmentSupport(-10), "Expected newFragmentSupport returns nil when fragmentSize is 0")
+	})
 }
 
 func TestMakeFragments(t *testing.T) {
-	fragmenter := newFragmentSupport()
+	fragmenter := newFragmentSupport(maxConsensusMessageSize)
 	fragmentKey := []byte("test fragment key")
 
 	t.Run("OneFullFragment", func(t *testing.T) {
 		// should produce just 1 fragment
-		data := make([]byte, fragmentSize)
+		data := make([]byte, maxConsensusMessageSize)
 		fragments := fragmenter.makeFragments(data, fragmentKey, 0)
 		assert.Equal(t, 1, len(fragments))
 		f := fragments[0]
-		assert.Equal(t, fragmentSize, len(f.Fragment))
+		assert.Equal(t, maxConsensusMessageSize, len(f.Fragment))
 		assert.Equal(t, fragmentKey, f.FragmentKey)
 		assert.Equal(t, uint64(0), f.FragmentId)
 		assert.Equal(t, uint32(0), f.Sequence)
@@ -43,12 +50,12 @@ func TestMakeFragments(t *testing.T) {
 
 	// should produce 6 fragments
 	t.Run("MultipleFragments", func(t *testing.T) {
-		data := make([]byte, 5*fragmentSize+1)
+		data := make([]byte, 5*maxConsensusMessageSize+1)
 		fragments := fragmenter.makeFragments(data, fragmentKey, 0)
 		assert.Equal(t, 6, len(fragments), "Expected 6 fragments")
 		for i, f := range fragments {
 			if i != 5 {
-				assert.Equal(t, fragmentSize, len(f.Fragment), fmt.Sprintf("length of data in fragment should be %d", fragmentSize))
+				assert.Equal(t, maxConsensusMessageSize, len(f.Fragment), fmt.Sprintf("length of data in fragment should be %d", maxConsensusMessageSize))
 			} else {
 				assert.Equal(t, 1, len(f.Fragment), "length of data in last fragment should be 1")
 			}
@@ -63,9 +70,9 @@ func TestMakeFragments(t *testing.T) {
 func TestReassembly(t *testing.T) {
 	fragmentKey := []byte("test fragment key")
 	t.Run("Proper", func(t *testing.T) {
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 
-		data := make([]byte, 5*fragmentSize+1)
+		data := make([]byte, 5*maxConsensusMessageSize+1)
 		fragments := fragmenter.makeFragments(data, fragmentKey, 0)
 		for i, f := range fragments {
 			reassembled := fragmenter.reassemble(f)
@@ -73,16 +80,16 @@ func TestReassembly(t *testing.T) {
 				assert.Nil(t, reassembled, "reassemble result should be nil, except for the last fragment")
 			} else {
 				assert.NotNil(t, reassembled, "data should have been reassembled with all fragments")
-				assert.Equal(t, 5*fragmentSize+1, len(reassembled))
+				assert.Equal(t, 5*maxConsensusMessageSize+1, len(reassembled))
 			}
 		}
 		assert.Equal(t, 0, len(fragmenter.holders), "holders should be empty after fragments are assembled")
 	})
 
 	t.Run("OutOfOrder", func(t *testing.T) {
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 
-		data := make([]byte, 5*fragmentSize+1)
+		data := make([]byte, 5*maxConsensusMessageSize+1)
 		fragments := fragmenter.makeFragments(data, fragmentKey, 0)
 		indices := []int{5, 1, 0, 4, 3, 2}
 		for i, idx := range indices {
@@ -91,16 +98,16 @@ func TestReassembly(t *testing.T) {
 				assert.Nil(t, reassembled, "reassemble result should be nil, except for the last fragment")
 			} else {
 				assert.NotNil(t, reassembled, "data should have been reassembled with all fragments")
-				assert.Equal(t, 5*fragmentSize+1, len(reassembled))
+				assert.Equal(t, 5*maxConsensusMessageSize+1, len(reassembled))
 			}
 		}
 		assert.Equal(t, 0, len(fragmenter.holders), "holders should be empty after fragments are assembled")
 	})
 
 	t.Run("OutOfBoundFragment", func(t *testing.T) {
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 
-		data := make([]byte, 5*fragmentSize+1)
+		data := make([]byte, 5*maxConsensusMessageSize+1)
 		fragments := fragmenter.makeFragments(data, fragmentKey, 0)
 		indices := []int{5, 1, 0, 4, 2}
 		for _, idx := range indices {
@@ -117,9 +124,9 @@ func TestReassembly(t *testing.T) {
 	})
 
 	t.Run("DuplicateFragment", func(t *testing.T) {
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 
-		data := make([]byte, 5*fragmentSize+1)
+		data := make([]byte, 5*maxConsensusMessageSize+1)
 		fragments := fragmenter.makeFragments(data, fragmentKey, 0)
 		assert.Nil(t, fragmenter.reassemble(fragments[0]), "Expected reassemble returns nil")
 		assert.Nil(t, fragmenter.reassemble(fragments[0]), "Expected reassemble returns nil")
@@ -133,7 +140,7 @@ func TestReassembly(t *testing.T) {
 func TestIsPending(t *testing.T) {
 	fragmentKey := []byte("test fragment key")
 	t.Run("Empty", func(t *testing.T) {
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 		assert.False(t, fragmenter.isPending(), "Expected isPending returns false when there are no pending fragments")
 
 		fragment := &ab.HcsMessageFragment{
@@ -148,7 +155,7 @@ func TestIsPending(t *testing.T) {
 	})
 
 	t.Run("NonEmpty", func(t *testing.T) {
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 		fragment := &ab.HcsMessageFragment{
 			Fragment:       make([]byte, 2),
 			FragmentKey:    fragmentKey,
@@ -166,7 +173,7 @@ func TestExpireByAge(t *testing.T) {
 	fragmentKeyStr := hex.EncodeToString(fragmentKey)
 
 	t.Run("PendingFragmentsFromTwoMessages", func(t *testing.T) {
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 
 		fragment1 := &ab.HcsMessageFragment{
 			Fragment:       make([]byte, 2),
@@ -206,7 +213,7 @@ func TestExpireByAge(t *testing.T) {
 	})
 
 	t.Run("ProperExpire", func(t *testing.T) {
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 
 		fragmentID := uint64(1)
 		// first segment of a multi-segment message
@@ -271,21 +278,21 @@ func TestExpireByAge(t *testing.T) {
 	})
 
 	t.Run("ExpireWithZeroMaxAge", func(t *testing.T) {
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 		assert.NotPanics(t, func() { fragmenter.expireByAge(0) }, "Expect expire called with maxAge=0 return without panics")
 	})
 }
 
 func TestExpireByFragmentKey(t *testing.T) {
 	t.Run("NilFragmentKey", func(t *testing.T) {
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 		count, err := fragmenter.expireByFragmentKey(nil)
 		assert.Equal(t, 0, count, "Expected expireByFragmentKey returns 0 count with nil fragmentKey")
 		assert.Error(t, err, "Expected expireByFragmentKey returns error with nil fragmentKey")
 	})
 
 	t.Run("NonExistingFragmentKey", func(t *testing.T) {
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 		count, err := fragmenter.expireByFragmentKey([]byte("dummy key"))
 		assert.Equal(t, 0, count, "Expected 0 messages expired when provided with non-existing fragmentKey")
 		assert.NoError(t, err, "Expected expireByFragmentKey returns no error with non-existing fragmentKey")
@@ -297,7 +304,7 @@ func TestExpireByFragmentKey(t *testing.T) {
 		fragmentKey2 := []byte("test fragment key 2")
 		fragmentID2 := uint64(1)
 
-		fragmenter := newFragmentSupport()
+		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 
 		for i := 0; i < 6; i++ {
 			fragmenter.reassemble(&ab.HcsMessageFragment{

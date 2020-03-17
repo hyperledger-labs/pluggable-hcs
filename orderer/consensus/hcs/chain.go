@@ -36,7 +36,10 @@ var (
 	defaultHcsClientFactory = &hcsClientFactoryImpl{}
 )
 
-const aesKeyFilename = "/var/hyperledger/fabric/orderer/aes.key"
+const (
+	aesKeyFilename          = "/var/hyperledger/fabric/orderer/aes.key"
+	maxConsensusMessageSize = 3800 // the max message size HCS supports is 4kB, including header
+)
 
 func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, uint64, uint64, time.Time) {
 	if metadataValue != nil {
@@ -96,6 +99,17 @@ func newChain(
 	// randomize fragmentID to avoid overlapping between two runs
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	fragmentID := r.Uint64()
+
+	gcmCipher := makeGCMCipher(aesKeyFilename)
+	fragmentSize := maxConsensusMessageSize
+	if gcmCipher != nil {
+		fragmentSize -= gcmCipher.NonceSize() + gcmCipher.Overhead()
+	}
+	fragmenter := newFragmentSupport(fragmentSize)
+	if fragmenter == nil {
+		logger.Errorf("failed to create fragment support with fragment size %d bytes", fragmentSize)
+		return nil, fmt.Errorf("failed to create fragment support with fragment size %d bytes", fragmentSize)
+	}
 	return &chainImpl{
 		consenter:                          consenter,
 		ConsenterSupport:                   support,
@@ -109,11 +123,11 @@ func newChain(
 		haltChan:                           make(chan struct{}),
 		startChan:                          make(chan struct{}),
 		doneReprocessingMsgInFlight:        doneReprocessingMsgInFlight,
-		fragmenter:                         newFragmentSupport(),
+		fragmenter:                         fragmenter,
 		maxFragmentAge:                     calcMaxFragmentAge(200, len(support.ChannelConfig().OrdererAddresses())),
 		fragmentKey:                        fragmentKey[:],
 		fragmentID:                         fragmentID,
-		gcmCipher:                          makeGCMCipher(aesKeyFilename),
+		gcmCipher:                          gcmCipher,
 		nonceReader:                        crand.Reader,
 	}, nil
 }
@@ -285,24 +299,23 @@ func (chain *chainImpl) processMessages() error {
 			default:
 			}
 
+			plain, err := chain.decrypt(resp.Message)
+			if err != nil {
+				logger.Errorf("[channel: %s] failed to decrypt message payload in MirrorConsensusTopicResponse, %v", chain.ChannelID(), err)
+				continue
+			}
 			fragment := new(ab.HcsMessageFragment)
-			if err := proto.Unmarshal(resp.Message, fragment); err != nil {
+			if err := proto.Unmarshal(plain, fragment); err != nil {
 				logger.Panicf("[channel: %s] failed to unmarshal ordered message into HCS fragment = %v", chain.ChannelID(), err)
 			}
-			encrypted := chain.fragmenter.reassemble(fragment)
+			payload := chain.fragmenter.reassemble(fragment)
 			chain.fragmenter.expireByAge(chain.maxFragmentAge)
-			if encrypted == nil {
+			if payload == nil {
 				logger.Debugf("need more fragments to reassemble the HCS message")
 				continue
 			}
-			logger.Debugf("[channel: %s] reassembled a message of %d bytes", chain.ChannelID(), len(encrypted))
-			plain, err := chain.decrypt(encrypted)
-			if err != nil {
-				logger.Errorf("[channel: %s] failed to decrypt message payload in MirrorConsensusTopicResponse, %v",
-					chain.ChannelID(), err)
-				continue
-			}
-			if err := proto.Unmarshal(plain, msg); err != nil {
+			logger.Debugf("[channel: %s] reassembled a message of %d bytes", chain.ChannelID(), len(payload))
+			if err := proto.Unmarshal(payload, msg); err != nil {
 				logger.Criticalf("[channel: %s] unable to unmarshal ordered message", chain.ChannelID())
 				continue
 			}
@@ -721,31 +734,27 @@ func (chain *chainImpl) enqueueChecked(message *ab.HcsMessage, isResubmission bo
 		logger.Errorf("[channel: %s] unable to marshal HCS message because = %s", chain.ChannelID(), err)
 		return false
 	}
-	encrypted, err := chain.encrypt(payload)
-	if err != nil {
-		logger.Errorf("[channel: %s]cannot enqueue, failed to encrypt message payload: %v", chain.ChannelID(), err)
-		return false
-	}
-
-	fragments := chain.fragmenter.makeFragments(encrypted, chain.fragmentKey, chain.fragmentID)
+	fragments := chain.fragmenter.makeFragments(payload, chain.fragmentKey, chain.fragmentID)
 	chain.fragmentID++
 	logger.Debugf("[channel: %s] the payload of %d bytes is cut into %d fragments, resubmission ? %v",
-		chain.ChannelID(), len(encrypted), len(fragments), isResubmission)
-	for _, fragment := range fragments {
-		data, err := protoutil.Marshal(fragment)
-		if err != nil {
-			logger.Errorf("[channel: %s] unable to marshal HCS fragment because = %s", chain.ChannelID(), err)
+		chain.ChannelID(), len(payload), len(fragments), isResubmission)
+	encryptedFragments := make([][]byte, len(fragments))
+	for index, fragment := range fragments {
+		if encryptedFragments[index], err = chain.encrypt(protoutil.MarshalOrPanic(fragment)); err != nil {
+			logger.Errorf("[channel: %s] cannot enqueue, failed to encrypt message payload: %v", chain.ChannelID(), err)
 			return false
 		}
-		producer := chain.topicProducer
-		if isResubmission {
-			producer = chain.singleNodeTopicProducer
-		}
-		if err = producer.SubmitConsensusMessage(data, chain.topicID); err != nil {
+	}
+	producer := chain.topicProducer
+	if isResubmission {
+		producer = chain.singleNodeTopicProducer
+	}
+	for index, encrypted := range encryptedFragments {
+		if err = producer.SubmitConsensusMessage(encrypted, chain.topicID); err != nil {
 			logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
 			return false
 		}
-		logger.Debugf("[channel: %s] %d fragment of id %d sent successfully", chain.ChannelID(), fragment.Sequence, fragment.FragmentId)
+		logger.Debugf("[channel: %s] %d fragment of id %d sent successfully", chain.ChannelID(), fragments[index].Sequence, fragments[index].FragmentId)
 	}
 	logger.Debugf("[channel: %s] Envelope enqueued successfully", chain.ChannelID())
 	return true
