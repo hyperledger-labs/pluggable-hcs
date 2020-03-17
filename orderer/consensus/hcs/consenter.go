@@ -5,9 +5,6 @@ SPDX-License-Identifier: Apache-2.0
 package hcs
 
 import (
-	"fmt"
-
-	"github.com/hashgraph/hedera-sdk-go"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/msp"
@@ -44,12 +41,8 @@ type consenterImpl struct {
 // multichannel.NewManagerImpl() when ranging over the ledgerFactory's
 // existingChains.
 func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, metadata *cb.Metadata) (consensus.Chain, error) {
-	if _, err := hedera.TopicIDFromString(support.SharedConfig().Hcs().TopicId); err != nil {
-		return nil, fmt.Errorf("invalid hcs topic id %s", support.SharedConfig().Hcs().TopicId)
-	}
-
 	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentFreeConsensusTimestamp := getStateFromMetadata(metadata.Value, support.ChannelID())
-	ch, err := newChain(
+	return newChain(
 		consenter,
 		support,
 		defaultHcsClientFactory,
@@ -58,10 +51,6 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 		lastResubmittedConfigSequence,
 		lastFragmentFreeConsensusTimestamp,
 	)
-	if err != nil {
-		return nil, err
-	}
-	return ch, nil
 }
 
 // commonConsenter allows us to retrieve the configuration options set on the

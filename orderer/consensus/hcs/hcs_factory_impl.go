@@ -12,14 +12,14 @@ type hcsClientFactoryImpl struct{}
 
 func (f *hcsClientFactoryImpl) GetConsensusClient(
 	network map[string]hedera.AccountID,
-	operator hedera.AccountID,
-	privateKey hedera.Ed25519PrivateKey,
+	operator *hedera.AccountID,
+	privateKey *hedera.Ed25519PrivateKey,
 ) (factory.ConsensusClient, error) {
 	if network == nil || len(network) == 0 {
 		return nil, errors.Errorf("invalid network")
 	}
 	client := hedera.NewClient(network)
-	client.SetOperator(operator, privateKey)
+	client.SetOperator(*operator, *privateKey)
 	return &consensusClientImpl{client}, nil
 }
 
@@ -40,9 +40,9 @@ func (c *consensusClientImpl) Close() error {
 	return c.client.Close()
 }
 
-func (c *consensusClientImpl) SubmitConsensusMessage(message []byte, topicId hedera.ConsensusTopicID) error {
+func (c *consensusClientImpl) SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID) error {
 	_, err := hedera.NewConsensusMessageSubmitTransaction().
-		SetTopicID(topicId).
+		SetTopicID(*topicID).
 		SetMessage(message).
 		Execute(c.client)
 	return err
@@ -58,7 +58,7 @@ func (c *mirrorClientImpl) Close() error {
 }
 
 func (c *mirrorClientImpl) SubscribeTopic(
-	topicId hedera.ConsensusTopicID,
+	topicID *hedera.ConsensusTopicID,
 	startTime *time.Time,
 	endTime *time.Time,
 ) (factory.MirrorSubscriptionHandle, error) {
@@ -70,7 +70,7 @@ func (c *mirrorClientImpl) SubscribeTopic(
 		handle.onError(err)
 	}
 
-	query := hedera.NewMirrorConsensusTopicQuery().SetTopicID(topicId)
+	query := hedera.NewMirrorConsensusTopicQuery().SetTopicID(*topicID)
 	if startTime != nil {
 		query.SetStartTime(*startTime)
 	}
