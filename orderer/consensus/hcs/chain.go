@@ -92,6 +92,10 @@ func newChain(
 		close(doneReprocessingMsgInFlight)
 	}
 
+	fragmentKey := md5.Sum(consenter.identity())
+	// randomize fragmentID to avoid overlapping between two runs
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	fragmentID := r.Uint64()
 	return &chainImpl{
 		consenter:                          consenter,
 		ConsenterSupport:                   support,
@@ -107,7 +111,8 @@ func newChain(
 		doneReprocessingMsgInFlight:        doneReprocessingMsgInFlight,
 		fragmenter:                         newFragmentSupport(),
 		maxFragmentAge:                     calcMaxFragmentAge(200, len(support.ChannelConfig().OrdererAddresses())),
-		fragmentKey:                        makeRandomKey(consenter.sharedHcsConfig().Operator.Id),
+		fragmentKey:                        fragmentKey[:],
+		fragmentID:                         fragmentID,
 		gcmCipher:                          makeGCMCipher(aesKeyFilename),
 		nonceReader:                        crand.Reader,
 	}, nil
@@ -124,7 +129,6 @@ type chainImpl struct {
 	lastOriginalSequenceProcessed      uint64
 	lastResubmittedConfigSequence      uint64
 	lastFragmentFreeConsensusTimestamp time.Time
-	lastFragmentID                     uint64
 	lastCutBlockNumber                 uint64
 
 	// mutex used when changing the doneReprocessingMsgInFlight
@@ -152,8 +156,9 @@ type chainImpl struct {
 	topicSubscriptionHandle factory.MirrorSubscriptionHandle
 
 	fragmenter     *fragmentSupport
-	maxFragmentAge int
-	fragmentKey    string
+	maxFragmentAge uint64
+	fragmentKey    []byte
+	fragmentID     uint64
 
 	gcmCipher   cipher.AEAD
 	nonceReader io.Reader
@@ -225,37 +230,6 @@ func (chain *chainImpl) Errored() <-chan struct{} {
 	}
 }
 
-func startThread(chain *chainImpl) {
-	var err error
-
-	parseConfig(chain)
-
-	// create topicProducer
-	chain.topicProducer, chain.singleNodeTopicProducer, err = setupTopicProducer(chain.hcf, chain.network, chain.operatorID, chain.operatorPrivateKey)
-	if err != nil {
-		logger.Panicf("[channel: %s] failed to set up topic producer, %s", chain.ChannelID(), err)
-	}
-
-	// create topicConsumer and start subscription
-	chain.topicConsumer, err = chain.hcf.GetMirrorClient(chain.consenter.sharedHcsConfig().MirrorNodeAddress)
-	if err != nil {
-		logger.Panicf("[channel: %s] failed to set up topic consumer, %s", chain.ChannelID(), err)
-	}
-	logger.Debugf("[channel: %s] created topic consumer with mirror node address %s",
-		chain.ChannelID(), chain.consenter.sharedHcsConfig().MirrorNodeAddress)
-
-	// subscribe to the hcs topic
-	logger.Infof("[channel: %s] the HCS topic ID is %v", chain.ChannelID(), chain.topicID)
-	startSubscription(chain)
-
-	chain.doneProcessingMessages = make(chan struct{})
-	chain.errorChan = make(chan struct{})
-	close(chain.startChan)
-	logger.Infof("[channel: %s] Start phase completed successfully", chain.ChannelID())
-
-	chain.processMessages()
-}
-
 func (chain *chainImpl) processMessages() error {
 	defer func() {
 		chain.topicSubscriptionHandle.Unsubscribe()
@@ -316,7 +290,7 @@ func (chain *chainImpl) processMessages() error {
 				logger.Panicf("[channel: %s] failed to unmarshal ordered message into HCS fragment = %v", chain.ChannelID(), err)
 			}
 			encrypted := chain.fragmenter.reassemble(fragment)
-			chain.fragmenter.expire(chain.maxFragmentAge)
+			chain.fragmenter.expireByAge(chain.maxFragmentAge)
 			if encrypted == nil {
 				logger.Debugf("need more fragments to reassemble the HCS message")
 				continue
@@ -346,6 +320,8 @@ func (chain *chainImpl) processMessages() error {
 						logger.Criticalf("[channel: %s] consenter for channel exiting, %s", chain.ChannelID(), err)
 						return err
 					}
+				case *ab.HcsMessage_OrdererStarted:
+					chain.processOrdererStartedMessage(msg.GetOrdererStarted())
 				}
 			} else {
 				if resp.ConsensusTimeStamp.Equal(chain.lastConsensusTimestamp) {
@@ -629,6 +605,15 @@ func (chain *chainImpl) processTimeToCutMessage(msg *ab.HcsMessageTimeToCut, ts 
 	return nil
 }
 
+func (chain *chainImpl) processOrdererStartedMessage(msg *ab.HcsMessageOrdererStarted) {
+	logger.Debugf("[channel: %s] orderer %s just started", chain.ChannelID(), hex.EncodeToString(msg.OrdererIdentity))
+	if count, err := chain.fragmenter.expireByFragmentKey(msg.OrdererIdentity); err == nil {
+		logger.Debugf("[channel: %s] %d pending messages from orderer %s dropped", chain.ChannelID(), count, hex.EncodeToString(msg.OrdererIdentity))
+	} else {
+		logger.Errorf("[channel: %s] expireByFragmentKey returns error = %v", chain.ChannelID(), err)
+	}
+}
+
 func (chain *chainImpl) sendTimeToCut() error {
 	chain.timer = nil
 	msg := newTimeToCutMessage(chain.lastCutBlockNumber + 1)
@@ -722,40 +707,102 @@ func (chain *chainImpl) enqueue(message *ab.HcsMessage, isResubmission bool) boo
 			logger.Warningf("[channel: %s] consenter for this channel has been halted", chain.ChannelID())
 			return false
 		default: // The post path
-			payload, err := protoutil.Marshal(message)
-			if err != nil {
-				logger.Errorf("[channel: %s] unable to marshal HCS message because = %s", chain.ChannelID(), err)
-				return false
-			}
-			encrypted, err := chain.encrypt(payload)
-			if err != nil {
-				logger.Errorf("[channel: %s]cannot enqueue, failed to encrypt message payload: %v", chain.ChannelID(), err)
-				return false
-			}
-
-			fragments := chain.fragmenter.makeFragments(encrypted, chain.fragmentKey, chain.lastFragmentID)
-			chain.lastFragmentID++
-			logger.Debugf("[channel: %s] the payload of %d bytes is cut into %d fragments, resubmission ? %v",
-				chain.ChannelID(), len(encrypted), len(fragments), isResubmission)
-			for _, fragment := range fragments {
-				data := protoutil.MarshalOrPanic(fragment)
-				producer := chain.topicProducer
-				if isResubmission {
-					producer = chain.singleNodeTopicProducer
-				}
-				if err = producer.SubmitConsensusMessage(data, chain.topicID); err != nil {
-					logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
-					return false
-				}
-				logger.Debugf("[channel: %s] %d fragment of id %d sent successfully", chain.ChannelID(), fragment.Sequence, fragment.FragmentId)
-			}
-			logger.Debugf("[channel: %s] Envelope enqueued successfully", chain.ChannelID())
-			return true
+			return chain.enqueueChecked(message, isResubmission)
 		}
 	default: // Not ready yet
 		logger.Warningf("[channel: %s] Will not enqueue, consenter for this channel hasn't started yet", chain.ChannelID())
 		return false
 	}
+}
+
+func (chain *chainImpl) enqueueChecked(message *ab.HcsMessage, isResubmission bool) bool {
+	payload, err := protoutil.Marshal(message)
+	if err != nil {
+		logger.Errorf("[channel: %s] unable to marshal HCS message because = %s", chain.ChannelID(), err)
+		return false
+	}
+	encrypted, err := chain.encrypt(payload)
+	if err != nil {
+		logger.Errorf("[channel: %s]cannot enqueue, failed to encrypt message payload: %v", chain.ChannelID(), err)
+		return false
+	}
+
+	fragments := chain.fragmenter.makeFragments(encrypted, chain.fragmentKey, chain.fragmentID)
+	chain.fragmentID++
+	logger.Debugf("[channel: %s] the payload of %d bytes is cut into %d fragments, resubmission ? %v",
+		chain.ChannelID(), len(encrypted), len(fragments), isResubmission)
+	for _, fragment := range fragments {
+		data, err := protoutil.Marshal(fragment)
+		if err != nil {
+			logger.Errorf("[channel: %s] unable to marshal HCS fragment because = %s", chain.ChannelID(), err)
+			return false
+		}
+		producer := chain.topicProducer
+		if isResubmission {
+			producer = chain.singleNodeTopicProducer
+		}
+		if err = producer.SubmitConsensusMessage(data, chain.topicID); err != nil {
+			logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
+			return false
+		}
+		logger.Debugf("[channel: %s] %d fragment of id %d sent successfully", chain.ChannelID(), fragment.Sequence, fragment.FragmentId)
+	}
+	logger.Debugf("[channel: %s] Envelope enqueued successfully", chain.ChannelID())
+	return true
+}
+
+func (chain *chainImpl) doneReprocessing() <-chan struct{} {
+	chain.doneReprocessingMutex.Lock()
+	defer chain.doneReprocessingMutex.Unlock()
+	return chain.doneReprocessingMsgInFlight
+}
+
+func (chain *chainImpl) reprocessComplete() {
+	chain.doneReprocessingMutex.Lock()
+	defer chain.doneReprocessingMutex.Unlock()
+	close(chain.doneReprocessingMsgInFlight)
+}
+
+func (chain *chainImpl) reprocessPending() {
+	chain.doneReprocessingMutex.Lock()
+	defer chain.doneReprocessingMutex.Unlock()
+	chain.doneReprocessingMsgInFlight = make(chan struct{})
+}
+
+func startThread(chain *chainImpl) {
+	var err error
+
+	parseConfig(chain)
+
+	// create topicProducer
+	chain.topicProducer, chain.singleNodeTopicProducer, err = setupTopicProducer(chain.hcf, chain.network, chain.operatorID, chain.operatorPrivateKey)
+	if err != nil {
+		logger.Panicf("[channel: %s] failed to set up topic producer, %s", chain.ChannelID(), err)
+	}
+
+	// create topicConsumer and start subscription
+	chain.topicConsumer, err = chain.hcf.GetMirrorClient(chain.consenter.sharedHcsConfig().MirrorNodeAddress)
+	if err != nil {
+		logger.Panicf("[channel: %s] failed to set up topic consumer, %s", chain.ChannelID(), err)
+	}
+	logger.Debugf("[channel: %s] created topic consumer with mirror node address %s",
+		chain.ChannelID(), chain.consenter.sharedHcsConfig().MirrorNodeAddress)
+
+	// subscribe to the hcs topic
+	logger.Infof("[channel: %s] the HCS topic ID is %v", chain.ChannelID(), chain.topicID)
+	startSubscription(chain)
+
+	chain.doneProcessingMessages = make(chan struct{})
+	chain.errorChan = make(chan struct{})
+
+	if !chain.enqueueChecked(newOrdererStartedMessage(chain.fragmentKey), false) {
+		logger.Panicf("[channel: %s] failed to send orderer started message", chain.ChannelID())
+	}
+
+	close(chain.startChan)
+	logger.Infof("[channel: %s] Start phase completed successfully", chain.ChannelID())
+
+	chain.processMessages()
 }
 
 func parseConfig(chain *chainImpl) {
@@ -798,24 +845,6 @@ func startSubscription(chain *chainImpl) {
 	if chain.topicSubscriptionHandle, err = chain.topicConsumer.SubscribeTopic(chain.topicID, &startTime, nil); err != nil {
 		logger.Panicf("[channel: %s] failed to subscribe to hcs topic %v", chain.ChannelID(), chain.topicID)
 	}
-}
-
-func (chain *chainImpl) doneReprocessing() <-chan struct{} {
-	chain.doneReprocessingMutex.Lock()
-	defer chain.doneReprocessingMutex.Unlock()
-	return chain.doneReprocessingMsgInFlight
-}
-
-func (chain *chainImpl) reprocessComplete() {
-	chain.doneReprocessingMutex.Lock()
-	defer chain.doneReprocessingMutex.Unlock()
-	close(chain.doneReprocessingMsgInFlight)
-}
-
-func (chain *chainImpl) reprocessPending() {
-	chain.doneReprocessingMutex.Lock()
-	defer chain.doneReprocessingMutex.Unlock()
-	chain.doneReprocessingMsgInFlight = make(chan struct{})
 }
 
 func setupTopicProducer(
@@ -885,6 +914,16 @@ func newTimeToCutMessage(blockNumber uint64) *ab.HcsMessage {
 	}
 }
 
+func newOrdererStartedMessage(identity []byte) *ab.HcsMessage {
+	return &ab.HcsMessage{
+		Type: &ab.HcsMessage_OrdererStarted{
+			OrdererStarted: &ab.HcsMessageOrdererStarted{
+				OrdererIdentity: identity,
+			},
+		},
+	}
+}
+
 func newHcsMetadata(
 	lastConsensusTimestampPersisted *timestamp.Timestamp,
 	lastOriginalSequenceProcessed uint64,
@@ -908,15 +947,6 @@ func timestampProtoOrPanic(t *time.Time) *timestamp.Timestamp {
 	return ts
 }
 
-func makeRandomKey(prefix string) string {
-	data := make([]byte, 128)
-	rand.Seed(time.Now().UnixNano())
-	rand.Read(data)
-	data = append(data, []byte(prefix)...)
-	sum := md5.Sum(data)
-	return hex.EncodeToString(sum[:])[0:16]
-}
-
-func calcMaxFragmentAge(maxAgeBase int, numOrderers int) int {
-	return maxAgeBase * numOrderers
+func calcMaxFragmentAge(maxAgeBase uint64, numOrderers int) uint64 {
+	return maxAgeBase * uint64(numOrderers)
 }
