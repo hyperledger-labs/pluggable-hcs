@@ -117,6 +117,11 @@ func newChain(
 		logger.Errorf("failed to create fragment support with fragment size %d bytes", fragmentSize)
 		return nil, fmt.Errorf("failed to create fragment support with fragment size %d bytes", fragmentSize)
 	}
+
+	consenter.Metrics().NumberNodes.With("channel", support.ChannelID()).Set(float64(len(support.ChannelConfig().OrdererAddresses())))
+	consenter.Metrics().CommittedBlockNumber.With("channel", support.ChannelID()).Set(float64(lastCutBlockNumber))
+	consenter.Metrics().LastConsensusTimestampPersisted.With("channel", support.ChannelID()).Set(float64(lastConsensusTimestampPersisted.UnixNano()))
+
 	return &chainImpl{
 		consenter:                          consenter,
 		ConsenterSupport:                   support,
@@ -320,7 +325,8 @@ func (chain *chainImpl) processMessages() error {
 				logger.Panicf("[channel: %s] failed to unmarshal ordered message into HCS fragment = %v", chain.ChannelID(), err)
 			}
 			payload := chain.fragmenter.reassemble(fragment)
-			chain.fragmenter.expireByAge(chain.maxFragmentAge)
+			count := chain.fragmenter.expireByAge(chain.maxFragmentAge)
+			chain.consenter.Metrics().NumberMessagesDropped.With("channel", chain.ChannelID()).Add(float64(count))
 			if payload == nil {
 				logger.Debugf("need more fragments to reassemble the HCS message")
 				continue
@@ -386,6 +392,8 @@ func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTime
 	} else {
 		chain.ConsenterSupport.WriteConfigBlock(block, marshaledMetadata)
 	}
+	chain.consenter.Metrics().CommittedBlockNumber.With("channel", chain.ChannelID()).Set(float64(chain.lastCutBlockNumber))
+	chain.consenter.Metrics().LastConsensusTimestampPersisted.With("channel", chain.ChannelID()).Set(float64(consensusTimestamp.UnixNano()))
 }
 
 func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTimestamp *time.Time, newOriginalSequenceProcessed uint64) {
@@ -596,6 +604,7 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts *tim
 
 		chain.commitConfigMessage(env, ts, newSeq)
 		// new configuration is applied, number of orderers may have changed
+		chain.consenter.Metrics().NumberNodes.With("channel", chain.ChannelID()).Set(float64(len(chain.ChannelConfig().OrdererAddresses())))
 		chain.maxFragmentAge = calcMaxFragmentAge(200, len(chain.ChannelConfig().OrdererAddresses()))
 		logger.Debugf("[channel: %s] channel configuration has changed, updated maxFragmentAge to %d", chain.ChannelID(), chain.maxFragmentAge)
 
@@ -633,6 +642,7 @@ func (chain *chainImpl) processOrdererStartedMessage(msg *ab.HcsMessageOrdererSt
 	logger.Debugf("[channel: %s] orderer %s just started", chain.ChannelID(), hex.EncodeToString(msg.OrdererIdentity))
 	if count, err := chain.fragmenter.expireByFragmentKey(msg.OrdererIdentity); err == nil {
 		logger.Debugf("[channel: %s] %d pending messages from orderer %s dropped", chain.ChannelID(), count, hex.EncodeToString(msg.OrdererIdentity))
+		chain.consenter.Metrics().NumberMessagesDropped.With("channel", chain.ChannelID()).Add(float64(count))
 	} else {
 		logger.Errorf("[channel: %s] expireByFragmentKey returns error = %v", chain.ChannelID(), err)
 	}

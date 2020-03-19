@@ -36,7 +36,7 @@ func (processor *fragmentSupport) isPending() bool {
 	return len(processor.holders) != 0
 }
 
-func (processor *fragmentSupport) expireByAge(maxAge uint64) {
+func (processor *fragmentSupport) expireByAge(maxAge uint64) (count int) {
 	if maxAge == 0 {
 		logger.Errorf("invalid maxAge - %d", maxAge)
 		return
@@ -51,10 +51,12 @@ func (processor *fragmentSupport) expireByAge(maxAge uint64) {
 		age := calcAge(holder.tick, processor.tick)
 		if age >= maxAge {
 			processor.removeHolder(holder, true)
+			count++
 		} else {
 			break
 		}
 	}
+	return
 }
 
 func (processor *fragmentSupport) expireByFragmentKey(fragmentKey []byte) (int, error) {

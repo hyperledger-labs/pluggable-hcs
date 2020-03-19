@@ -6,6 +6,7 @@ package hcs
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/common/metrics/disabled"
 	"strings"
 	"testing"
 
@@ -26,16 +27,19 @@ import (
 )
 
 //go:generate counterfeiter -o mock/orderer_config.go --fake-name OrdererConfig . ordererConfig
-
 type ordererConfig interface {
 	channelconfig.Orderer
 }
 
 //go:generate counterfeiter -o mock/identity.go --fake-name Identity . identity
-
 type identity interface {
 	msp.Identity
 }
+
+////go:generate counterfeiter -o mock/metrics_provider.go --fake-name MetricsProvider . metricsProvider
+//type metricsProvider interface {
+//	metrics.Provider
+//}
 
 const testOperatorPrivateKey = "302e020100300506032b657004220420e373811ccb438637a4358db3cbb72dd899eeda6b764c0b8128c61063752b4fe4"
 
@@ -49,20 +53,20 @@ func TestNew(t *testing.T) {
 
 	t.Run("Proper", func(t *testing.T) {
 		publicIdentity.SerializeReturns(make([]byte, 16), nil)
-		c := New(mockLocalConfig.Hcs, publicIdentity)
+		c := New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{})
 		_ = consensus.Consenter(c)
 	})
 
 	t.Run("IdentityError", func(t *testing.T) {
 		publicIdentity.SerializeReturns(nil, fmt.Errorf("can't serialize identity"))
-		assert.Panics(t, func() { New(mockLocalConfig.Hcs, publicIdentity) }, "Expected New panics when identity.Serialize returns errors")
+		assert.Panics(t, func() { New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{}) }, "Expected New panics when identity.Serialize returns errors")
 	})
 }
 
 func TestHandleChain(t *testing.T) {
 	publicIdentity := &mock.Identity{}
 	publicIdentity.SerializeReturns(make([]byte, 16), nil)
-	consenter := New(mockLocalConfig.Hcs, publicIdentity)
+	consenter := New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{})
 
 	mockOrderer := &mock.OrdererConfig{}
 	mockOrdererHcs := &orderer.Hcs{TopicId: "0.0.19718"}
@@ -122,7 +126,6 @@ func TestHandleChain(t *testing.T) {
 var mockLocalConfig *localconfig.TopLevel
 
 func newMockLocalConfig(enableTLS bool) *localconfig.TopLevel {
-
 	return &localconfig.TopLevel{
 		General: localconfig.General{
 			TLS: localconfig.TLS{
