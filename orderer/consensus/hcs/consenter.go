@@ -7,6 +7,7 @@ package hcs
 import (
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/hyperledger/fabric/common/metrics"
 	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/consensus"
@@ -15,7 +16,7 @@ import (
 var logger = flogging.MustGetLogger("orderer.consensus.hcs")
 
 // New creates a HCS-based consenter. Called by orderer's main.go.
-func New(config localconfig.Hcs, publicIdentity msp.Identity) consensus.Consenter {
+func New(config localconfig.Hcs, publicIdentity msp.Identity, metricsProvider metrics.Provider) consensus.Consenter {
 	logger.Debug("creating HCS-based consenter...")
 	identity, err := publicIdentity.Serialize()
 	if err != nil {
@@ -24,6 +25,7 @@ func New(config localconfig.Hcs, publicIdentity msp.Identity) consensus.Consente
 	return &consenterImpl{
 		sharedHcsConfigVal: &config,
 		identityVal:        identity,
+		metrics:            NewMetrics(metricsProvider),
 	}
 }
 
@@ -33,6 +35,7 @@ func New(config localconfig.Hcs, publicIdentity msp.Identity) consensus.Consente
 type consenterImpl struct {
 	sharedHcsConfigVal *localconfig.Hcs
 	identityVal        []byte
+	metrics            *Metrics
 }
 
 // HandleChain creates/returns a reference to a consensus.Chain object for the
@@ -60,6 +63,7 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 type commonConsenter interface {
 	sharedHcsConfig() *localconfig.Hcs
 	identity() []byte
+	Metrics() *Metrics
 }
 
 func (consenter *consenterImpl) sharedHcsConfig() *localconfig.Hcs {
@@ -68,4 +72,8 @@ func (consenter *consenterImpl) sharedHcsConfig() *localconfig.Hcs {
 
 func (consenter *consenterImpl) identity() []byte {
 	return consenter.identityVal
+}
+
+func (consenter *consenterImpl) Metrics() *Metrics {
+	return consenter.metrics
 }

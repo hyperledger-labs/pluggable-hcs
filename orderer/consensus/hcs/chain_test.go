@@ -109,8 +109,9 @@ func TestChain(t *testing.T) {
 
 	newMocks := func(t *testing.T) (mockConsenter *consenterImpl, mockSupport *mockmultichannel.ConsenterSupport) {
 		mockConsenter = &consenterImpl{
-			&mockLocalConfig.Hcs,
-			make([]byte, 16),
+			sharedHcsConfigVal: &mockLocalConfig.Hcs,
+			identityVal:        make([]byte, 16),
+			metrics:            newFakeMetrics(newFakeMetricsFields()),
 		}
 
 		mockSupport = &mockmultichannel.ConsenterSupport{
@@ -970,8 +971,9 @@ func TestProcessMessages(t *testing.T) {
 		haltChan := make(chan struct{})
 
 		mockConsenter := &consenterImpl{
-			&mockLocalConfig.Hcs,
-			make([]byte, 16),
+			sharedHcsConfigVal: &mockLocalConfig.Hcs,
+			identityVal:        make([]byte, 16),
+			metrics:            newFakeMetrics(newFakeMetricsFields()),
 		}
 
 		topicProducer, _ := hcf.GetConsensusClient(nil, nil, nil)
@@ -1651,8 +1653,9 @@ func TestResubmission(t *testing.T) {
 		}
 
 		mockConsenter := &consenterImpl{
-			&mockLocalConfig.Hcs,
-			make([]byte, 16),
+			sharedHcsConfigVal: &mockLocalConfig.Hcs,
+			identityVal:        make([]byte, 16),
+			metrics:            newFakeMetrics(newFakeMetricsFields()),
 		}
 
 		topicProducer, _ := hcf.GetConsensusClient(nil, nil, nil)
