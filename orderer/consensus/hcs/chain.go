@@ -12,6 +12,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -38,8 +40,10 @@ var (
 )
 
 const (
-	aesKeyFilename          = "/var/hyperledger/fabric/orderer/aes.key"
-	maxConsensusMessageSize = 3800 // the max message size HCS supports is 4kB, including header
+	aesKeyFilename            = "/var/hyperledger/fabric/orderer/aes.key"
+	maxConsensusMessageSize   = 3800 // the max message size HCS supports is 4kB, including header
+	subscriptionRetryInterval = 100 * time.Millisecond
+	subscriptionRetryMax      = 30
 )
 
 func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, uint64, uint64, time.Time) {
@@ -184,6 +188,7 @@ type chainImpl struct {
 	singleNodeTopicProducer factory.ConsensusClient
 	topicConsumer           factory.MirrorClient
 	topicSubscriptionHandle factory.MirrorSubscriptionHandle
+	subscriptionRetryTimer  <-chan time.Time
 
 	fragmenter     fragmentSupport
 	maxFragmentAge uint64
@@ -289,6 +294,7 @@ func (chain *chainImpl) processMessages() error {
 	} else {
 		logger.Debugf("[channel: %s] going into the normal message processing loop", chain.ChannelID())
 	}
+	subscriptionRetryCount := 0
 	msg := new(ab.HcsMessage)
 	for {
 		select {
@@ -300,7 +306,22 @@ func (chain *chainImpl) processMessages() error {
 			select {
 			case <-chain.errorChan: // don't do anything if already closed
 			default:
-				logger.Errorf("[channel: %s] closing errorChan due to subscription streaming error", chain.ChannelID())
+				st, ok := status.FromError(hcsErr)
+				if ok && st.Code() == codes.InvalidArgument && subscriptionRetryCount < subscriptionRetryMax {
+					// the new topic info may have not propagated to the mirror node yet, retry subscription
+					logger.Infof("[channel: %s] the topic may be not ready yet, retry in 100ms", chain.ChannelID())
+					chain.subscriptionRetryTimer = time.After(subscriptionRetryInterval)
+				} else {
+					logger.Errorf("[channel: %s] closing errorChan due to subscription streaming error", chain.ChannelID())
+					close(chain.errorChan)
+				}
+			}
+		case <-chain.subscriptionRetryTimer:
+			logger.Debugf("[channel: %s] retry topic subscription", chain.ChannelID())
+			chain.subscriptionRetryTimer = nil
+			subscriptionRetryCount++
+			if err := startSubscription(chain, chain.lastConsensusTimestamp); err != nil {
+				logger.Errorf("[channel: %s] closing errorChan due to failed subscription retry = %v", chain.ChannelID(), err)
 				close(chain.errorChan)
 			}
 		case resp, ok := <-chain.topicSubscriptionHandle.Responses():
@@ -308,6 +329,7 @@ func (chain *chainImpl) processMessages() error {
 				logger.Criticalf("[channel: %s] hcs topic subscription closed", chain.ChannelID())
 				return nil
 			}
+			subscriptionRetryCount = 0
 			select {
 			case <-chain.errorChan:
 				chain.errorChan = make(chan struct{}) // make a new one, make the chain available again
@@ -818,7 +840,14 @@ func startThread(chain *chainImpl) {
 
 	// subscribe to the hcs topic
 	logger.Infof("[channel: %s] the HCS topic ID is %v", chain.ChannelID(), chain.topicID)
-	startSubscription(chain)
+	if chain.lastFragmentFreeConsensusTimestamp.After(chain.lastConsensusTimestampPersisted) {
+		logger.Panicf("[channel: %s] corrupted metadata? chain.lastFragmentFreeConsensusTimestamp is after "+
+			"chain.lastConsensusTimestampPersisted", chain.ChannelID())
+	}
+	err = startSubscription(chain, chain.lastFragmentFreeConsensusTimestamp)
+	if err != nil {
+		logger.Panicf("[channel: %s] failed to start topic subscription = %v", chain.ChannelID(), err)
+	}
 
 	chain.doneProcessingMessages = make(chan struct{})
 	chain.errorChan = make(chan struct{})
@@ -881,19 +910,16 @@ func parseConfig(
 	return
 }
 
-func startSubscription(chain *chainImpl) {
-	if chain.lastFragmentFreeConsensusTimestamp.After(chain.lastConsensusTimestampPersisted) {
-		logger.Panicf("[channel: %s] corrupted metadata? chain.lastFragmentFreeConsensusTimestamp is after "+
-			"chain.lastConsensusTimestampPersisted", chain.ChannelID())
-	}
-	startTime := chain.lastFragmentFreeConsensusTimestamp
+func startSubscription(chain *chainImpl, startTime time.Time) error {
 	if !startTime.Equal(unixEpoch) {
 		startTime = startTime.Add(time.Nanosecond)
 	}
-	var err error
-	if chain.topicSubscriptionHandle, err = chain.topicConsumer.SubscribeTopic(chain.topicID, &startTime, nil); err != nil {
-		logger.Panicf("[channel: %s] failed to subscribe to hcs topic %v", chain.ChannelID(), chain.topicID)
+	handle, err := chain.topicConsumer.SubscribeTopic(chain.topicID, &startTime, nil)
+	if err != nil {
+		return err
 	}
+	chain.topicSubscriptionHandle = handle
+	return nil
 }
 
 func setupTopicProducer(

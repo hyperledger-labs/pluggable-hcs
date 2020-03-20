@@ -3,6 +3,8 @@ package hcs
 import (
 	crand "crypto/rand"
 	"fmt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"io/ioutil"
 	"math/rand"
 	"os"
@@ -99,7 +101,6 @@ var (
 )
 
 func TestChain(t *testing.T) {
-
 	oldestConsensusTimestamp := unixEpoch
 	newestConsensusTimestamp := unixEpoch.Add(time.Hour * 1000)
 	lastOriginalOffsetProcessed := uint64(0)
@@ -915,6 +916,167 @@ func TestChain(t *testing.T) {
 			assert.Error(t, chain.sendTimeToCut(), "Expect error from sendTimeToCut")
 		})
 	})
+
+	t.Run("SubscriptionStreamingError", func(t *testing.T) {
+		t.Run("UnrecoverableStatus", func(t *testing.T) {
+			mockConsenter, mockSupport := newMocks(t)
+			mockSupport.Blocks = make(chan *cb.Block)
+			mockSupport.BlockCutterVal = mockblockcutter.NewReceiver()
+			hcf := newDefaultMockHcsClientFactory()
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
+			close(mockSupport.BlockCutterVal.Block)
+
+			chain.Start()
+			select {
+			case <-chain.startChan:
+				logger.Debug("startChan is closed as it should be")
+			case <-time.After(shortTimeout):
+				t.Fatal("startChan should have been closed by now")
+			}
+
+			done := make(chan struct{})
+			go func() {
+				<-chain.Errored()
+				done <- struct{}{}
+			}()
+			close(getRespSyncChan(chain.topicSubscriptionHandle))
+			handle := chain.topicSubscriptionHandle.(*mockMirrorSubscriptionHandle)
+			handle.errChan <- status.Error(codes.Aborted, "test error message")
+
+			select {
+			case <-done:
+			case <-time.After(shortTimeout):
+				t.Fatalf("Expected errChan closed")
+			}
+
+			chain.Halt()
+		})
+
+		t.Run("UnrecoverableError", func(t *testing.T) {
+			mockConsenter, mockSupport := newMocks(t)
+			mockSupport.Blocks = make(chan *cb.Block)
+			mockSupport.BlockCutterVal = mockblockcutter.NewReceiver()
+			hcf := newDefaultMockHcsClientFactory()
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
+			close(mockSupport.BlockCutterVal.Block)
+
+			chain.Start()
+			select {
+			case <-chain.startChan:
+				logger.Debug("startChan is closed as it should be")
+			case <-time.After(shortTimeout):
+				t.Fatal("startChan should have been closed by now")
+			}
+
+			done := make(chan struct{})
+			go func() {
+				<-chain.Errored()
+				done <- struct{}{}
+			}()
+			close(getRespSyncChan(chain.topicSubscriptionHandle))
+			handle := chain.topicSubscriptionHandle.(*mockMirrorSubscriptionHandle)
+			handle.errChan <- fmt.Errorf("test error message")
+
+			select {
+			case <-done:
+			case <-time.After(shortTimeout):
+				t.Fatalf("Expected errChan closed")
+			}
+
+			chain.Halt()
+		})
+
+		t.Run("ProperRetry", func(t *testing.T) {
+			mockConsenter, mockSupport := newMocks(t)
+			mockSupport.Blocks = make(chan *cb.Block)
+			mockSupport.BlockCutterVal = mockblockcutter.NewReceiver()
+			hcf := newDefaultMockHcsClientFactory()
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
+			close(mockSupport.BlockCutterVal.Block)
+
+			chain.Start()
+			select {
+			case <-chain.startChan:
+				logger.Debug("startChan is closed as it should be")
+			case <-time.After(shortTimeout):
+				t.Fatal("startChan should have been closed by now")
+			}
+			close(getRespSyncChan(chain.topicSubscriptionHandle))
+			mockMirrorClient := chain.topicConsumer.(*mockhcs.MirrorClient)
+			oldSubscribeTopicStub := mockMirrorClient.SubscribeTopicStub
+			subscribeTopicSyncChan := make(chan struct{})
+			mockMirrorClient.SubscribeTopicCalls(func(topicID *hedera.ConsensusTopicID, start *time.Time, end *time.Time) (factory.MirrorSubscriptionHandle, error) {
+				defer func() {
+					<-subscribeTopicSyncChan
+				}()
+				return oldSubscribeTopicStub(topicID, start, end)
+			})
+
+			handle := chain.topicSubscriptionHandle.(*mockMirrorSubscriptionHandle)
+			handle.errChan <- status.Error(codes.InvalidArgument, "Invalid topic ID")
+			subscribeTopicSyncChan <- struct{}{}
+
+			select {
+			case <-chain.Errored():
+				t.Fatalf("Expected blocking on errChan")
+			case <-time.After(shortTimeout):
+			}
+
+			assert.Equal(t, 2, mockMirrorClient.SubscribeTopicCallCount(), "Expected SubscribeTopic called twice")
+			chain.Halt()
+		})
+
+		t.Run("RetryMaxExceeded", func(t *testing.T) {
+			if testing.Short() {
+				t.Skip("Skipping test in short mode")
+			}
+
+			mockConsenter, mockSupport := newMocks(t)
+			mockSupport.Blocks = make(chan *cb.Block)
+			mockSupport.BlockCutterVal = mockblockcutter.NewReceiver()
+			hcf := newDefaultMockHcsClientFactory()
+			chain, _ := newChain(mockConsenter, mockSupport, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
+			close(mockSupport.BlockCutterVal.Block)
+
+			chain.Start()
+			select {
+			case <-chain.startChan:
+				logger.Debug("startChan is closed as it should be")
+			case <-time.After(shortTimeout):
+				t.Fatal("startChan should have been closed by now")
+			}
+			close(getRespSyncChan(chain.topicSubscriptionHandle))
+			mockMirrorClient := chain.topicConsumer.(*mockhcs.MirrorClient)
+			oldSubscribeTopicStub := mockMirrorClient.SubscribeTopicStub
+			subscribeTopicSyncChan := make(chan struct{})
+			var handle *mockMirrorSubscriptionHandle
+			mockMirrorClient.SubscribeTopicCalls(func(topicID *hedera.ConsensusTopicID, start *time.Time, end *time.Time) (factory.MirrorSubscriptionHandle, error) {
+				defer func() {
+					<-subscribeTopicSyncChan
+				}()
+				h, err := oldSubscribeTopicStub(topicID, start, end)
+				handle = h.(*mockMirrorSubscriptionHandle)
+				return h, err
+			})
+
+			handle = chain.topicSubscriptionHandle.(*mockMirrorSubscriptionHandle)
+			for i := 0; i < subscriptionRetryMax; i++ {
+				handle.errChan <- status.Error(codes.InvalidArgument, "Invalid topic ID")
+				subscribeTopicSyncChan <- struct{}{}
+			}
+			// this last error should cause retry count exceed the max, thus errChan will be closed
+			handle.errChan <- status.Error(codes.InvalidArgument, "Invalid topic ID")
+
+			select {
+			case <-chain.Errored():
+			case <-time.After(shortTimeout):
+				t.Fatalf("Expected errChan closed after max subscription retry")
+			}
+
+			assert.Equal(t, 1+subscriptionRetryMax, mockMirrorClient.SubscribeTopicCallCount(), "Expected SubscribeTopic called 1 + subscriptionRetryMax times")
+			chain.Halt()
+		})
+	})
 }
 
 func TestSetupProducerForChannel(t *testing.T) {
@@ -1597,7 +1759,6 @@ func TestProcessMessages(t *testing.T) {
 		hcf.InjectMessage(protoutil.MarshalOrPanic(ordererStartedFragment), chain.topicID)
 		reassembleSyncChan <- struct{}{}
 		expireByFragmentKeySyncChan <- struct{}{}
-
 
 		// expire all fragments with fragmentKey2
 		fragment = &ab.HcsMessageFragment{

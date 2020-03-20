@@ -36,16 +36,11 @@ type identity interface {
 	msp.Identity
 }
 
-////go:generate counterfeiter -o mock/metrics_provider.go --fake-name MetricsProvider . metricsProvider
-//type metricsProvider interface {
-//	metrics.Provider
-//}
-
 const testOperatorPrivateKey = "302e020100300506032b657004220420e373811ccb438637a4358db3cbb72dd899eeda6b764c0b8128c61063752b4fe4"
 
 func init() {
 	mockLocalConfig = newMockLocalConfig(false)
-	setupTestLogging("DEBUG")
+	setupTestLogging("ERROR")
 }
 
 func TestNew(t *testing.T) {
