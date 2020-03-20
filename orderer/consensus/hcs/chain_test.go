@@ -2,7 +2,6 @@ package hcs
 
 import (
 	crand "crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -31,39 +30,38 @@ import (
 )
 
 //go:generate counterfeiter -o mock/orderer_capabilities.go --fake-name OrdererCapabilities . ordererCapabilities
-
 type ordererCapabilities interface {
 	channelconfig.OrdererCapabilities
 }
 
 //go:generate counterfeiter -o mock/channel_capabilities.go --fake-name ChannelCapabilities . channelCapabilities
-
 type channelCapabilities interface {
 	channelconfig.ChannelCapabilities
 }
 
 //go:generate counterfeiter -o mock/channel_config.go --fake-name ChannelConfig . channelConfig
-
 type channelConfig interface {
 	channelconfig.Channel
 }
 
 //go:generate counterfeiter -o mock/hcs_client_factory.go --fake-name HcsClientFactory . hcsClientFactory
-
 type hcsClientFactory interface {
 	factory.HcsClientFactory
 }
 
 //go:generate counterfeiter -o mock/consensus_client.go --fake-name ConsensusClient . consensusClient
-
 type consensusClient interface {
 	factory.ConsensusClient
 }
 
 //go:generate counterfeiter -o mock/mirror_client.go --fake-name MirrorClient . mirrorClient
-
 type mirrorClient interface {
 	factory.MirrorClient
+}
+
+//go:generate counterfeiter -o mock/fragment.go --fake-name FragmentSupport . mocFragmentSupport
+type mocFragmentSupport interface {
+	fragmentSupport
 }
 
 const (
@@ -365,11 +363,11 @@ func TestChain(t *testing.T) {
 			setNextConsensusTimestamp(chain.topicSubscriptionHandle, lastFragmentFreeBlockConsensusTimestamp.Add(time.Nanosecond))
 			data := make([]byte, maxConsensusMessageSize*5+10)
 			hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
-			fragmentsOfMsg1 := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, uint64(1))
+			fragmentsOfMsg1 := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, uint64(1))
 			assert.True(t, len(fragmentsOfMsg1) > 1, "Expected more than one fragments created for message 1")
 
 			hcsMessage = newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("short test message")), uint64(0), uint64(0))
-			fragmentsOfMsg2 := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, uint64(2))
+			fragmentsOfMsg2 := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, uint64(2))
 			assert.Equal(t, 1, len(fragmentsOfMsg2), "Expected one fragment created for message 2")
 
 			// send all fragments of message 1 but last
@@ -396,7 +394,7 @@ func TestChain(t *testing.T) {
 			case <-time.After(shortTimeout / 2):
 				t.Fatal("Expected WaitReady no longer blocks")
 			}
-			assert.Equal(t, 1, len(chain.fragmenter.holders), "Expected there is one message pending reassembly")
+			assert.True(t, chain.fragmenter.IsPending(), "Expected there are messages pending reassembly")
 
 			mockSupport.BlockCutterVal.CutNext = true
 			// send the last segment of message 1
@@ -408,7 +406,7 @@ func TestChain(t *testing.T) {
 
 			chain.Halt()
 			assert.Equal(t, lastCutBlockNumber+1, chain.lastCutBlockNumber, "Expected lastCutBlockNumber increased by 1")
-			assert.Equal(t, 0, len(chain.fragmenter.holders), "Expected no more pending fragments")
+			assert.False(t, chain.fragmenter.IsPending(), "Expected no more pending fragments")
 		})
 
 		t.Run("ProperBlockMetadataWhenHaltWithPendingFragments", func(t *testing.T) {
@@ -442,19 +440,19 @@ func TestChain(t *testing.T) {
 			fragmentID := uint64(1)
 			data := make([]byte, maxConsensusMessageSize*2+10)
 			hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
-			fragmentsOfMsg1 := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, fragmentID)
+			fragmentsOfMsg1 := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, fragmentID)
 			assert.True(t, len(fragmentsOfMsg1) > 1, "Expected more than one fragments created for message 1")
 			fragmentID++
 
 			data = make([]byte, maxConsensusMessageSize*3+10)
 			hcsMessage = newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
-			fragmentsOfMsg2 := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, fragmentID)
+			fragmentsOfMsg2 := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, fragmentID)
 			assert.True(t, len(fragmentsOfMsg2) > 1, "Expected more than one fragments created for message 2")
 			fragmentID++
 
 			data = make([]byte, maxConsensusMessageSize*2+10)
 			hcsMessage = newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
-			fragmentsOfMsg3 := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, fragmentID)
+			fragmentsOfMsg3 := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, fragmentID)
 			assert.True(t, len(fragmentsOfMsg3) > 1, "Expected more than one fragments created for message 3")
 
 			// send all fragments of message 1, one block should be cut
@@ -496,7 +494,7 @@ func TestChain(t *testing.T) {
 				t.Fatal("Expected one block cut")
 			}
 
-			assert.Equal(t, 1, len(chain.fragmenter.holders), "Expected there is one message pending reassembly")
+			assert.True(t, chain.fragmenter.IsPending(), "Expected there are messages pending reassembly")
 
 			chain.Halt()
 			assert.Equal(t, lastCutBlockNumber+2, chain.lastCutBlockNumber, "Expected lastCutBlockNumber increased by 2")
@@ -1043,7 +1041,7 @@ func TestProcessMessages(t *testing.T) {
 			mockSupport.BlockCutterVal.CutAncestors = true
 
 			hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("foo message 2")), uint64(0), uint64(0))
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, 0)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 
@@ -1091,7 +1089,7 @@ func TestProcessMessages(t *testing.T) {
 			mockSupport.BlockCutterVal.Ordered(newMockEnvelope("foo message"))
 
 			msg := newTimeToCutMessage(lastCutBlockNumber + 1)
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 
@@ -1129,7 +1127,7 @@ func TestProcessMessages(t *testing.T) {
 			}()
 
 			msg := newTimeToCutMessage(lastCutBlockNumber + 1)
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			respSyncChan <- struct{}{} // sync with subscription handle to ensure the message is received by processMessages
@@ -1166,7 +1164,7 @@ func TestProcessMessages(t *testing.T) {
 
 			// larger than expected block number,
 			msg := newTimeToCutMessage(lastCutBlockNumber + 2)
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			respSyncChan <- struct{}{} // sync with subscription handle to ensure the message is received by processMessages
@@ -1203,7 +1201,7 @@ func TestProcessMessages(t *testing.T) {
 
 			// larger than expected block number,
 			msg := newTimeToCutMessage(lastCutBlockNumber)
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			respSyncChan <- struct{}{}
@@ -1241,7 +1239,7 @@ func TestProcessMessages(t *testing.T) {
 			close(mockSupport.BlockCutterVal.Block)
 
 			msg := newNormalMessage([]byte("bytes won't unmarshal to envelope"), uint64(0), uint64(0))
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			respSyncChan <- struct{}{}
@@ -1279,7 +1277,7 @@ func TestProcessMessages(t *testing.T) {
 
 				// first message
 				msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-				fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+				fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 				assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 				assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 				mockSupport.BlockCutterVal.Block <- struct{}{}
@@ -1344,7 +1342,7 @@ func TestProcessMessages(t *testing.T) {
 				mockSupport.BlockCutterVal.CutNext = true
 
 				msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-				fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+				fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 				assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 				assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 				<-mockSupport.Blocks
@@ -1383,7 +1381,7 @@ func TestProcessMessages(t *testing.T) {
 
 				// normal message
 				msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-				fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+				fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 				assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 				assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 				normalBlockTimestamp, err1 := ptypes.TimestampProto(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
@@ -1392,7 +1390,7 @@ func TestProcessMessages(t *testing.T) {
 
 				// config message
 				msg = newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), uint64(0), uint64(0))
-				fragments = chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
+				fragments = chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
 				assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 				assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 				configBlockTimestamp, err1 := ptypes.TimestampProto(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
@@ -1448,7 +1446,7 @@ func TestProcessMessages(t *testing.T) {
 
 				// config message with configseq 0
 				msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), uint64(0), uint64(0))
-				fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
+				fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
 				assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 				assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 				select {
@@ -1493,7 +1491,7 @@ func TestProcessMessages(t *testing.T) {
 
 			setNextConsensusTimestamp(chain.topicSubscriptionHandle, lastConsensusTimestampPersisted.Add(time.Nanosecond))
 			msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			respSyncChan <- struct{}{}
@@ -1505,6 +1503,11 @@ func TestProcessMessages(t *testing.T) {
 	})
 
 	t.Run("OrdererStartedMessage", func(t *testing.T) {
+		fragmentKey1 := []byte("orderer 1 fragment key")
+		fragmentID1 := uint64(1)
+		fragmentKey2 := []byte("orderer 2 fragment key")
+		fragmentID2 := uint64(1)
+
 		lastCutBlockNumber := uint64(3)
 		mockSupport := &mockmultichannel.ConsenterSupport{
 			BlockCutterVal:   mockblockcutter.NewReceiver(),
@@ -1515,21 +1518,42 @@ func TestProcessMessages(t *testing.T) {
 		}
 		hcf := newDefaultMockHcsClientFactory()
 		chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
+		origFragmenter := chain.fragmenter
+		mockFragmenter := &mockhcs.FragmentSupport{}
+		mockFragmenter.IsPendingCalls(func() bool {
+			return origFragmenter.IsPending()
+		})
+		mockFragmenter.MakeFragmentsCalls(func(data []byte, fragmentKey []byte, fragmentID uint64) []*ab.HcsMessageFragment {
+			return origFragmenter.MakeFragments(data, fragmentKey, fragmentID)
+		})
+		mockFragmenter.ExpireByAgeCalls(func(maxAge uint64) int {
+			return origFragmenter.ExpireByAge(maxAge)
+		})
+		reassembleSyncChan := make(chan struct{})
+		mockFragmenter.ReassembleCalls(func(fragment *ab.HcsMessageFragment) []byte {
+			defer func() {
+				<-reassembleSyncChan
+			}()
+			return origFragmenter.Reassemble(fragment)
+		})
+		expireByFragmentKeySyncChan := make(chan struct{})
+		mockFragmenter.ExpireByFragmentKeyCalls(func(key []byte) (count int, err error) {
+			defer func() {
+				<-expireByFragmentKeySyncChan
+			}()
+			return origFragmenter.ExpireByFragmentKey(key)
+		})
+		chain.fragmenter = mockFragmenter
+
 		done := make(chan struct{})
 		close(mockSupport.BlockCutterVal.Block)
-		respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
-		defer close(respSyncChan)
+		close(getRespSyncChan(chain.topicSubscriptionHandle))
 
 		var err error
 		go func() {
 			err = chain.processMessages()
 			done <- struct{}{}
 		}()
-
-		fragmentKey1 := []byte("orderer 1 fragment key")
-		fragmentID1 := uint64(1)
-		fragmentKey2 := []byte("orderer 2 fragment key")
-		fragmentID2 := uint64(1)
 
 		// 1st fragment of 6 messages with fragmentKey1
 		var fragment *ab.HcsMessageFragment
@@ -1543,16 +1567,9 @@ func TestProcessMessages(t *testing.T) {
 			}
 			fragmentID1++
 			hcf.InjectMessage(protoutil.MarshalOrPanic(fragment), chain.topicID)
-			respSyncChan <- struct{}{}
+			reassembleSyncChan <- struct{}{}
 		}
-		// send a duplicate fragment to sync and make sure all previous fragments are processed
-		hcf.InjectMessage(protoutil.MarshalOrPanic(fragment), chain.topicID)
-		respSyncChan <- struct{}{}
-		assert.Len(t, chain.fragmenter.holderMapByFragmentKey, 1, "Expected holderMapByFragmentKey has one entry")
-		holderMap1 := chain.fragmenter.holderMapByFragmentKey[hex.EncodeToString(fragmentKey1)]
-		assert.NotNil(t, holderMap1, "Expected fragmentKey1 in holderMapByFragmentKey")
-		assert.Len(t, holderMap1, 6, "Expected holderMap has 6 entries")
-		assert.Equal(t, 6, chain.fragmenter.holderListByAge.Len(), "Expected holderListByAge has 6 elements")
+		assert.Equal(t, 6, mockFragmenter.ReassembleCallCount(), "Expected Reassemble called 6 times")
 
 		// 1st fragment of 5 messages with fragmentKey2
 		for i := 0; i < 5; i++ {
@@ -1565,16 +1582,9 @@ func TestProcessMessages(t *testing.T) {
 			}
 			fragmentID2++
 			hcf.InjectMessage(protoutil.MarshalOrPanic(fragment), chain.topicID)
-			respSyncChan <- struct{}{}
+			reassembleSyncChan <- struct{}{}
 		}
-		// send a duplicate fragment to sync and make sure all previous fragments are processed
-		hcf.InjectMessage(protoutil.MarshalOrPanic(fragment), chain.topicID)
-		respSyncChan <- struct{}{}
-		assert.Len(t, chain.fragmenter.holderMapByFragmentKey, 2, "Expected holderMapByFragmentKey has two entries")
-		holderMap2 := chain.fragmenter.holderMapByFragmentKey[hex.EncodeToString(fragmentKey2)]
-		assert.NotNil(t, holderMap2, "Expected fragmentKey2 in holderMapByFragmentKey")
-		assert.Len(t, holderMap2, 5, "Expected holderMap has 5 entries")
-		assert.Equal(t, 11, chain.fragmenter.holderListByAge.Len(), "Expected holderListByAge has 11 elements")
+		assert.Equal(t, 11, mockFragmenter.ReassembleCallCount(), "Expected Reassemble called 11 times")
 
 		// expire all fragments with fragmentKey1
 		ordererStartedFragment := &ab.HcsMessageFragment{
@@ -1585,13 +1595,9 @@ func TestProcessMessages(t *testing.T) {
 			TotalFragments: 1,
 		}
 		hcf.InjectMessage(protoutil.MarshalOrPanic(ordererStartedFragment), chain.topicID)
-		respSyncChan <- struct{}{}
-		// send a duplicate fragment to sync and make sure all previous fragments are processed
-		hcf.InjectMessage(protoutil.MarshalOrPanic(fragment), chain.topicID)
-		respSyncChan <- struct{}{}
-		holderMap1 = chain.fragmenter.holderMapByFragmentKey[hex.EncodeToString(fragmentKey1)]
-		assert.Nil(t, holderMap1, "Expected fragmentKey1 not in holderMapByFragmentKey")
-		assert.Equal(t, 5, chain.fragmenter.holderListByAge.Len(), "Expected holderListByAge has 5 elements")
+		reassembleSyncChan <- struct{}{}
+		expireByFragmentKeySyncChan <- struct{}{}
+
 
 		// expire all fragments with fragmentKey2
 		fragment = &ab.HcsMessageFragment{
@@ -1602,15 +1608,16 @@ func TestProcessMessages(t *testing.T) {
 			TotalFragments: 1,
 		}
 		hcf.InjectMessage(protoutil.MarshalOrPanic(fragment), chain.topicID)
-		respSyncChan <- struct{}{}
+		reassembleSyncChan <- struct{}{}
+		expireByFragmentKeySyncChan <- struct{}{}
 
 		close(chain.haltChan)
 		logger.Debug("haltChan closed")
 		<-done
+		assert.Equal(t, 2, mockFragmenter.ExpireByFragmentKeyCallCount(), "Expected ExpireByFragmentKey called twice")
+		assert.Equal(t, fragmentKey1, mockFragmenter.ExpireByFragmentKeyArgsForCall(0), "Expected first ExpireByFragmentKey called with fragmentKey1")
+		assert.Equal(t, fragmentKey2, mockFragmenter.ExpireByFragmentKeyArgsForCall(1), "Expected second ExpireByFragmentKey called with fragmentKey2")
 		assert.NoError(t, err, "Expected processMessages returns without errors")
-		holderMap2 = chain.fragmenter.holderMapByFragmentKey[hex.EncodeToString(fragmentKey2)]
-		assert.Nil(t, holderMap2, "Expected fragmentKey2 not in holderMapByFragmentKey")
-		assert.Equal(t, 0, chain.fragmenter.holderListByAge.Len(), "Expected holderListByAge is empty")
 	})
 }
 
@@ -1721,7 +1728,7 @@ func TestResubmission(t *testing.T) {
 
 			// normal message
 			msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), lastOriginalSequenceProcessed-1)
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			respSyncChan <- struct{}{}
@@ -1773,7 +1780,7 @@ func TestResubmission(t *testing.T) {
 
 			// normal message which advances lastOriginalSequenceProcessed
 			msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), lastOriginalSequenceProcessed+1)
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			mockSupport.BlockCutterVal.Block <- struct{}{}
@@ -1787,7 +1794,7 @@ func TestResubmission(t *testing.T) {
 
 			mockSupport.BlockCutterVal.CutNext = true
 			msg = newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-			fragments = chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+			fragments = chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			mockSupport.BlockCutterVal.Block <- struct{}{}
@@ -1838,7 +1845,7 @@ func TestResubmission(t *testing.T) {
 
 			// config message which old configSeq, should try resubmit and receive error as message is invalidated
 			msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			respSyncChan <- struct{}{} // sync to make sure the message is received by processMessages
@@ -1889,7 +1896,7 @@ func TestResubmission(t *testing.T) {
 			// config message with old configSeq, should try resubmit
 			sequence := getNextSequenceNumber(chain.topicSubscriptionHandle)
 			msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expected message injected successfully")
 
@@ -1963,7 +1970,7 @@ func TestResubmission(t *testing.T) {
 
 			// config message with configseq 0
 			msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), uint64(0), lastOriginalSequenceProcessed-1)
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			respSyncChan <- struct{}{}
@@ -2016,7 +2023,7 @@ func TestResubmission(t *testing.T) {
 
 			// emits a config message with lagged config sequence
 			msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), uint64(0), uint64(0))
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			respSyncChan <- struct{}{}
@@ -2032,7 +2039,7 @@ func TestResubmission(t *testing.T) {
 			// some other orderer resubmitted the message
 			// emits a config message with lagged config sequence
 			msg = newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), mockSupport.SequenceVal, lastOriginalSequenceProcessed+1)
-			fragments = chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
+			fragments = chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			respSyncChan <- struct{}{}
@@ -2089,7 +2096,7 @@ func TestResubmission(t *testing.T) {
 
 			// emits a resubmitted config message with lagged config sequence
 			msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), mockSupport.SequenceVal-1, lastOriginalSequenceProcessed+1)
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expect message sent successfully")
 			select {
@@ -2150,7 +2157,7 @@ func TestResubmission(t *testing.T) {
 
 			// emits a config message with lagged configSeq, later it'll be invalidated
 			msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), mockSupport.SequenceVal-1, uint64(0))
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expected message sent successfully")
 			select {
@@ -2204,7 +2211,7 @@ func TestResubmission(t *testing.T) {
 
 			// emits a config message with lagged sequence
 			msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), mockSupport.SequenceVal-1, uint64(0))
-			fragments := chain.fragmenter.makeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
 			assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
 			assert.NoError(t, oldStub(protoutil.MarshalOrPanic(fragments[0]), chain.topicID), "Expected message injected successfully")
 			select {

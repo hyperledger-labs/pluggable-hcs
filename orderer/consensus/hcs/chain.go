@@ -185,7 +185,7 @@ type chainImpl struct {
 	topicConsumer           factory.MirrorClient
 	topicSubscriptionHandle factory.MirrorSubscriptionHandle
 
-	fragmenter     *fragmentSupport
+	fragmenter     fragmentSupport
 	maxFragmentAge uint64
 	fragmentKey    []byte
 	fragmentID     uint64
@@ -324,8 +324,8 @@ func (chain *chainImpl) processMessages() error {
 			if err := proto.Unmarshal(plain, fragment); err != nil {
 				logger.Panicf("[channel: %s] failed to unmarshal ordered message into HCS fragment = %v", chain.ChannelID(), err)
 			}
-			payload := chain.fragmenter.reassemble(fragment)
-			count := chain.fragmenter.expireByAge(chain.maxFragmentAge)
+			payload := chain.fragmenter.Reassemble(fragment)
+			count := chain.fragmenter.ExpireByAge(chain.maxFragmentAge)
 			chain.consenter.Metrics().NumberMessagesDropped.With("channel", chain.ChannelID()).Add(float64(count))
 			if payload == nil {
 				logger.Debugf("need more fragments to reassemble the HCS message")
@@ -378,7 +378,7 @@ func (chain *chainImpl) processMessages() error {
 
 func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTimestamp *time.Time) {
 	chain.lastCutBlockNumber++
-	if !chain.fragmenter.isPending() {
+	if !chain.fragmenter.IsPending() {
 		chain.lastFragmentFreeConsensusTimestamp = *consensusTimestamp
 	}
 	metadata := newHcsMetadata(
@@ -640,7 +640,7 @@ func (chain *chainImpl) processTimeToCutMessage(msg *ab.HcsMessageTimeToCut, ts 
 
 func (chain *chainImpl) processOrdererStartedMessage(msg *ab.HcsMessageOrdererStarted) {
 	logger.Debugf("[channel: %s] orderer %s just started", chain.ChannelID(), hex.EncodeToString(msg.OrdererIdentity))
-	if count, err := chain.fragmenter.expireByFragmentKey(msg.OrdererIdentity); err == nil {
+	if count, err := chain.fragmenter.ExpireByFragmentKey(msg.OrdererIdentity); err == nil {
 		logger.Debugf("[channel: %s] %d pending messages from orderer %s dropped", chain.ChannelID(), count, hex.EncodeToString(msg.OrdererIdentity))
 		chain.consenter.Metrics().NumberMessagesDropped.With("channel", chain.ChannelID()).Add(float64(count))
 	} else {
@@ -755,7 +755,7 @@ func (chain *chainImpl) enqueueChecked(message *ab.HcsMessage, isResubmission bo
 		logger.Errorf("[channel: %s] unable to marshal HCS message because = %s", chain.ChannelID(), err)
 		return false
 	}
-	fragments := chain.fragmenter.makeFragments(payload, chain.fragmentKey, chain.fragmentID)
+	fragments := chain.fragmenter.MakeFragments(payload, chain.fragmentKey, chain.fragmentID)
 	chain.fragmentID++
 	logger.Debugf("[channel: %s] the payload of %d bytes is cut into %d fragments, resubmission ? %v",
 		chain.ChannelID(), len(payload), len(fragments), isResubmission)

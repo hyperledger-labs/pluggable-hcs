@@ -12,11 +12,19 @@ import (
 	ab "github.com/hyperledger/fabric-protos-go/orderer"
 )
 
-func newFragmentSupport(fragmentSize int) *fragmentSupport {
+type fragmentSupport interface {
+	MakeFragments(data []byte, fragmentKey []byte, fragmentID uint64) []*ab.HcsMessageFragment
+	Reassemble(fragment *ab.HcsMessageFragment) []byte
+	IsPending() bool
+	ExpireByAge(maxAge uint64) int
+	ExpireByFragmentKey(fragmentKey []byte) (int, error)
+}
+
+func newFragmentSupport(fragmentSize int) fragmentSupport {
 	if fragmentSize <= 0 {
 		return nil
 	}
-	return &fragmentSupport{
+	return &fragmentSupportImpl{
 		fragmentSize:           fragmentSize,
 		holders:                map[string]*fragmentHolder{},
 		holderMapByFragmentKey: map[string]map[string]struct{}{},
@@ -24,7 +32,7 @@ func newFragmentSupport(fragmentSize int) *fragmentSupport {
 	}
 }
 
-type fragmentSupport struct {
+type fragmentSupportImpl struct {
 	fragmentSize           int
 	holders                map[string]*fragmentHolder
 	holderMapByFragmentKey map[string]map[string]struct{}
@@ -32,25 +40,20 @@ type fragmentSupport struct {
 	tick                   uint64
 }
 
-func (processor *fragmentSupport) isPending() bool {
-	return len(processor.holders) != 0
+func (fragmenter *fragmentSupportImpl) IsPending() bool {
+	return len(fragmenter.holders) != 0
 }
 
-func (processor *fragmentSupport) expireByAge(maxAge uint64) (count int) {
-	if maxAge == 0 {
-		logger.Errorf("invalid maxAge - %d", maxAge)
-		return
-	}
-
+func (fragmenter *fragmentSupportImpl) ExpireByAge(maxAge uint64) (count int) {
 	for {
-		oldest := processor.holderListByAge.Front()
+		oldest := fragmenter.holderListByAge.Front()
 		if oldest == nil {
 			break
 		}
 		holder := oldest.Value.(*fragmentHolder)
-		age := calcAge(holder.tick, processor.tick)
+		age := calcAge(holder.tick, fragmenter.tick)
 		if age >= maxAge {
-			processor.removeHolder(holder, true)
+			fragmenter.removeHolder(holder, true)
 			count++
 		} else {
 			break
@@ -59,32 +62,32 @@ func (processor *fragmentSupport) expireByAge(maxAge uint64) (count int) {
 	return
 }
 
-func (processor *fragmentSupport) expireByFragmentKey(fragmentKey []byte) (int, error) {
+func (fragmenter *fragmentSupportImpl) ExpireByFragmentKey(fragmentKey []byte) (int, error) {
 	if fragmentKey == nil {
 		return 0, fmt.Errorf("nil fragmentKey is not allowed")
 	}
 	key := hex.EncodeToString(fragmentKey)
 	count := 0
-	if holderMap, ok := processor.holderMapByFragmentKey[key]; ok {
-		delete(processor.holderMapByFragmentKey, key)
+	if holderMap, ok := fragmenter.holderMapByFragmentKey[key]; ok {
+		delete(fragmenter.holderMapByFragmentKey, key)
 		count = len(holderMap)
 		for holderKey := range holderMap {
-			if holder, ok := processor.holders[holderKey]; ok {
-				processor.removeHolder(holder, false)
+			if holder, ok := fragmenter.holders[holderKey]; ok {
+				fragmenter.removeHolder(holder, false)
 			}
 		}
 	}
 	return count, nil
 }
 
-func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) (reassembled []byte) {
+func (fragmenter *fragmentSupportImpl) Reassemble(fragment *ab.HcsMessageFragment) (reassembled []byte) {
 	isValidFragment := false
 	var holder *fragmentHolder
 	defer func() {
 		if isValidFragment {
-			processor.tick++
+			fragmenter.tick++
 			if holder != nil {
-				holder.tick = processor.tick
+				holder.tick = fragmenter.tick
 			}
 		}
 	}()
@@ -95,15 +98,15 @@ func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) (r
 	}
 
 	holderKey := makeHolderKey(fragment.FragmentKey, fragment.FragmentId)
-	holder, ok := processor.holders[holderKey]
+	holder, ok := fragmenter.holders[holderKey]
 	if !ok {
 		holder = newFragmentHolder(fragment.TotalFragments, holderKey)
-		processor.holders[holderKey] = holder
+		fragmenter.holders[holderKey] = holder
 		fragmentKey := hex.EncodeToString(fragment.FragmentKey)
-		holderMap, ok := processor.holderMapByFragmentKey[fragmentKey]
+		holderMap, ok := fragmenter.holderMapByFragmentKey[fragmentKey]
 		if !ok {
 			holderMap = map[string]struct{}{}
-			processor.holderMapByFragmentKey[fragmentKey] = holderMap
+			fragmenter.holderMapByFragmentKey[fragmentKey] = holderMap
 		}
 		holderMap[holderKey] = struct{}{}
 	}
@@ -129,9 +132,9 @@ func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) (r
 	if holder.count != uint32(len(holder.fragments)) {
 		// the first element in holderListByAge is the oldest
 		if holder.el != nil {
-			processor.holderListByAge.MoveToBack(holder.el)
+			fragmenter.holderListByAge.MoveToBack(holder.el)
 		} else {
-			holder.el = processor.holderListByAge.PushBack(holder)
+			holder.el = fragmenter.holderListByAge.PushBack(holder)
 		}
 	} else {
 		reassembled = make([]byte, 0, holder.size)
@@ -139,26 +142,26 @@ func (processor *fragmentSupport) reassemble(fragment *ab.HcsMessageFragment) (r
 			reassembled = append(reassembled, f.Fragment...)
 			logger.Debugf("seq %d, add %d bytes, payload size is now %d, cap %d", f.Sequence, len(f.Fragment), len(reassembled), cap(reassembled))
 		}
-		processor.removeHolder(holder, true)
+		fragmenter.removeHolder(holder, true)
 		return
 	}
 	return
 }
 
-func (processor *fragmentSupport) removeHolder(holder *fragmentHolder, removeFromHolderMap bool) {
-	delete(processor.holders, holder.key)
+func (fragmenter *fragmentSupportImpl) removeHolder(holder *fragmentHolder, removeFromHolderMap bool) {
+	delete(fragmenter.holders, holder.key)
 	if holder.el != nil {
-		processor.holderListByAge.Remove(holder.el)
+		fragmenter.holderListByAge.Remove(holder.el)
 	}
 	if removeFromHolderMap {
-		if holderMap := processor.holderMapByFragmentKey[hex.EncodeToString(holder.fragments[0].FragmentKey)]; holderMap != nil {
+		if holderMap := fragmenter.holderMapByFragmentKey[hex.EncodeToString(holder.fragments[0].FragmentKey)]; holderMap != nil {
 			delete(holderMap, holder.key)
 		}
 	}
 }
 
-func (processor *fragmentSupport) makeFragments(data []byte, fragmentKey []byte, fragmentID uint64) []*ab.HcsMessageFragment {
-	fragmentSize := processor.fragmentSize
+func (fragmenter *fragmentSupportImpl) MakeFragments(data []byte, fragmentKey []byte, fragmentID uint64) []*ab.HcsMessageFragment {
+	fragmentSize := fragmenter.fragmentSize
 	fragments := make([]*ab.HcsMessageFragment, (len(data)+fragmentSize-1)/fragmentSize)
 	for i := 0; i < len(fragments); i++ {
 		first := i * fragmentSize
