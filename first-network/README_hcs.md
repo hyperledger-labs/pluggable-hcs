@@ -7,8 +7,7 @@ in this guide have been validated on Mac OSX (Catalina) and Ubuntu 18.04 LTS.
 
 1. Toolchain: git, make, gcc, go, docker, and docker-compose. Please refer to [Prerequsites for Hyperledger Fabric v2.0](https://hyperledger-fabric.readthedocs.io/en/release-2.0/prereqs.html)
 for the complete list with detailed instructions to set up the build environment for Hyperledger Fabric.
-1. The feature/hcs branch of this [fabric-samples](https://github.com/hashgraph/fabric-samples-hcs) repo, hereafter the first-network directory inside it will be referred as FIRST_NETWORK_DIR.
-1. The hyperledger fabric repo with HCS orderer PoC code. Please follow the instructions below to get the source, and hereafter
+1. The hyperledger fabric repo with HCS orderer PoC code and the first-network sample. Please follow the instructions below to get the source, and hereafter
 the repo directory will be referred as FABRIC_REPO_DIR.
    ```
    $ mkdir -p $GOPATH/src/github.com/hyperledger && cd $GOPATH/src/github.com/hyperledger
@@ -27,17 +26,16 @@ Follow the instructions in this section to build the required fabric binaries an
 $ cd $FABRIC_REPO_DIR
 $ make clean
 $ make configtxgen configtxlator cryptogen orderer peer docker
-$ mkdir -p $FIRST_NETWORK_DIR/../bin && cp build/bin/* $FIRST_NETWORK_DIR/../bin
 ```
 
 ### Configuration
 
-#### $FIRST_NETWORK_DIR/hedera_env.json
+#### $FABRIC_REPO_DIR/first-network/hedera_env.json
 
 Edit ```hedera_env.json``` and fill in the values for ```operatorId``` and ```operatorKey``` with your hedera testnet
 account id and private key.
 
-#### $FIRST_NETWORK_DIR/orderer.yaml
+#### $FABRIC_REPO_DIR/first-network/orderer.yaml
 
 Edit ```orderer.yaml``` and fill in the values for ```Hcs.Operator.Id``` and ```Hcs.Operator.PrivateKey.Key``` with your hedera
 testnet acccount id and private key.
@@ -47,7 +45,7 @@ testnet acccount id and private key.
 Run the sample:
 
 ```
-$ cd $FIRST_NETWORK_DIR
+$ cd $FABRIC_REPO_DIR/first-network
 $ ./byfn.sh up -t 20
 ```
 
@@ -89,5 +87,5 @@ generated HCS topics: 0.0.179950 0.0.179951
 then run the command below with the topic IDs to delete them,
 
 ```
-$ ../bin/hcscli topic delete 0.0.179950 0.0.179951
+$ ../build/bin/hcscli topic delete 0.0.179950 0.0.179951
 ```
