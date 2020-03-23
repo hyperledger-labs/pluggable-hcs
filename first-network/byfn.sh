@@ -28,7 +28,7 @@
 
 # prepending $PWD/../bin to PATH to ensure we are picking up the correct binaries
 # this may be commented out to resolve installed version of tools if desired
-export PATH=${PWD}/../bin:${PWD}:$PATH
+export PATH=${PWD}/../build/bin:${PWD}:$PATH
 export FABRIC_CFG_PATH=${PWD}
 export VERBOSE=false
 
@@ -161,6 +161,7 @@ function generateChannelsForHCS() {
   echo "generated HCS topics: ${TOPICS[@]}"
   echo "${TOPICS[0]} will be used for the system channel, and ${TOPICS[1]} will be used for the application channel"
   sed -e 's/SYS_HCS_TOPIC_ID/'${TOPICS[0]}'/' -e 's/APP_HCS_TOPIC_ID/'${TOPICS[1]}'/' ./configtx-template.yaml > ./configtx.yaml
+  sleep 4 # temporary solution to wait for the mirrornet syncing up with mainnet/testnet reagrding the new hcs topic IDs
   set +e
 }
 
@@ -168,7 +169,7 @@ function installHCSCli() {
     set -e
     if [ ! -e ../bin/hcscli ]; then
         echo "installing hcscli ..."
-        GO111MODULE=on GOBIN=$PWD/../bin go get github.com/hashgraph/hcscli@v0.1.0
+        GO111MODULE=on GOBIN=$PWD/../build/bin go get github.com/hashgraph/hcscli@v0.1.0
     fi
     set +e
 }
@@ -204,7 +205,7 @@ function networkUp() {
 
   if [ "${NO_CHAINCODE}" != "true" ]; then
     echo Vendoring Go dependencies ...
-    pushd ../chaincode/abstore/go
+    pushd ./chaincode/abstore/go
     GO111MODULE=on go mod vendor
     popd
     echo Finished vendoring Go dependencies
