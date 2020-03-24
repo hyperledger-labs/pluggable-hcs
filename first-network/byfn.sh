@@ -161,7 +161,6 @@ function generateChannelsForHCS() {
   echo "generated HCS topics: ${TOPICS[@]}"
   echo "${TOPICS[0]} will be used for the system channel, and ${TOPICS[1]} will be used for the application channel"
   sed -e 's/SYS_HCS_TOPIC_ID/'${TOPICS[0]}'/' -e 's/APP_HCS_TOPIC_ID/'${TOPICS[1]}'/' ./configtx-template.yaml > ./configtx.yaml
-  sleep 4 # temporary solution to wait for the mirrornet syncing up with mainnet/testnet reagrding the new hcs topic IDs
   set +e
 }
 
