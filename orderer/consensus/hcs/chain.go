@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 	"io"
 	"io/ioutil"
+	"math"
 	"math/rand"
 	"sync"
 	"time"
@@ -41,10 +42,10 @@ var (
 )
 
 const (
-	aesKeyFilename            = "/var/hyperledger/fabric/orderer/aes.key"
-	maxConsensusMessageSize   = 3800 // the max message size HCS supports is 4kB, including header
-	subscriptionRetryInterval = 100 * time.Millisecond
-	subscriptionRetryMax      = 30
+	aesKeyFilename             = "/var/hyperledger/fabric/orderer/aes.key"
+	maxConsensusMessageSize    = 3800 // the max message size HCS supports is 4kB, including header
+	subscriptionRetryBaseDelay = 100 * time.Millisecond
+	subscriptionRetryMax       = 5
 )
 
 func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, uint64, uint64, time.Time) {
@@ -313,9 +314,10 @@ func (chain *chainImpl) processMessages() error {
 			default:
 				st, ok := status.FromError(hcsErr)
 				if ok && st.Code() == codes.InvalidArgument && subscriptionRetryCount < subscriptionRetryMax {
-					// the new topic info may have not propagated to the mirror node yet, retry subscription
-					logger.Infof("[channel: %s] the topic may be not ready yet, retry in 100ms", chain.ChannelID())
-					chain.subscriptionRetryTimer = time.After(subscriptionRetryInterval)
+					// the new topic may have not propagated to the mirror node yet, retry subscription
+					delay := time.Duration(float64(subscriptionRetryBaseDelay) * math.Pow(2, float64(subscriptionRetryCount)))
+					logger.Infof("[channel: %s] the topic may be not ready yet, retry in %dms", chain.ChannelID(), delay.Milliseconds())
+					chain.subscriptionRetryTimer = time.After(delay)
 				} else {
 					logger.Errorf("[channel: %s] closing errorChan due to subscription streaming error", chain.ChannelID())
 					close(chain.errorChan)
