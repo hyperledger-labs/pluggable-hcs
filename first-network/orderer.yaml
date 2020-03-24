@@ -293,7 +293,6 @@ Hcs:
     Operator:
         Id: Your Hedera testnet account id here
         PrivateKey:
-            Enabled: true
             # type of the private key
             Type: ed25519
             # key string or path to the key file
