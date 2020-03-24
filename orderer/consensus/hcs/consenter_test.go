@@ -45,23 +45,25 @@ func init() {
 
 func TestNew(t *testing.T) {
 	publicIdentity := &mock.Identity{}
+	healthChecker := &mock.HealthChecker{}
 
 	t.Run("Proper", func(t *testing.T) {
 		publicIdentity.SerializeReturns(make([]byte, 16), nil)
-		c := New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{})
+		c := New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{}, healthChecker)
 		_ = consensus.Consenter(c)
 	})
 
 	t.Run("IdentityError", func(t *testing.T) {
 		publicIdentity.SerializeReturns(nil, fmt.Errorf("can't serialize identity"))
-		assert.Panics(t, func() { New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{}) }, "Expected New panics when identity.Serialize returns errors")
+		assert.Panics(t, func() { New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{}, healthChecker) }, "Expected New panics when identity.Serialize returns errors")
 	})
 }
 
 func TestHandleChain(t *testing.T) {
 	publicIdentity := &mock.Identity{}
 	publicIdentity.SerializeReturns(make([]byte, 16), nil)
-	consenter := New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{})
+	healthChecker := &mock.HealthChecker{}
+	consenter := New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{}, healthChecker)
 
 	mockOrderer := &mock.OrdererConfig{}
 	mockOrdererHcs := &orderer.Hcs{TopicId: "0.0.19718"}

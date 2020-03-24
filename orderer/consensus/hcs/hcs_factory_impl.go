@@ -40,12 +40,25 @@ func (c *consensusClientImpl) Close() error {
 	return c.client.Close()
 }
 
-func (c *consensusClientImpl) SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID) error {
-	_, err := hedera.NewConsensusMessageSubmitTransaction().
+func (c *consensusClientImpl) SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID) (*hedera.TransactionID, error) {
+	txID, err := hedera.NewConsensusMessageSubmitTransaction().
 		SetTopicID(*topicID).
 		SetMessage(message).
 		Execute(c.client)
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return &txID, nil
+}
+
+func (c *consensusClientImpl) GetConsensusTopicInfo(topicID *hedera.ConsensusTopicID) (*hedera.ConsensusTopicInfo, error) {
+	info, err := hedera.NewConsensusTopicInfoQuery().SetTopicID(*topicID).Execute(c.client)
+	return &info, err
+}
+
+func (c *consensusClientImpl) GetTransactionReceipt(txID *hedera.TransactionID) (*hedera.TransactionReceipt, error) {
+	receipt, err := txID.GetReceipt(c.client)
+	return &receipt, err
 }
 
 // implements factory.MirrorClient

@@ -5,6 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 package hcs
 
 import (
+	"github.com/hyperledger/fabric-lib-go/healthz"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/metrics"
@@ -15,8 +16,15 @@ import (
 
 var logger = flogging.MustGetLogger("orderer.consensus.hcs")
 
+//go:generate counterfeiter -o mock/health_checker.go -fake-name HealthChecker . healthChecker
+
+// healthChecker defines the contract for health checker
+type healthChecker interface {
+	RegisterChecker(component string, checker healthz.HealthChecker) error
+}
+
 // New creates a HCS-based consenter. Called by orderer's main.go.
-func New(config localconfig.Hcs, publicIdentity msp.Identity, metricsProvider metrics.Provider) consensus.Consenter {
+func New(config localconfig.Hcs, publicIdentity msp.Identity, metricsProvider metrics.Provider, healthChecker healthChecker) consensus.Consenter {
 	logger.Debug("creating HCS-based consenter...")
 	identity, err := publicIdentity.Serialize()
 	if err != nil {
@@ -26,6 +34,7 @@ func New(config localconfig.Hcs, publicIdentity msp.Identity, metricsProvider me
 		sharedHcsConfigVal: &config,
 		identityVal:        identity,
 		metrics:            NewMetrics(metricsProvider),
+		healthChecker:      healthChecker,
 	}
 }
 
@@ -36,6 +45,7 @@ type consenterImpl struct {
 	sharedHcsConfigVal *localconfig.Hcs
 	identityVal        []byte
 	metrics            *Metrics
+	healthChecker      healthChecker
 }
 
 // HandleChain creates/returns a reference to a consensus.Chain object for the
@@ -48,6 +58,7 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 	return newChain(
 		consenter,
 		support,
+		consenter.healthChecker,
 		defaultHcsClientFactory,
 		lastConsensusTimestampPersisted,
 		lastOriginalSequenceProcessed,
