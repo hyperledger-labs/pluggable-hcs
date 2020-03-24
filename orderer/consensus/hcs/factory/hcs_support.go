@@ -13,7 +13,9 @@ type HcsClientFactory interface {
 
 type ConsensusClient interface {
 	Close() error
-	SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID) error
+	SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID) (*hedera.TransactionID, error)
+	GetConsensusTopicInfo(topicID *hedera.ConsensusTopicID) (*hedera.ConsensusTopicInfo, error)
+	GetTransactionReceipt(txID *hedera.TransactionID) (*hedera.TransactionReceipt, error)
 }
 
 type MirrorClient interface {

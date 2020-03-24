@@ -5,6 +5,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/msp"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -56,6 +57,12 @@ import (
 
 type signerSerializer interface {
 	identity.SignerSerializer
+}
+
+//go:generate counterfeiter -o mocks/identity.go --fake-name Identity . fakeIdentity
+
+type fakeIdentity interface {
+	msp.Identity
 }
 
 func TestInitializeLogging(t *testing.T) {
@@ -392,6 +399,7 @@ func TestInitializeMultichannelRegistrar(t *testing.T) {
 	assert.NoError(t, err)
 
 	signer := &server_mocks.SignerSerializer{}
+	mockIdentity := &server_mocks.Identity{}
 
 	t.Run("registrar with a system channel", func(t *testing.T) {
 		lf, _, err := createLedgerFactory(conf, &disabled.Provider{})
@@ -406,6 +414,7 @@ func TestInitializeMultichannelRegistrar(t *testing.T) {
 			nil,
 			conf,
 			signer,
+			mockIdentity,
 			&disabled.Provider{},
 			&server_mocks.HealthChecker{},
 			lf,
@@ -428,6 +437,7 @@ func TestInitializeMultichannelRegistrar(t *testing.T) {
 			nil,
 			conf,
 			signer,
+			mockIdentity,
 			&disabled.Provider{},
 			&server_mocks.HealthChecker{},
 			lf,
@@ -527,6 +537,7 @@ func TestUpdateTrustedRoots(t *testing.T) {
 	bootBlock := file.New(genesisFile).GenesisBlock()
 	initializeBootstrapChannel(bootBlock, lf)
 	signer := &server_mocks.SignerSerializer{}
+	mockIdentity := &server_mocks.Identity{}
 
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
 	assert.NoError(t, err)
@@ -539,6 +550,7 @@ func TestUpdateTrustedRoots(t *testing.T) {
 		nil,
 		genesisConfig(t, genesisFile),
 		signer,
+		mockIdentity,
 		&disabled.Provider{},
 		&server_mocks.HealthChecker{},
 		lf,
@@ -590,6 +602,7 @@ func TestUpdateTrustedRoots(t *testing.T) {
 		nil,
 		genesisConfig(t, genesisFile),
 		signer,
+		mockIdentity,
 		&disabled.Provider{},
 		&server_mocks.HealthChecker{},
 		lf,

@@ -5,6 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 package hcs
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
@@ -76,6 +77,7 @@ func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, ui
 func newChain(
 	consenter commonConsenter,
 	support consensus.ConsenterSupport,
+	healthChecker healthChecker,
 	hcf factory.HcsClientFactory,
 	lastConsensusTimestampPersisted time.Time,
 	lastOriginalSequenceProcessed uint64,
@@ -126,7 +128,7 @@ func newChain(
 	consenter.Metrics().CommittedBlockNumber.With("channel", support.ChannelID()).Set(float64(lastCutBlockNumber))
 	consenter.Metrics().LastConsensusTimestampPersisted.With("channel", support.ChannelID()).Set(float64(lastConsensusTimestampPersisted.UnixNano()))
 
-	return &chainImpl{
+	chain := &chainImpl{
 		consenter:                          consenter,
 		ConsenterSupport:                   support,
 		hcf:                                hcf,
@@ -149,7 +151,9 @@ func newChain(
 		fragmentID:                         fragmentID,
 		gcmCipher:                          gcmCipher,
 		nonceReader:                        crand.Reader,
-	}, nil
+	}
+	healthChecker.RegisterChecker(support.SharedConfig().Hcs().TopicId, chain)
+	return chain, nil
 }
 
 type chainImpl struct {
@@ -186,6 +190,7 @@ type chainImpl struct {
 	topicID                 *hedera.ConsensusTopicID
 	topicProducer           factory.ConsensusClient
 	singleNodeTopicProducer factory.ConsensusClient
+	lastTransactionID       *hedera.TransactionID
 	topicConsumer           factory.MirrorClient
 	topicSubscriptionHandle factory.MirrorSubscriptionHandle
 	subscriptionRetryTimer  <-chan time.Time
@@ -364,11 +369,11 @@ func (chain *chainImpl) processMessages() error {
 				// use ConseusTimestamp and SequenceNumber of the last received fragment for that of a message
 				switch msg.Type.(type) {
 				case *ab.HcsMessage_Regular:
-					if err := chain.processRegularMessage(msg.GetRegular(), &resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
+					if err := chain.processRegularMessage(msg.GetRegular(), resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
 						logger.Warningf("[channel: %s] error when processing incoming message of type REGULAR = %s", chain.ChannelID(), err)
 					}
 				case *ab.HcsMessage_TimeToCut:
-					if err := chain.processTimeToCutMessage(msg.GetTimeToCut(), &resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
+					if err := chain.processTimeToCutMessage(msg.GetTimeToCut(), resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
 						logger.Criticalf("[channel: %s] consenter for channel exiting, %s", chain.ChannelID(), err)
 						return err
 					}
@@ -398,16 +403,16 @@ func (chain *chainImpl) processMessages() error {
 	}
 }
 
-func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTimestamp *time.Time) {
+func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTimestamp time.Time) {
 	chain.lastCutBlockNumber++
 	if !chain.fragmenter.IsPending() {
-		chain.lastFragmentFreeConsensusTimestamp = *consensusTimestamp
+		chain.lastFragmentFreeConsensusTimestamp = consensusTimestamp
 	}
 	metadata := newHcsMetadata(
 		timestampProtoOrPanic(consensusTimestamp),
 		chain.lastOriginalSequenceProcessed,
 		chain.lastResubmittedConfigSequence,
-		timestampProtoOrPanic(&chain.lastFragmentFreeConsensusTimestamp))
+		timestampProtoOrPanic(chain.lastFragmentFreeConsensusTimestamp))
 	marshaledMetadata := protoutil.MarshalOrPanic(metadata)
 	if !isConfig {
 		chain.ConsenterSupport.WriteBlock(block, marshaledMetadata)
@@ -418,7 +423,7 @@ func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTime
 	chain.consenter.Metrics().LastConsensusTimestampPersisted.With("channel", chain.ChannelID()).Set(float64(consensusTimestamp.UnixNano()))
 }
 
-func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTimestamp *time.Time, newOriginalSequenceProcessed uint64) {
+func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTimestamp time.Time, newOriginalSequenceProcessed uint64) {
 	batches, pending := chain.BlockCutter().Ordered(message)
 	logger.Debugf("[channel: %s] Ordering results: items in batch = %d, pending = %v", chain.ChannelID(), len(batches), pending)
 
@@ -439,7 +444,7 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTi
 	if len(batches) == 0 {
 		// If no block is cut, we update the `lastOriginalSequenceProcessed`, start the timer if necessary and return
 		chain.lastOriginalSequenceProcessed = newOriginalSequenceProcessed
-		chain.lastConsensusTimestamp = *curConsensusTimestamp
+		chain.lastConsensusTimestamp = curConsensusTimestamp
 		return
 	}
 
@@ -455,19 +460,19 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTi
 		// and the second one should use `newOriginalSequenceProcessed`, which is also used to
 		// update `lastOriginalSequenceProcessed`
 		chain.lastOriginalSequenceProcessed = newOriginalSequenceProcessed
-		chain.lastConsensusTimestamp = *curConsensusTimestamp
+		chain.lastConsensusTimestamp = curConsensusTimestamp
 	}
 
 	// Commit the first block
 	block := chain.CreateNextBlock(batches[0])
-	chain.WriteBlock(block, false, &chain.lastConsensusTimestamp)
+	chain.WriteBlock(block, false, chain.lastConsensusTimestamp)
 	logger.Debugf("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus timestamp"+
 		" is now %d", chain.ChannelID(), chain.lastCutBlockNumber, chain.lastConsensusTimestamp.UnixNano())
 
 	// Commit the second block if exists
 	if len(batches) == 2 {
 		chain.lastOriginalSequenceProcessed = newOriginalSequenceProcessed
-		chain.lastConsensusTimestamp = *curConsensusTimestamp
+		chain.lastConsensusTimestamp = curConsensusTimestamp
 
 		block := chain.CreateNextBlock(batches[1])
 		chain.WriteBlock(block, false, curConsensusTimestamp)
@@ -476,25 +481,25 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTi
 	}
 }
 
-func (chain *chainImpl) commitConfigMessage(message *cb.Envelope, curConsensusTimestamp *time.Time, newOriginalSequenceProcessed uint64) {
+func (chain *chainImpl) commitConfigMessage(message *cb.Envelope, curConsensusTimestamp time.Time, newOriginalSequenceProcessed uint64) {
 	logger.Debugf("[channel: %s] Received config message", chain.ChannelID())
 	batch := chain.BlockCutter().Cut()
 
 	if batch != nil {
 		logger.Debugf("[channel: %s] Cut pending messages into block", chain.ChannelID())
 		block := chain.CreateNextBlock(batch)
-		chain.WriteBlock(block, false, &chain.lastConsensusTimestamp)
+		chain.WriteBlock(block, false, chain.lastConsensusTimestamp)
 	}
 
 	logger.Debugf("[channel: %s] Creating isolated block for config message", chain.ChannelID())
 	chain.lastOriginalSequenceProcessed = newOriginalSequenceProcessed
-	chain.lastConsensusTimestamp = *curConsensusTimestamp
+	chain.lastConsensusTimestamp = curConsensusTimestamp
 	block := chain.CreateNextBlock([]*cb.Envelope{message})
 	chain.WriteBlock(block, true, curConsensusTimestamp)
 	chain.timer = nil
 }
 
-func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts *time.Time, receivedSequence uint64) error {
+func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts time.Time, receivedSequence uint64) error {
 	curConfigSeq := chain.Sequence()
 	env := &cb.Envelope{}
 	if err := proto.Unmarshal(msg.Payload, env); err != nil {
@@ -637,7 +642,7 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts *tim
 	return nil
 }
 
-func (chain *chainImpl) processTimeToCutMessage(msg *ab.HcsMessageTimeToCut, ts *time.Time, sequence uint64) error {
+func (chain *chainImpl) processTimeToCutMessage(msg *ab.HcsMessageTimeToCut, ts time.Time, sequence uint64) error {
 	blockNumber := msg.GetBlockNumber()
 	if blockNumber == chain.lastCutBlockNumber+1 {
 		chain.timer = nil
@@ -647,7 +652,7 @@ func (chain *chainImpl) processTimeToCutMessage(msg *ab.HcsMessageTimeToCut, ts 
 				"but no pending transactions", blockNumber)
 		}
 		block := chain.CreateNextBlock(batch)
-		chain.lastConsensusTimestamp = *ts
+		chain.lastConsensusTimestamp = ts
 		chain.lastOriginalSequenceProcessed = sequence
 		chain.WriteBlock(block, false, ts)
 		logger.Debugf("[channel: %s] successfully cut block %d, triggered by time-to-cut",
@@ -793,10 +798,12 @@ func (chain *chainImpl) enqueueChecked(message *ab.HcsMessage, isResubmission bo
 		producer = chain.singleNodeTopicProducer
 	}
 	for index, encrypted := range encryptedFragments {
-		if err = producer.SubmitConsensusMessage(encrypted, chain.topicID); err != nil {
+		txID, err := producer.SubmitConsensusMessage(encrypted, chain.topicID)
+		if err != nil {
 			logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
 			return false
 		}
+		chain.lastTransactionID = txID
 		logger.Debugf("[channel: %s] %d fragment of id %d sent successfully", chain.ChannelID(), fragments[index].Sequence, fragments[index].FragmentId)
 	}
 	logger.Debugf("[channel: %s] Envelope enqueued successfully", chain.ChannelID())
@@ -819,6 +826,22 @@ func (chain *chainImpl) reprocessPending() {
 	chain.doneReprocessingMutex.Lock()
 	defer chain.doneReprocessingMutex.Unlock()
 	chain.doneReprocessingMsgInFlight = make(chan struct{})
+}
+
+func (chain *chainImpl) HealthCheck(ctx context.Context) error {
+	if chain.lastTransactionID != nil {
+		// do GetTransactionReceipt if possible since it's free
+		if _, err := chain.topicProducer.GetTransactionReceipt(chain.lastTransactionID); err != nil {
+			logger.Warnf("[channel: %s] failed to get TransactionReceipt for hcs transaction %s = %s", chain.ChannelID(), chain.lastTransactionID.String(), err)
+			return err
+		}
+	} else {
+		if _, err := chain.topicProducer.GetConsensusTopicInfo(chain.topicID); err != nil {
+			logger.Warnf("[channel: %s] failed to get ConsensusTopicInfo = %s", chain.ChannelID(), err)
+			return err
+		}
+	}
+	return nil
 }
 
 func startThread(chain *chainImpl) {
@@ -1013,8 +1036,8 @@ func newHcsMetadata(
 	}
 }
 
-func timestampProtoOrPanic(t *time.Time) *timestamp.Timestamp {
-	ts, err := ptypes.TimestampProto(*t)
+func timestampProtoOrPanic(t time.Time) *timestamp.Timestamp {
+	ts, err := ptypes.TimestampProto(t)
 	if err != nil {
 		logger.Panicf("failed to convert time.Time to google.protobuf.Timestamp = %v", err)
 		return nil
