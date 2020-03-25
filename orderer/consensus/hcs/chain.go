@@ -191,7 +191,6 @@ type chainImpl struct {
 	topicID                 *hedera.ConsensusTopicID
 	topicProducer           factory.ConsensusClient
 	singleNodeTopicProducer factory.ConsensusClient
-	lastTransactionID       *hedera.TransactionID
 	topicConsumer           factory.MirrorClient
 	topicSubscriptionHandle factory.MirrorSubscriptionHandle
 	topicErrorChan          chan struct{}
@@ -837,12 +836,11 @@ func (chain *chainImpl) enqueueChecked(message *ab.HcsMessage, isResubmission bo
 		producer = chain.singleNodeTopicProducer
 	}
 	for index, encrypted := range encryptedFragments {
-		txID, err := producer.SubmitConsensusMessage(encrypted, chain.topicID)
+		_, err := producer.SubmitConsensusMessage(encrypted, chain.topicID)
 		if err != nil {
 			logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
 			return false
 		}
-		chain.lastTransactionID = txID
 		logger.Debugf("[channel: %s] %d fragment of id %d sent successfully", chain.ChannelID(), fragments[index].Sequence, fragments[index].FragmentId)
 	}
 	logger.Debugf("[channel: %s] Envelope enqueued successfully", chain.ChannelID())
@@ -868,15 +866,9 @@ func (chain *chainImpl) reprocessPending() {
 }
 
 func (chain *chainImpl) HealthCheck(ctx context.Context) error {
-	if chain.lastTransactionID != nil {
-		// do GetTransactionReceipt if possible since it's free
-		if _, err := chain.topicProducer.GetTransactionReceipt(chain.lastTransactionID); err != nil {
-			logger.Warnf("[channel: %s] failed to get TransactionReceipt for hcs transaction %s = %s", chain.ChannelID(), chain.lastTransactionID.String(), err)
-			return err
-		}
-	} else {
-		if _, err := chain.topicProducer.GetConsensusTopicInfo(chain.topicID); err != nil {
-			logger.Warnf("[channel: %s] failed to get ConsensusTopicInfo = %s", chain.ChannelID(), err)
+	_, err := chain.topicProducer.GetAccountBalance(chain.operatorID)
+	if err != nil {
+		if _, ok := err.(hedera.ErrHederaNetwork); ok {
 			return err
 		}
 	}

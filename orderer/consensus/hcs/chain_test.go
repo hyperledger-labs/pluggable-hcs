@@ -2591,39 +2591,19 @@ func TestHealthCheck(t *testing.T) {
 	}
 	mockProducer := producer.(*mockhcs.ConsensusClient)
 
-	t.Run("WithLastTransactionID", func(t *testing.T) {
-		chain.lastTransactionID = &hedera.TransactionID{
-			AccountID: hedera.AccountID{
-				Shard:   0,
-				Realm:   0,
-				Account: 19876,
-			},
-			ValidStart: time.Now(),
-		}
-
-		t.Run("Proper", func(t *testing.T) {
-			mockProducer.GetTransactionReceiptReturns(&hedera.TransactionReceipt{}, nil)
-			assert.NoError(t, chain.HealthCheck(context.Background()), "Expected HealthCHeck returns no error")
-		})
-
-		t.Run("WithGetTransactionReceiptError", func(t *testing.T) {
-			mockProducer.GetTransactionReceiptReturns(nil, fmt.Errorf("test error message"))
-			assert.Error(t, chain.HealthCheck(context.Background()), "Expected HealthCHeck returns error")
-		})
+	t.Run("Proper", func(t *testing.T) {
+		mockProducer.GetAccountBalanceReturns(hedera.NewHbar(1), nil)
+		assert.NoError(t, chain.HealthCheck(context.Background()), "Expected HealthCHeck returns no error")
 	})
 
-	t.Run("WithGetConsensusTopicInfo", func(t *testing.T) {
-		chain.lastTransactionID = nil
+	t.Run("WithErrHederaNetwork", func(t *testing.T) {
+		mockProducer.GetAccountBalanceReturns(hedera.Hbar{}, hedera.ErrHederaNetwork{})
+		assert.Error(t, chain.HealthCheck(context.Background()), "Expected HealthCHeck returns error")
+	})
 
-		t.Run("Proper", func(t *testing.T) {
-			mockProducer.GetConsensusTopicInfoReturns(&hedera.ConsensusTopicInfo{}, nil)
-			assert.NoError(t, chain.HealthCheck(context.Background()), "Expected HealthCHeck returns no error")
-		})
-
-		t.Run("WithGetConsensusTopicInfoError", func(t *testing.T) {
-			mockProducer.GetConsensusTopicInfoReturns(nil, fmt.Errorf("test error message"))
-			assert.Error(t, chain.HealthCheck(context.Background()), "Expected HealthCHeck returns error")
-		})
+	t.Run("WithOtherError", func(t *testing.T) {
+		mockProducer.GetAccountBalanceReturns(hedera.Hbar{}, fmt.Errorf("test error message"))
+		assert.NoError(t, chain.HealthCheck(context.Background()), "Expected HealthCHeck returns no error")
 	})
 }
 

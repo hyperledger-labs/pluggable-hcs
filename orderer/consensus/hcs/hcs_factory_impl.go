@@ -61,6 +61,10 @@ func (c *consensusClientImpl) GetTransactionReceipt(txID *hedera.TransactionID) 
 	return &receipt, err
 }
 
+func (c *consensusClientImpl) GetAccountBalance(accountID *hedera.AccountID) (hedera.Hbar, error) {
+	return hedera.NewAccountBalanceQuery().SetAccountID(*accountID).Execute(c.client)
+}
+
 // implements factory.MirrorClient
 type mirrorClientImpl struct {
 	mc *hedera.MirrorClient
