@@ -45,7 +45,7 @@ const (
 	aesKeyFilename             = "/var/hyperledger/fabric/orderer/aes.key"
 	maxConsensusMessageSize    = 3800 // the max message size HCS supports is 4kB, including header
 	subscriptionRetryBaseDelay = 100 * time.Millisecond
-	subscriptionRetryMax       = 5
+	subscriptionRetryMax       = 8
 )
 
 func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, uint64, uint64, time.Time) {
@@ -330,7 +330,6 @@ func (chain *chainImpl) processMessages() error {
 			return nil
 		case hcsErr := <-chain.topicSubscriptionHandle.Errors():
 			logger.Errorf("[channel: %s] error received during subscription streaming, %v", chain.ChannelID(), hcsErr)
-			chain.topicSubscriptionHandle.Unsubscribe()
 			select {
 			case <-chain.errorChan: // don't do anything if already closed
 			default:
@@ -355,6 +354,7 @@ func (chain *chainImpl) processMessages() error {
 			}
 		case <-chain.subscriptionRetryTimer:
 			logger.Debugf("[channel: %s] retry topic subscription", chain.ChannelID())
+			chain.topicSubscriptionHandle.Unsubscribe()
 			chain.subscriptionRetryTimer = nil
 			subscriptionRetryCount++
 			if err := startSubscription(chain, chain.lastConsensusTimestamp); err != nil {

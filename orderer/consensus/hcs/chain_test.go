@@ -3058,6 +3058,8 @@ func (h *mockMirrorSubscriptionHandle) start() {
 				h.l.Unlock()
 			case <-h.done:
 				//h.errChan <- fmt.Errorf("subscripton is cancelled by caller")
+				close(h.respChan)
+				close(h.errChan)
 				return
 			}
 		}

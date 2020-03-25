@@ -106,19 +106,26 @@ type mirrorSubscriptionHandleImpl struct {
 	hedera.MirrorSubscriptionHandle
 	errChan  chan error
 	respChan chan *hedera.MirrorConsensusTopicResponse
+	done     chan struct{}
 }
 
 func newMirrorSubscriptionHandle() *mirrorSubscriptionHandleImpl {
 	return &mirrorSubscriptionHandleImpl{
 		errChan:  make(chan error),
 		respChan: make(chan *hedera.MirrorConsensusTopicResponse),
+		done:     make(chan struct{}),
 	}
 }
 
 func (h *mirrorSubscriptionHandleImpl) Unsubscribe() {
-	h.MirrorSubscriptionHandle.Unsubscribe()
-	close(h.errChan)
-	close(h.respChan)
+	select {
+	case <-h.done:
+	default:
+		h.MirrorSubscriptionHandle.Unsubscribe()
+		close(h.respChan)
+		close(h.errChan)
+		close(h.done)
+	}
 }
 
 func (h *mirrorSubscriptionHandleImpl) Responses() <-chan *hedera.MirrorConsensusTopicResponse {
