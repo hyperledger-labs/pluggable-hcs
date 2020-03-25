@@ -264,6 +264,81 @@ func TestChain(t *testing.T) {
 		assert.Nil(t, end, "Expected endTime passed to SubscribeTopic to be unixEpoch")
 	})
 
+	t.Run("WaitReady", func(t *testing.T) {
+		t.Run("NotStarted", func(t *testing.T) {
+			mockConsenter, mockSupport := newMocks(t)
+			mockHealthChecker := &mockhcs.HealthChecker{}
+			hcf := newDefaultMockHcsClientFactory()
+			chain, _ := newChain(
+				mockConsenter,
+				mockSupport,
+				mockHealthChecker,
+				hcf,
+				oldestConsensusTimestamp,
+				lastOriginalOffsetProcessed,
+				lastResubmittedConfigOffset,
+				oldestConsensusTimestamp,
+			)
+
+			assert.Errorf(t, chain.WaitReady(), "Expected WaitReady returns error")
+		})
+
+		t.Run("ProperAfterStarted", func(t *testing.T) {
+			mockConsenter, mockSupport := newMocks(t)
+			mockHealthChecker := &mockhcs.HealthChecker{}
+			hcf := newDefaultMockHcsClientFactory()
+			chain, _ := newChain(
+				mockConsenter,
+				mockSupport,
+				mockHealthChecker,
+				hcf,
+				oldestConsensusTimestamp,
+				lastOriginalOffsetProcessed,
+				lastResubmittedConfigOffset,
+				oldestConsensusTimestamp,
+			)
+
+			chain.Start()
+			select {
+			case <-chain.startChan:
+				logger.Debug("startChan is closed as it should be")
+			case <-time.After(shortTimeout):
+				t.Fatal("startChan should have been closed by now")
+			}
+			close(getRespSyncChan(chain.topicSubscriptionHandle))
+
+			assert.NoError(t, chain.WaitReady(), "Expected WaitReady returns no error")
+		})
+
+		t.Run("AfterHalted", func(t *testing.T) {
+			mockConsenter, mockSupport := newMocks(t)
+			mockHealthChecker := &mockhcs.HealthChecker{}
+			hcf := newDefaultMockHcsClientFactory()
+			chain, _ := newChain(
+				mockConsenter,
+				mockSupport,
+				mockHealthChecker,
+				hcf,
+				oldestConsensusTimestamp,
+				lastOriginalOffsetProcessed,
+				lastResubmittedConfigOffset,
+				oldestConsensusTimestamp,
+			)
+
+			chain.Start()
+			select {
+			case <-chain.startChan:
+				logger.Debug("startChan is closed as it should be")
+			case <-time.After(shortTimeout):
+				t.Fatal("startChan should have been closed by now")
+			}
+			close(getRespSyncChan(chain.topicSubscriptionHandle))
+
+			chain.Halt()
+			assert.Error(t, chain.WaitReady(), "Expected WaitReady returns error")
+		})
+	})
+
 	t.Run("RecollectPendingFragments", func(t *testing.T) {
 		t.Run("StartWithInvalidLastFragmentFreeConsensusTimestamp", func(t *testing.T) {
 			mockConsenter, mockSupport := newMocks(t)
@@ -963,10 +1038,14 @@ func TestChain(t *testing.T) {
 			select {
 			case <-done:
 			case <-time.After(shortTimeout):
-				t.Fatalf("Expected errChan closed")
+				t.Fatal("Expected errChan closed")
 			}
 
-			chain.Halt()
+			select {
+			case <-chain.haltChan:
+			case <-time.After(shortTimeout):
+				t.Fatal("Expected haltChan closed")
+			}
 		})
 
 		t.Run("UnrecoverableError", func(t *testing.T) {
@@ -1000,7 +1079,11 @@ func TestChain(t *testing.T) {
 				t.Fatalf("Expected errChan closed")
 			}
 
-			chain.Halt()
+			select {
+			case <-chain.haltChan:
+			case <-time.After(shortTimeout):
+				t.Fatal("Expected haltChan closed")
+			}
 		})
 
 		t.Run("ProperRetry", func(t *testing.T) {
@@ -1029,14 +1112,46 @@ func TestChain(t *testing.T) {
 				return oldSubscribeTopicStub(topicID, start, end)
 			})
 
+			// send an error to the subscription handle
 			handle := chain.topicSubscriptionHandle.(*mockMirrorSubscriptionHandle)
 			handle.errChan <- status.Error(codes.InvalidArgument, "Invalid topic ID")
-			subscribeTopicSyncChan <- struct{}{}
 
 			select {
 			case <-chain.Errored():
-				t.Fatalf("Expected blocking on errChan")
 			case <-time.After(shortTimeout):
+				t.Fatal("Expected errChan is closed")
+			}
+
+			// let the subscription retry succeed
+			subscribeTopicSyncChan <- struct{}{}
+
+			doneWait := make(chan struct{})
+			tryWaitReady := func() {
+				chain.WaitReady()
+				doneWait <- struct{}{}
+			}
+			go tryWaitReady()
+			select {
+			case <-doneWait:
+				t.Fatal("Expected WaitReady to block")
+			case <-time.After(shortTimeout):
+			}
+
+			// send a message to unblock WaitReady
+			hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("foo message 2")), uint64(0), uint64(0))
+			fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, 0)
+			chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID)
+
+			select {
+			case <-doneWait:
+			case <-time.After(shortTimeout):
+				t.Fatal("Expected WaitReady to return")
+			}
+
+			select {
+			case <-chain.Errored():
+				t.Fatal("Expected errChan blocks")
+			default:
 			}
 
 			assert.Equal(t, 2, mockMirrorClient.SubscribeTopicCallCount(), "Expected SubscribeTopic called twice")
@@ -1087,11 +1202,26 @@ func TestChain(t *testing.T) {
 			select {
 			case <-chain.Errored():
 			case <-time.After(shortTimeout):
-				t.Fatalf("Expected errChan closed after max subscription retry")
+				t.Fatalf("Expected errChan closed")
 			}
 
+			doneWait := make(chan struct{})
+			go func() {
+				chain.WaitReady()
+				doneWait <- struct{}{}
+			}()
+			select {
+			case <-doneWait:
+			case <-time.After(shortTimeout):
+				t.Fatal("Expected WaitReady to not block")
+			}
+
+			select {
+			case <-chain.haltChan:
+			case <-time.After(shortTimeout):
+				t.Fatal("Expected haltChan closed")
+			}
 			assert.Equal(t, 1+subscriptionRetryMax, mockMirrorClient.SubscribeTopicCallCount(), "Expected SubscribeTopic called 1 + subscriptionRetryMax times")
-			chain.Halt()
 		})
 	})
 }
@@ -1160,6 +1290,8 @@ func TestProcessMessages(t *testing.T) {
 		topicID := &hedera.ConsensusTopicID{0, 0, 16381}
 		topicSubscriptionHandle, _ := topicConsumer.SubscribeTopic(topicID, &unixEpoch, nil)
 		assert.NotNil(t, topicSubscriptionHandle, "Expected topic subscription handle created successfully")
+		topicErrorChan := make(chan struct{})
+		close(topicErrorChan)
 
 		chain := &chainImpl{
 			consenter:        mockConsenter,
@@ -1172,6 +1304,7 @@ func TestProcessMessages(t *testing.T) {
 			singleNodeTopicProducer: topicProducer,
 			topicConsumer:           topicConsumer,
 			topicSubscriptionHandle: topicSubscriptionHandle,
+			topicErrorChan:          topicErrorChan,
 
 			errorChan:              errorChan,
 			haltChan:               haltChan,
@@ -1857,6 +1990,8 @@ func TestResubmission(t *testing.T) {
 		topicID := &hedera.ConsensusTopicID{0, 0, 16381}
 		topicSubscriptionHandle, _ := topicConsumer.SubscribeTopic(topicID, &unixEpoch, nil)
 		assert.NotNil(t, topicSubscriptionHandle, "Expected topic subscription handle created successfuly")
+		topicErrorChan := make(chan struct{})
+		close(topicErrorChan)
 
 		return &chainImpl{
 			consenter:        mockConsenter,
@@ -1870,6 +2005,7 @@ func TestResubmission(t *testing.T) {
 			singleNodeTopicProducer: topicProducer,
 			topicConsumer:           topicConsumer,
 			topicSubscriptionHandle: topicSubscriptionHandle,
+			topicErrorChan:          topicErrorChan,
 
 			startChan:                   startChan,
 			errorChan:                   errorChan,
@@ -2941,7 +3077,7 @@ func (h *mockMirrorSubscriptionHandle) start() {
 				h.nextSequenceNumber++
 				h.l.Unlock()
 			case <-h.done:
-				h.errChan <- fmt.Errorf("subscripton is cancelled by caller")
+				//h.errChan <- fmt.Errorf("subscripton is cancelled by caller")
 				return
 			}
 		}
@@ -2973,7 +3109,11 @@ func (h *mockMirrorSubscriptionHandle) getNextConsensusTimestamp() time.Time {
 }
 
 func (h *mockMirrorSubscriptionHandle) Unsubscribe() {
-	close(h.done)
+	select {
+	case <-h.done:
+	default:
+		close(h.done)
+	}
 }
 
 func (h *mockMirrorSubscriptionHandle) Responses() <-chan *hedera.MirrorConsensusTopicResponse {
