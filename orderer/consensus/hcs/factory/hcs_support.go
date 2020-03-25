@@ -16,6 +16,7 @@ type ConsensusClient interface {
 	SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID) (*hedera.TransactionID, error)
 	GetConsensusTopicInfo(topicID *hedera.ConsensusTopicID) (*hedera.ConsensusTopicInfo, error)
 	GetTransactionReceipt(txID *hedera.TransactionID) (*hedera.TransactionReceipt, error)
+	GetAccountBalance(accountID *hedera.AccountID) (hedera.Hbar, error)
 }
 
 type MirrorClient interface {
