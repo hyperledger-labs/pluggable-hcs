@@ -295,8 +295,8 @@ Hcs:
         PrivateKey:
             # type of the private key
             Type: ed25519
-            # key string or path to the key file
-            Key: Your Hedera testnet account private key string here 
+            # key string (hex or PEM encoded) or path to the key file
+            Key: Your Hedera testnet account private key string here
 
 ################################################################################
 #

@@ -11,6 +11,7 @@ import (
 	"crypto/md5"
 	crand "crypto/rand"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"google.golang.org/grpc/codes"
@@ -947,12 +948,12 @@ func parseConfig(
 		err = fmt.Errorf("private key type \"%s\" is not supported", config.Operator.PrivateKey.Type)
 		return
 	}
-
-	tmpPrivateKey, err := hedera.Ed25519PrivateKeyFromString(config.Operator.PrivateKey.Key)
+	tmpPrivateKey, err := parseEd25519PrivateKey(config.Operator.PrivateKey.Key)
 	if err != nil {
 		err = fmt.Errorf("invalid operator private key = %v", err)
 		return
 	}
+
 	tmpTopicID, err := hedera.TopicIDFromString(channelTopicID)
 	if err != nil {
 		err = fmt.Errorf("invalid hcs topic ID = %v", err)
@@ -964,6 +965,19 @@ func parseConfig(
 	privateKey = &tmpPrivateKey
 	topicID = &tmpTopicID
 	return
+}
+
+func parseEd25519PrivateKey(s string) (hedera.Ed25519PrivateKey, error) {
+	privateKey, err := hedera.Ed25519PrivateKeyFromString(s)
+	if err != nil {
+		block, _ := pem.Decode([]byte(s))
+		if block == nil || block.Type != "PRIVATE KEY" {
+			err = fmt.Errorf("cannot find PEM block containing private key")
+		} else {
+			privateKey, err = hedera.Ed25519PrivateKeyFromString(hex.EncodeToString(block.Bytes))
+		}
+	}
+	return privateKey, err
 }
 
 func startSubscription(chain *chainImpl, startTime time.Time) error {
