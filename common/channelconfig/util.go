@@ -168,7 +168,7 @@ func KafkaBrokersValue(brokers []string) *StandardConfigValue {
 func HcsValue(topicId string) *StandardConfigValue {
 	return &StandardConfigValue{
 		key: HcsKey,
-		value: &ab.Hcs {
+		value: &ab.Hcs{
 			TopicId: topicId,
 		},
 	}

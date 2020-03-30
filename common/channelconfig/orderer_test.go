@@ -56,13 +56,13 @@ func TestHcs(t *testing.T) {
 
 	oc = &OrdererConfig{protos: &OrdererProtos{
 		ConsensusType: &ab.ConsensusType{Type: "hcs"},
-		Hcs: &ab.Hcs{TopicId: "0.0.1230"},
+		Hcs:           &ab.Hcs{TopicId: "0.0.1230"},
 	}}
 	assert.NoError(t, oc.validateHcs(), "Valid HCS topic ID")
 
 	oc = &OrdererConfig{protos: &OrdererProtos{
 		ConsensusType: &ab.ConsensusType{Type: "hcs"},
-		Hcs: &ab.Hcs{TopicId: "a.b.xx00"},
+		Hcs:           &ab.Hcs{TopicId: "a.b.xx00"},
 	}}
 	assert.Error(t, oc.validateHcs(), "Invalid HCS topic ID")
 }

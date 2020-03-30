@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hashgraph/hedera-sdk-go"
 	"github.com/hyperledger/fabric-protos-go/orderer/etcdraft"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/policies"
@@ -17,7 +18,6 @@ import (
 	cf "github.com/hyperledger/fabric/core/config"
 	"github.com/hyperledger/fabric/msp"
 	"github.com/spf13/viper"
-	"github.com/hashgraph/hedera-sdk-go"
 )
 
 const (
@@ -388,7 +388,7 @@ loop:
 		}
 	case "hcs":
 		if _, err := hedera.TopicIDFromString(ord.Hcs.TopicId); err != nil {
-			logger.Panic("invalid HCS Topic ID '%v', %v", ord.Hcs.TopicId, err)
+			logger.Panicf("invalid HCS Topic ID '%s', %v", ord.Hcs.TopicId, err)
 		}
 	case EtcdRaft:
 		if ord.EtcdRaft == nil {

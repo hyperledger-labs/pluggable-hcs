@@ -380,7 +380,7 @@ var _ = Describe("Encoder", func() {
 				Expect(cg.Values["Hcs"]).NotTo(BeNil())
 			})
 
-			Context("when the hcs topic id is bad", func () {
+			Context("when the hcs topic id is bad", func() {
 				BeforeEach(func() {
 					conf.Hcs = genesisconfig.Hcs{TopicId: "a.b.dead"}
 				})
