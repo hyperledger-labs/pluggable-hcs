@@ -131,7 +131,7 @@ func TestConsensusSpecificInit(t *testing.T) {
 		profile := &Profile{
 			Orderer: &Orderer{
 				OrdererType: "hcs",
-				Hcs: Hcs{},
+				Hcs:         Hcs{},
 			},
 		}
 		assert.Panics(t, func() {

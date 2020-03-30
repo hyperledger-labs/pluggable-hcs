@@ -290,13 +290,13 @@ func (chain *chainImpl) processMessages() error {
 	defer func() {
 		chain.topicSubscriptionHandle.Unsubscribe()
 		if err := chain.topicConsumer.Close(); err != nil {
-			logger.Errorf("[channel: %s] error when closing topicConsumer = %v", err)
+			logger.Errorf("[channel: %s] error when closing topicConsumer = %v", chain.ChannelID(), err)
 		}
 		if err := chain.singleNodeTopicProducer.Close(); err != nil {
-			logger.Errorf("[channel: %s] error when closing singleNodeTopicProducer = %v", err)
+			logger.Errorf("[channel: %s] error when closing singleNodeTopicProducer = %v", chain.ChannelID(), err)
 		}
 		if err := chain.topicProducer.Close(); err != nil {
-			logger.Errorf("[channel: %s] error when closing topicProducer = %v", err)
+			logger.Errorf("[channel: %s] error when closing topicProducer = %v", chain.ChannelID(), err)
 		}
 		close(chain.doneProcessingMessages)
 

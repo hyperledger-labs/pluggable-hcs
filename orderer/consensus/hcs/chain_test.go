@@ -1,3 +1,7 @@
+/*
+SPDX-License-Identifier: Apache-2.0
+*/
+
 package hcs
 
 import (
@@ -1287,7 +1291,11 @@ func TestProcessMessages(t *testing.T) {
 		assert.NotNil(t, topicProducer, "Expected topic producer created successfully")
 		topicConsumer, _ := hcf.GetMirrorClient("")
 		assert.NotNil(t, topicConsumer, "Expected topic consumer created successfully")
-		topicID := &hedera.ConsensusTopicID{0, 0, 16381}
+		topicID := &hedera.ConsensusTopicID{
+			Shard: 0,
+			Realm: 0,
+			Topic: 16381,
+		}
 		topicSubscriptionHandle, _ := topicConsumer.SubscribeTopic(topicID, &unixEpoch, nil)
 		assert.NotNil(t, topicSubscriptionHandle, "Expected topic subscription handle created successfully")
 		topicErrorChan := make(chan struct{})
@@ -1987,9 +1995,13 @@ func TestResubmission(t *testing.T) {
 		assert.NotNil(t, topicProducer, "Expected topic producer created successfully")
 		topicConsumer, _ := hcf.GetMirrorClient("")
 		assert.NotNil(t, topicConsumer, "Expected topic consumer created successfully")
-		topicID := &hedera.ConsensusTopicID{0, 0, 16381}
+		topicID := &hedera.ConsensusTopicID{
+			Shard: 0,
+			Realm: 0,
+			Topic: 16381,
+		}
 		topicSubscriptionHandle, _ := topicConsumer.SubscribeTopic(topicID, &unixEpoch, nil)
-		assert.NotNil(t, topicSubscriptionHandle, "Expected topic subscription handle created successfuly")
+		assert.NotNil(t, topicSubscriptionHandle, "Expected topic subscription handle created successfully")
 		topicErrorChan := make(chan struct{})
 		close(topicErrorChan)
 
@@ -3057,7 +3069,7 @@ func (h *mockMirrorSubscriptionHandle) start() {
 				h.nextSequenceNumber++
 				h.l.Unlock()
 			case <-h.done:
-				//h.errChan <- fmt.Errorf("subscripton is cancelled by caller")
+				//h.errChan <- fmt.Errorf("subscription is cancelled by caller")
 				close(h.respChan)
 				close(h.errChan)
 				return
