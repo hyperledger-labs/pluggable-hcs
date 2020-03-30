@@ -184,6 +184,7 @@ noverify = [
 [[constraint]]
   branch = "master"
   name = "github.com/hyperledger/fabric-protos-go"
+  source = "https://github.com/hashgraph/fabric-protos-go.git"
 
 [[constraint]]
   branch = "master"
