@@ -287,12 +287,17 @@ Hcs:
 
     # operator set for the orderer
     Operator:
-        Id: 0.0.1998
+        # hedera mainnet/testnet account ID
+        Id:
+        # private key of the operator
         PrivateKey:
             # type of the private key
             Type: ed25519
-            # the key string or path to the key file
+            # The private key string, can be either hex-encoded or PEM-encoded string
             Key:
+                # As an alternative, uncomment the following "File" key and specify the PEM
+                # file name from which to load the key
+                #File: path/to/file
 
 ################################################################################
 #

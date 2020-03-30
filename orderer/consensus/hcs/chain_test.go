@@ -7,6 +7,8 @@ package hcs
 import (
 	"context"
 	crand "crypto/rand"
+	"encoding/hex"
+	"encoding/pem"
 	"fmt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -2687,6 +2689,24 @@ func TestParseConfig(t *testing.T) {
 		assert.Equal(t, mockTopicIDStr, topicID.String(), "Expected correct topicID")
 	})
 
+	t.Run("WithValidPEMKey", func(t *testing.T) {
+		localHcsConfig := mockHcsConfig
+		rawKey, _ := hex.DecodeString(mockHcsConfig.Operator.PrivateKey.Key)
+		block := &pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: rawKey,
+		}
+		localHcsConfig.Operator.PrivateKey.Key = string(pem.EncodeToMemory(block))
+		network, operatorID, privateKey, topicID, err := parseConfig(&localHcsConfig, mockTopicIDStr)
+
+		assert.NoError(t, err, "Expected parseConfig returns no errors")
+		assert.NotNil(t, network, "Expect non-nil chain.network")
+		assert.Equal(t, len(mockHcsConfig.Nodes), len(network), "Expect chain.network has correct number of entries")
+		assert.Equal(t, mockHcsConfig.Operator.Id, operatorID.String(), "Expect correct operator ID string")
+		assert.Equal(t, mockHcsConfig.Operator.PrivateKey.Key, privateKey.String(), "Expect correct operator private key")
+		assert.Equal(t, mockTopicIDStr, topicID.String(), "Expected correct topicID")
+	})
+
 	t.Run("WithEmptyNodes", func(t *testing.T) {
 		invalidMockHcsConfig := mockHcsConfig
 		invalidMockHcsConfig.Nodes = make(map[string]string)
@@ -2723,6 +2743,50 @@ func TestParseConfig(t *testing.T) {
 	t.Run("WithInvalidHCSTopicID", func(t *testing.T) {
 		_, _, _, _, err := parseConfig(&mockHcsConfig, "invalid hcs topic ID")
 		assert.Error(t, err, "Expected parseConfig returns error when hcs topic ID is invalid")
+	})
+}
+
+func TestParseEd25519PrivateKey(t *testing.T) {
+	t.Run("WithValidHexEncodedString", func(t *testing.T) {
+		skey, err := parseEd25519PrivateKey(testOperatorPrivateKey)
+		assert.NoError(t, err, "Expected parseEd25519PrivateKey returns no error")
+		assert.Equal(t, testOperatorPrivateKey, skey.String(), "Expected the parsed key matches the input")
+	})
+
+	t.Run("WithValidPEMEncodedKey", func(t *testing.T) {
+		rawKey, _ := hex.DecodeString(testOperatorPrivateKey)
+		block := &pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: rawKey,
+		}
+		skey, err := parseEd25519PrivateKey(string(pem.EncodeToMemory(block)))
+		assert.NoError(t, err, "Expected parseEd25519PrivateKey returns no error")
+		assert.Equal(t, testOperatorPrivateKey, skey.String(), "Expected the parsed key matches the input")
+	})
+
+	t.Run("WithInvalidKey", func(t *testing.T) {
+		invalidKey := testOperatorPrivateKey + "invalid"
+		_, err := parseEd25519PrivateKey(invalidKey)
+		assert.Errorf(t, err, "Expected parseEd25519PrivateKey returns error")
+	})
+
+	t.Run("WithInvalidPEMType", func(t *testing.T) {
+		rawKey, _ := hex.DecodeString(testOperatorPrivateKey)
+		block := &pem.Block{
+			Type:  "BAD KEY TYPE",
+			Bytes: rawKey,
+		}
+		_, err := parseEd25519PrivateKey(string(pem.EncodeToMemory(block)))
+		assert.Errorf(t, err, "Expected parseEd25519PrivateKey returns error")
+	})
+
+	t.Run("WithInvalidPEMKeyBytes", func(t *testing.T) {
+		block := &pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: []byte("invalid private key bytes"),
+		}
+		_, err := parseEd25519PrivateKey(string(pem.EncodeToMemory(block)))
+		assert.Errorf(t, err, "Expected parseEd25519PrivateKey returns error")
 	})
 }
 
