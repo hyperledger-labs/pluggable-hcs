@@ -2,6 +2,7 @@ package hedera
 
 import (
 	"fmt"
+	"google.golang.org/grpc/codes"
 	"math"
 	"math/rand"
 	"time"
@@ -38,10 +39,10 @@ func (builder *QueryBuilder) SetQueryPaymentTransaction(tx Transaction) *QueryBu
 	return builder
 }
 
-func (builder *QueryBuilder) Cost(client *Client) (Hbar, error) {
+func (builder *QueryBuilder) GetCost(client *Client) (Hbar, error) {
 	// An operator must be set on the client
 	if client == nil || client.operator == nil {
-		return ZeroHbar, newErrLocalValidationf("calling .Cost() requires client.SetOperator")
+		return ZeroHbar, newErrLocalValidationf("calling .GetCost() requires client.SetOperator")
 	}
 
 	// Store the current response type and payment from the
@@ -77,7 +78,7 @@ func (builder *QueryBuilder) Cost(client *Client) (Hbar, error) {
 
 	builder.pbHeader.Payment = tx.pb
 
-	resp, err := execute(node, &tx.ID, builder.pb, time.Now().Add(10*time.Second))
+	resp, err := execute(node, &tx.id, builder.pb, time.Now().Add(10*time.Second))
 	if err != nil {
 		return ZeroHbar, err
 	}
@@ -132,7 +133,7 @@ func (builder *QueryBuilder) execute(client *Client) (*proto.Response, error) {
 				maxPayment = client.maxQueryPayment
 			}
 
-			actualCost, err := builder.Cost(client)
+			actualCost, err := builder.GetCost(client)
 
 			if err != nil {
 				return nil, err
@@ -187,7 +188,7 @@ func (builder *QueryBuilder) generatePaymentTransaction(client *Client, node *no
 
 	builder.pbHeader.Payment = tx.pb
 
-	return tx.ID, nil
+	return tx.id, nil
 }
 
 func (builder *QueryBuilder) isPaymentRequired() bool {
@@ -242,6 +243,10 @@ func methodName(pb *proto.Query) string {
 
 	case *proto.Query_FileGetInfo:
 		return "/proto.FileService/getFileInfo"
+
+	// HCS
+	case *proto.Query_ConsensusGetTopicInfo:
+		return "/proto.ConsensusService/getTopicInfo"
 
 	default:
 		panic(fmt.Sprintf("[methodName] not implemented: %T", pb.Query))
@@ -352,6 +357,13 @@ func execute(node *node, paymentID *TransactionID, pb *proto.Query, deadline tim
 
 		err := node.invoke(methodName, pb, resp)
 		if err != nil {
+			statusCode := err.(ErrHederaNetwork).StatusCode
+
+			if *statusCode == codes.Unavailable || *statusCode == codes.ResourceExhausted {
+				// try again on unavailable or ResourceExhausted
+				continue
+			}
+
 			return nil, err
 		}
 

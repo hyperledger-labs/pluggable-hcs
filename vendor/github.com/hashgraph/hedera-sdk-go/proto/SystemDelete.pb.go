@@ -113,7 +113,9 @@ func init() {
 	proto.RegisterType((*SystemDeleteTransactionBody)(nil), "proto.SystemDeleteTransactionBody")
 }
 
-func init() { proto.RegisterFile("proto/SystemDelete.proto", fileDescriptor_ab1e6ccb4c3ba7df) }
+func init() {
+	proto.RegisterFile("proto/SystemDelete.proto", fileDescriptor_ab1e6ccb4c3ba7df)
+}
 
 var fileDescriptor_ab1e6ccb4c3ba7df = []byte{
 	// 253 bytes of a gzipped FileDescriptorProto

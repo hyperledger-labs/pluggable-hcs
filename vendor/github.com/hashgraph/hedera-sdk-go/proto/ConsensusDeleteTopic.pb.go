@@ -64,7 +64,9 @@ func init() {
 	proto.RegisterType((*ConsensusDeleteTopicTransactionBody)(nil), "proto.ConsensusDeleteTopicTransactionBody")
 }
 
-func init() { proto.RegisterFile("proto/ConsensusDeleteTopic.proto", fileDescriptor_321862972fa0dd57) }
+func init() {
+	proto.RegisterFile("proto/ConsensusDeleteTopic.proto", fileDescriptor_321862972fa0dd57)
+}
 
 var fileDescriptor_321862972fa0dd57 = []byte{
 	// 181 bytes of a gzipped FileDescriptorProto

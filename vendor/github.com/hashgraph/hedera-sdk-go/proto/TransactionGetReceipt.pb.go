@@ -121,7 +121,9 @@ func init() {
 	proto.RegisterType((*TransactionGetReceiptResponse)(nil), "proto.TransactionGetReceiptResponse")
 }
 
-func init() { proto.RegisterFile("proto/TransactionGetReceipt.proto", fileDescriptor_ded36cff96af940d) }
+func init() {
+	proto.RegisterFile("proto/TransactionGetReceipt.proto", fileDescriptor_ded36cff96af940d)
+}
 
 var fileDescriptor_ded36cff96af940d = []byte{
 	// 257 bytes of a gzipped FileDescriptorProto

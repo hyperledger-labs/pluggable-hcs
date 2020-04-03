@@ -293,7 +293,9 @@ func init() {
 	proto.RegisterType((*ContractCallLocalResponse)(nil), "proto.ContractCallLocalResponse")
 }
 
-func init() { proto.RegisterFile("proto/ContractCallLocal.proto", fileDescriptor_3b1ca84e1de6fd43) }
+func init() {
+	proto.RegisterFile("proto/ContractCallLocal.proto", fileDescriptor_3b1ca84e1de6fd43)
+}
 
 var fileDescriptor_3b1ca84e1de6fd43 = []byte{
 	// 456 bytes of a gzipped FileDescriptorProto

@@ -88,7 +88,9 @@ func init() {
 	proto.RegisterType((*ResponseHeader)(nil), "proto.ResponseHeader")
 }
 
-func init() { proto.RegisterFile("proto/ResponseHeader.proto", fileDescriptor_52a2ae021379db8d) }
+func init() {
+	proto.RegisterFile("proto/ResponseHeader.proto", fileDescriptor_52a2ae021379db8d)
+}
 
 var fileDescriptor_52a2ae021379db8d = []byte{
 	// 244 bytes of a gzipped FileDescriptorProto

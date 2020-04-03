@@ -78,7 +78,8 @@ type ContractDeleteTransactionBody_TransferContractID struct {
 
 func (*ContractDeleteTransactionBody_TransferAccountID) isContractDeleteTransactionBody_Obtainers() {}
 
-func (*ContractDeleteTransactionBody_TransferContractID) isContractDeleteTransactionBody_Obtainers() {}
+func (*ContractDeleteTransactionBody_TransferContractID) isContractDeleteTransactionBody_Obtainers() {
+}
 
 func (m *ContractDeleteTransactionBody) GetObtainers() isContractDeleteTransactionBody_Obtainers {
 	if m != nil {
@@ -113,7 +114,9 @@ func init() {
 	proto.RegisterType((*ContractDeleteTransactionBody)(nil), "proto.ContractDeleteTransactionBody")
 }
 
-func init() { proto.RegisterFile("proto/ContractDelete.proto", fileDescriptor_3dd5afa2183e5441) }
+func init() {
+	proto.RegisterFile("proto/ContractDelete.proto", fileDescriptor_3dd5afa2183e5441)
+}
 
 var fileDescriptor_3dd5afa2183e5441 = []byte{
 	// 236 bytes of a gzipped FileDescriptorProto

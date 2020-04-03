@@ -113,7 +113,9 @@ func init() {
 	proto.RegisterType((*TimestampSeconds)(nil), "proto.TimestampSeconds")
 }
 
-func init() { proto.RegisterFile("proto/Timestamp.proto", fileDescriptor_1be00dd4bd3e9791) }
+func init() {
+	proto.RegisterFile("proto/Timestamp.proto", fileDescriptor_1be00dd4bd3e9791)
+}
 
 var fileDescriptor_1be00dd4bd3e9791 = []byte{
 	// 163 bytes of a gzipped FileDescriptorProto

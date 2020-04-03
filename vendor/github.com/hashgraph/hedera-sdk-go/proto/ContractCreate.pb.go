@@ -156,7 +156,9 @@ func init() {
 	proto.RegisterType((*ContractCreateTransactionBody)(nil), "proto.ContractCreateTransactionBody")
 }
 
-func init() { proto.RegisterFile("proto/ContractCreate.proto", fileDescriptor_009340fb2588b611) }
+func init() {
+	proto.RegisterFile("proto/ContractCreate.proto", fileDescriptor_009340fb2588b611)
+}
 
 var fileDescriptor_009340fb2588b611 = []byte{
 	// 387 bytes of a gzipped FileDescriptorProto

@@ -219,7 +219,9 @@ func init() {
 	proto.RegisterType((*CryptoGetStakersResponse)(nil), "proto.CryptoGetStakersResponse")
 }
 
-func init() { proto.RegisterFile("proto/CryptoGetStakers.proto", fileDescriptor_07879aff27d6c5fd) }
+func init() {
+	proto.RegisterFile("proto/CryptoGetStakers.proto", fileDescriptor_07879aff27d6c5fd)
+}
 
 var fileDescriptor_07879aff27d6c5fd = []byte{
 	// 306 bytes of a gzipped FileDescriptorProto

@@ -129,7 +129,9 @@ func init() {
 	proto.RegisterType((*ExchangeRateSet)(nil), "proto.ExchangeRateSet")
 }
 
-func init() { proto.RegisterFile("proto/ExchangeRate.proto", fileDescriptor_6948300117a927ac) }
+func init() {
+	proto.RegisterFile("proto/ExchangeRate.proto", fileDescriptor_6948300117a927ac)
+}
 
 var fileDescriptor_6948300117a927ac = []byte{
 	// 249 bytes of a gzipped FileDescriptorProto

@@ -124,7 +124,9 @@ func init() {
 	proto.RegisterType((*ConsensusTopicInfo)(nil), "proto.ConsensusTopicInfo")
 }
 
-func init() { proto.RegisterFile("proto/ConsensusTopicInfo.proto", fileDescriptor_00ae45242e2f8a88) }
+func init() {
+	proto.RegisterFile("proto/ConsensusTopicInfo.proto", fileDescriptor_00ae45242e2f8a88)
+}
 
 var fileDescriptor_00ae45242e2f8a88 = []byte{
 	// 333 bytes of a gzipped FileDescriptorProto

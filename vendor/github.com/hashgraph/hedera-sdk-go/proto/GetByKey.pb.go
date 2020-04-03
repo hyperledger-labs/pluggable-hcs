@@ -233,7 +233,9 @@ func init() {
 	proto.RegisterType((*GetByKeyResponse)(nil), "proto.GetByKeyResponse")
 }
 
-func init() { proto.RegisterFile("proto/GetByKey.proto", fileDescriptor_3df7a028447b019f) }
+func init() {
+	proto.RegisterFile("proto/GetByKey.proto", fileDescriptor_3df7a028447b019f)
+}
 
 var fileDescriptor_3df7a028447b019f = []byte{
 	// 359 bytes of a gzipped FileDescriptorProto

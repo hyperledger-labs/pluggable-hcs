@@ -121,7 +121,9 @@ func init() {
 	proto.RegisterType((*ContractGetBytecodeResponse)(nil), "proto.ContractGetBytecodeResponse")
 }
 
-func init() { proto.RegisterFile("proto/ContractGetBytecode.proto", fileDescriptor_62dda690d4522eff) }
+func init() {
+	proto.RegisterFile("proto/ContractGetBytecode.proto", fileDescriptor_62dda690d4522eff)
+}
 
 var fileDescriptor_62dda690d4522eff = []byte{
 	// 244 bytes of a gzipped FileDescriptorProto
