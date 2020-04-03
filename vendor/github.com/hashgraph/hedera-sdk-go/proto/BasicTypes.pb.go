@@ -1593,7 +1593,9 @@ func init() {
 	proto.RegisterType((*NodeAddressBook)(nil), "proto.NodeAddressBook")
 }
 
-func init() { proto.RegisterFile("proto/BasicTypes.proto", fileDescriptor_e0596775ed6fb078) }
+func init() {
+	proto.RegisterFile("proto/BasicTypes.proto", fileDescriptor_e0596775ed6fb078)
+}
 
 var fileDescriptor_e0596775ed6fb078 = []byte{
 	// 1421 bytes of a gzipped FileDescriptorProto

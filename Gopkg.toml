@@ -101,7 +101,7 @@ noverify = [
 
 [[constraint]]
   name = "google.golang.org/grpc"
-  version = "1.24.0"
+  version = "1.28.0"
 
 [[constraint]]
   name = "gopkg.in/alecthomas/kingpin.v2"
@@ -195,5 +195,5 @@ noverify = [
   version = "1.4.6"
 
 [[constraint]]
+  branch = "master"
   name = "github.com/hashgraph/hedera-sdk-go"
-  version = "0.6.0"

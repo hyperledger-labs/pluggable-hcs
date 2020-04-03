@@ -193,7 +193,9 @@ func init() {
 	proto.RegisterType((*FileGetInfoResponse_FileInfo)(nil), "proto.FileGetInfoResponse.FileInfo")
 }
 
-func init() { proto.RegisterFile("proto/FileGetInfo.proto", fileDescriptor_eefe0b86fa17ae18) }
+func init() {
+	proto.RegisterFile("proto/FileGetInfo.proto", fileDescriptor_eefe0b86fa17ae18)
+}
 
 var fileDescriptor_eefe0b86fa17ae18 = []byte{
 	// 346 bytes of a gzipped FileDescriptorProto

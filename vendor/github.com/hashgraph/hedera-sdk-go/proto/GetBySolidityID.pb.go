@@ -137,7 +137,9 @@ func init() {
 	proto.RegisterType((*GetBySolidityIDResponse)(nil), "proto.GetBySolidityIDResponse")
 }
 
-func init() { proto.RegisterFile("proto/GetBySolidityID.proto", fileDescriptor_18620922c5bc1f51) }
+func init() {
+	proto.RegisterFile("proto/GetBySolidityID.proto", fileDescriptor_18620922c5bc1f51)
+}
 
 var fileDescriptor_18620922c5bc1f51 = []byte{
 	// 286 bytes of a gzipped FileDescriptorProto

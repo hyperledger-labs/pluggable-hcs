@@ -2,13 +2,15 @@ package hedera
 
 import (
 	"fmt"
+	"google.golang.org/grpc/codes"
+	status2 "google.golang.org/grpc/status"
 	"reflect"
 )
 
 // ErrMaxQueryPaymentExceeded is returned during query execution if the total cost of the query + estimated fees exceeds
 // the max query payment threshold set on the client or QueryBuilder.
 type ErrMaxQueryPaymentExceeded struct {
-	// The cost of the query that was attempted as returned by QueryBuilder.Cost
+	// The cost of the query that was attempted as returned by QueryBuilder.GetCost
 	QueryCost Hbar
 	// The limit for a single automatic query payment, set by
 	// Client.SetMaxQueryPayment(int64) or QueryBuilder.SetMaxQueryPayment(uint64).
@@ -25,6 +27,7 @@ func newErrorMaxQueryPaymentExceeded(builder *QueryBuilder, queryCost Hbar, maxQ
 	}
 }
 
+// Error() implements the Error interface
 func (e ErrMaxQueryPaymentExceeded) Error() string {
 	return fmt.Sprintf("cost of %s (%d) without explicit payment is greater than the max query payment of %d",
 		e.query,
@@ -41,6 +44,7 @@ func newErrBadKeyf(format string, a ...interface{}) ErrBadKey {
 	return ErrBadKey{fmt.Sprintf(format, a...)}
 }
 
+// Error() implements the Error interface
 func (e ErrBadKey) Error() string {
 	return e.message
 }
@@ -48,12 +52,19 @@ func (e ErrBadKey) Error() string {
 // ErrHederaNetwork is returned in cases where the Hedera network cannot be reached or a network-side error occurs.
 type ErrHederaNetwork struct {
 	error error
+	// GRPC Status Code
+	StatusCode *codes.Code
 }
 
 func newErrHederaNetwork(e error) ErrHederaNetwork {
+	if status, ok := status2.FromError(e); ok == true {
+		statusCode := status.Code()
+		return ErrHederaNetwork{error: e, StatusCode: &statusCode}
+	}
 	return ErrHederaNetwork{error: e}
 }
 
+// Error() implements the Error interface
 func (e ErrHederaNetwork) Error() string {
 	return fmt.Sprintf("transport error occurred while accessing the Hedera network: %s", e.Error())
 }
@@ -69,6 +80,7 @@ func newErrHederaPreCheckStatus(id TransactionID, status Status) ErrHederaPreChe
 	return ErrHederaPreCheckStatus{TxID: id, Status: status}
 }
 
+// Error() implements the Error interface
 func (e ErrHederaPreCheckStatus) Error() string {
 	return fmt.Sprintf("exceptional precheck status %s received for transaction %v", e.Status.String(), e.TxID)
 }
@@ -83,6 +95,7 @@ func newErrHederaReceiptStatus(id TransactionID, status Status) ErrHederaReceipt
 	return ErrHederaReceiptStatus{TxID: id, Status: status}
 }
 
+// Error() implements the Error interface
 func (e ErrHederaReceiptStatus) Error() string {
 	return fmt.Sprintf("exceptional status %s received for transaction %v", e.Status.String(), e.TxID)
 }
@@ -97,6 +110,7 @@ func newErrHederaRecordStatus(id TransactionID, status Status) ErrHederaRecordSt
 	return ErrHederaRecordStatus{TxID: id, Status: status}
 }
 
+// Error() implements the Error interface
 func (e ErrHederaRecordStatus) Error() string {
 	return fmt.Sprintf("exceptional status %s received for transaction %v", e.Status.String(), e.TxID)
 }
@@ -111,6 +125,7 @@ func newErrLocalValidationf(format string, a ...interface{}) ErrLocalValidation 
 	return ErrLocalValidation{fmt.Sprintf(format, a...)}
 }
 
+// Error() implements the Error interface
 func (e ErrLocalValidation) Error() string {
 	return e.message
 }
@@ -118,3 +133,17 @@ func (e ErrLocalValidation) Error() string {
 // Note: an Out of Range error for Hbar units as provided in the other SDKs does not have a clean translation to go.
 // 		 it would require all conversions and hbar constructors to return both the object and error resulting in a worst
 //       api usage experience.
+
+// ErrPingStatus is returned by client.Ping(AccountID) if an error occurs
+type ErrPingStatus struct {
+	error error
+}
+
+func newErrPingStatus(e error) ErrPingStatus {
+	return ErrPingStatus{error: e}
+}
+
+// Error() implements the Error interface
+func (e ErrPingStatus) Error() string {
+	return fmt.Sprintf("error occured during ping: %s", e.Error())
+}

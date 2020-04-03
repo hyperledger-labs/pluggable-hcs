@@ -105,7 +105,9 @@ func init() {
 	proto.RegisterType((*QueryHeader)(nil), "proto.QueryHeader")
 }
 
-func init() { proto.RegisterFile("proto/QueryHeader.proto", fileDescriptor_d0a7b838bafa1873) }
+func init() {
+	proto.RegisterFile("proto/QueryHeader.proto", fileDescriptor_d0a7b838bafa1873)
+}
 
 var fileDescriptor_d0a7b838bafa1873 = []byte{
 	// 249 bytes of a gzipped FileDescriptorProto

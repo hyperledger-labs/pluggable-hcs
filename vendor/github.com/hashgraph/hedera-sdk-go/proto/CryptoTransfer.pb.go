@@ -154,7 +154,9 @@ func init() {
 	proto.RegisterType((*CryptoTransferTransactionBody)(nil), "proto.CryptoTransferTransactionBody")
 }
 
-func init() { proto.RegisterFile("proto/CryptoTransfer.proto", fileDescriptor_645768f75ce75fc6) }
+func init() {
+	proto.RegisterFile("proto/CryptoTransfer.proto", fileDescriptor_645768f75ce75fc6)
+}
 
 var fileDescriptor_645768f75ce75fc6 = []byte{
 	// 252 bytes of a gzipped FileDescriptorProto

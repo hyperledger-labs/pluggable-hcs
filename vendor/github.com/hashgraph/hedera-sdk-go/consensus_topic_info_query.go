@@ -15,12 +15,14 @@ type ConsensusTopicInfo struct {
 	RunningHash        []byte
 	SequenceNumber     uint64
 	ExpirationTime     time.Time
-	AdminKey           Ed25519PublicKey
-	SubmitKey          Ed25519PublicKey
+	AdminKey           *Ed25519PublicKey
+	SubmitKey          *Ed25519PublicKey
 	AutoRenewPeriod    time.Duration
-	AutoRenewAccountID AccountID
+	AutoRenewAccountID *AccountID
 }
 
+// NewConsensusTopicInfoQuery creates a ConsensusTopicInfoQuery builder which can be used to construct and execute a
+// Consensus Get Topic Info Query.
 func NewConsensusTopicInfoQuery() *ConsensusTopicInfoQuery {
 	pb := &proto.ConsensusGetTopicInfoQuery{Header: &proto.QueryHeader{}}
 
@@ -30,31 +32,48 @@ func NewConsensusTopicInfoQuery() *ConsensusTopicInfoQuery {
 	return &ConsensusTopicInfoQuery{inner, pb}
 }
 
+// SetTopicId sets the topic to retrieve info about (the parameters and running state of).
 func (builder *ConsensusTopicInfoQuery) SetTopicID(id ConsensusTopicID) *ConsensusTopicInfoQuery {
 	builder.pb.TopicID = id.toProto()
 	return builder
 }
 
+// Execute executes the ConsensusTopicInfoQuery using the provided client
 func (builder *ConsensusTopicInfoQuery) Execute(client *Client) (ConsensusTopicInfo, error) {
 	resp, err := builder.execute(client)
 	if err != nil {
 		return ConsensusTopicInfo{}, err
 	}
 
-	return ConsensusTopicInfo{
-		Memo:           resp.GetConsensusGetTopicInfo().TopicInfo.Memo,
-		RunningHash:    resp.GetConsensusGetTopicInfo().TopicInfo.RunningHash,
-		SequenceNumber: resp.GetConsensusGetTopicInfo().TopicInfo.SequenceNumber,
-		ExpirationTime: timeFromProto(resp.GetConsensusGetTopicInfo().TopicInfo.ExpirationTime),
-		AdminKey: Ed25519PublicKey{
-			keyData: resp.GetConsensusGetTopicInfo().TopicInfo.AdminKey.GetEd25519(),
-		},
-		SubmitKey: Ed25519PublicKey{
-			keyData: resp.GetConsensusGetTopicInfo().TopicInfo.SubmitKey.GetEd25519(),
-		},
-		AutoRenewPeriod:    durationFromProto(resp.GetConsensusGetTopicInfo().TopicInfo.AutoRenewPeriod),
-		AutoRenewAccountID: accountIDFromProto(resp.GetConsensusGetTopicInfo().TopicInfo.AutoRenewAccount),
-	}, nil
+	ti := resp.GetConsensusGetTopicInfo().TopicInfo
+
+	consensusTopicInfo := ConsensusTopicInfo{
+		Memo:            ti.GetMemo(),
+		RunningHash:     ti.RunningHash,
+		SequenceNumber:  ti.SequenceNumber,
+		ExpirationTime:  timeFromProto(ti.ExpirationTime),
+		AutoRenewPeriod: durationFromProto(ti.AutoRenewPeriod),
+	}
+
+	if adminKey := ti.AdminKey; adminKey != nil {
+		consensusTopicInfo.AdminKey = &Ed25519PublicKey{
+			keyData: adminKey.GetEd25519(),
+		}
+	}
+
+	if submitKey := ti.SubmitKey; submitKey != nil {
+		consensusTopicInfo.SubmitKey = &Ed25519PublicKey{
+			keyData: submitKey.GetEd25519(),
+		}
+	}
+
+	if ARAccountID := ti.AutoRenewAccount; ARAccountID != nil {
+		ID := accountIDFromProto(ARAccountID)
+
+		consensusTopicInfo.AutoRenewAccountID = &ID
+	}
+
+	return consensusTopicInfo, nil
 }
 
 //
