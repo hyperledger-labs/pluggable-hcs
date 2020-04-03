@@ -11,7 +11,6 @@ import (
 	"crypto/md5"
 	crand "crypto/rand"
 	"encoding/hex"
-	"encoding/pem"
 	"fmt"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"google.golang.org/grpc/codes"
@@ -967,15 +966,10 @@ func parseConfig(
 	return
 }
 
-func parseEd25519PrivateKey(s string) (hedera.Ed25519PrivateKey, error) {
-	privateKey, err := hedera.Ed25519PrivateKeyFromString(s)
+func parseEd25519PrivateKey(str string) (hedera.Ed25519PrivateKey, error) {
+	privateKey, err := hedera.Ed25519PrivateKeyFromString(str)
 	if err != nil {
-		block, _ := pem.Decode([]byte(s))
-		if block == nil || block.Type != "PRIVATE KEY" {
-			err = fmt.Errorf("cannot find PEM block containing private key")
-		} else {
-			privateKey, err = hedera.Ed25519PrivateKeyFromString(hex.EncodeToString(block.Bytes))
-		}
+		privateKey, err = hedera.Ed25519PrivateKeyFromPem([]byte(str), "")
 	}
 	return privateKey, err
 }
