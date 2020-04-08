@@ -337,7 +337,7 @@ func (chain *chainImpl) processMessages() error {
 				close(chain.errorChan)
 			}
 			st, ok := status.FromError(hcsErr)
-			if ok && st.Code() == codes.InvalidArgument && subscriptionRetryCount < subscriptionRetryMax {
+			if ok && isSubscriptionErrorRecoverable(st.Code()) && subscriptionRetryCount < subscriptionRetryMax {
 				// the new topic may have not propagated to the mirror node yet, retry subscription
 				select {
 				case <-chain.topicErrorChan:
@@ -1088,4 +1088,19 @@ func timestampProtoOrPanic(t time.Time) *timestamp.Timestamp {
 
 func calcMaxFragmentAge(maxAgeBase uint64, numOrderers int) uint64 {
 	return maxAgeBase * uint64(numOrderers)
+}
+
+func isSubscriptionErrorRecoverable(code codes.Code) bool {
+	recoverable := true
+	switch code {
+	// prior to mirror node v0.6.0, InvalidArgument is returned when a topic does not exist
+	case codes.InvalidArgument:
+	// as of v0.6.0, mirror node will return NotFound when a topic does not exist
+	case codes.NotFound:
+	// as of v0.6.0, Unavailable is returned when the connection to the database is down
+	case codes.Unavailable:
+	default:
+		recoverable = false
+	}
+	return recoverable
 }
