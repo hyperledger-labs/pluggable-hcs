@@ -70,16 +70,6 @@ type OrdererConfig struct {
 	consensusTypeReturnsOnCall map[int]struct {
 		result1 string
 	}
-	HcsStub        func() *orderer.Hcs
-	hcsMutex       sync.RWMutex
-	hcsArgsForCall []struct {
-	}
-	hcsReturns struct {
-		result1 *orderer.Hcs
-	}
-	hcsReturnsOnCall map[int]struct {
-		result1 *orderer.Hcs
-	}
 	KafkaBrokersStub        func() []string
 	kafkaBrokersMutex       sync.RWMutex
 	kafkaBrokersArgsForCall []struct {
@@ -426,58 +416,6 @@ func (fake *OrdererConfig) ConsensusTypeReturnsOnCall(i int, result1 string) {
 	}{result1}
 }
 
-func (fake *OrdererConfig) Hcs() *orderer.Hcs {
-	fake.hcsMutex.Lock()
-	ret, specificReturn := fake.hcsReturnsOnCall[len(fake.hcsArgsForCall)]
-	fake.hcsArgsForCall = append(fake.hcsArgsForCall, struct {
-	}{})
-	fake.recordInvocation("Hcs", []interface{}{})
-	fake.hcsMutex.Unlock()
-	if fake.HcsStub != nil {
-		return fake.HcsStub()
-	}
-	if specificReturn {
-		return ret.result1
-	}
-	fakeReturns := fake.hcsReturns
-	return fakeReturns.result1
-}
-
-func (fake *OrdererConfig) HcsCallCount() int {
-	fake.hcsMutex.RLock()
-	defer fake.hcsMutex.RUnlock()
-	return len(fake.hcsArgsForCall)
-}
-
-func (fake *OrdererConfig) HcsCalls(stub func() *orderer.Hcs) {
-	fake.hcsMutex.Lock()
-	defer fake.hcsMutex.Unlock()
-	fake.HcsStub = stub
-}
-
-func (fake *OrdererConfig) HcsReturns(result1 *orderer.Hcs) {
-	fake.hcsMutex.Lock()
-	defer fake.hcsMutex.Unlock()
-	fake.HcsStub = nil
-	fake.hcsReturns = struct {
-		result1 *orderer.Hcs
-	}{result1}
-}
-
-func (fake *OrdererConfig) HcsReturnsOnCall(i int, result1 *orderer.Hcs) {
-	fake.hcsMutex.Lock()
-	defer fake.hcsMutex.Unlock()
-	fake.HcsStub = nil
-	if fake.hcsReturnsOnCall == nil {
-		fake.hcsReturnsOnCall = make(map[int]struct {
-			result1 *orderer.Hcs
-		})
-	}
-	fake.hcsReturnsOnCall[i] = struct {
-		result1 *orderer.Hcs
-	}{result1}
-}
-
 func (fake *OrdererConfig) KafkaBrokers() []string {
 	fake.kafkaBrokersMutex.Lock()
 	ret, specificReturn := fake.kafkaBrokersReturnsOnCall[len(fake.kafkaBrokersArgsForCall)]
@@ -649,8 +587,6 @@ func (fake *OrdererConfig) Invocations() map[string][][]interface{} {
 	defer fake.consensusStateMutex.RUnlock()
 	fake.consensusTypeMutex.RLock()
 	defer fake.consensusTypeMutex.RUnlock()
-	fake.hcsMutex.RLock()
-	defer fake.hcsMutex.RUnlock()
 	fake.kafkaBrokersMutex.RLock()
 	defer fake.kafkaBrokersMutex.RUnlock()
 	fake.maxChannelsCountMutex.RLock()

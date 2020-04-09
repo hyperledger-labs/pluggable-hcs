@@ -370,19 +370,26 @@ var _ = Describe("Encoder", func() {
 		Context("when the consensus type is hcs", func() {
 			BeforeEach(func() {
 				conf.OrdererType = "hcs"
-				conf.Hcs = genesisconfig.Hcs{TopicId: "0.0.1230"}
+				conf.Hcs = &ab.HcsConfigMetadata{TopicID: "0.0.1230"}
 			})
 
 			It("adds the hcs topic key", func() {
 				cg, err := encoder.NewOrdererGroup(conf)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(len(cg.Values)).To(Equal(6))
-				Expect(cg.Values["Hcs"]).NotTo(BeNil())
+				Expect(len(cg.Values)).To(Equal(5))
+				consensusType := &ab.ConsensusType{}
+				err = proto.Unmarshal(cg.Values["ConsensusType"].Value, consensusType)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(consensusType.Type).To(Equal("hcs"))
+				metadata := &ab.HcsConfigMetadata{}
+				err = proto.Unmarshal(consensusType.Metadata, metadata)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(metadata.TopicID).To(Equal("0.0.1230"))
 			})
 
 			Context("when the hcs topic id is bad", func() {
 				BeforeEach(func() {
-					conf.Hcs = genesisconfig.Hcs{TopicId: "a.b.dead"}
+					conf.Hcs = &ab.HcsConfigMetadata{TopicID: "a.b.dead"}
 				})
 
 				It("wraps and returns the error", func() {

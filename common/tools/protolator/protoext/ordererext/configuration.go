@@ -80,6 +80,8 @@ func (ct *ConsensusType) VariablyOpaqueFieldProto(name string) (proto.Message, e
 	switch ct.Type {
 	case "etcdraft":
 		return &etcdraft.ConfigMetadata{}, nil
+	case "hcs":
+		return &orderer.HcsConfigMetadata{}, nil
 	default:
 		return &empty.Empty{}, nil
 	}
@@ -146,8 +148,6 @@ func (docv *DynamicOrdererConfigValue) StaticallyOpaqueFieldProto(name string) (
 		return &orderer.ChannelRestrictions{}, nil
 	case "Capabilities":
 		return &common.Capabilities{}, nil
-	case "Hcs":
-		return &orderer.Hcs{}, nil
 	default:
 		return nil, fmt.Errorf("unknown Orderer ConfigValue name: %s", docv.name)
 	}

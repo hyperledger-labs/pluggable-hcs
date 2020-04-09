@@ -14,7 +14,6 @@ import (
 
 	"github.com/golang/protobuf/ptypes/timestamp"
 	cb "github.com/hyperledger/fabric-protos-go/common"
-	"github.com/hyperledger/fabric-protos-go/orderer"
 	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
@@ -66,8 +65,8 @@ func TestHandleChain(t *testing.T) {
 	consenter := New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{}, healthChecker)
 
 	mockOrderer := &mock.OrdererConfig{}
-	mockOrdererHcs := &orderer.Hcs{TopicId: "0.0.19718"}
-	mockInvalidOrdererHcs := &orderer.Hcs{TopicId: "invalid hcs topic id"}
+	mockConfigMetadata := protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "0.0.19718"})
+	mockInvalidConfigMetadata := protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "invalid hcs topic id"})
 	mockSupport := &mockmultichannel.ConsenterSupport{
 		SharedConfigVal:  mockOrderer,
 		ChannelIDVal:     channelNameForTest(t),
@@ -75,49 +74,87 @@ func TestHandleChain(t *testing.T) {
 	}
 
 	zeroTimestamp := timestamp.Timestamp{Seconds: 0, Nanos: 0}
-	mockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&ab.HcsMetadata{
+	mockBlockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&ab.HcsMetadata{
 		LastConsensusTimestampPersisted:             &zeroTimestamp,
 		LastOriginalSequenceProcessed:               0,
 		LastResubmittedConfigSequence:               0,
 		LastFragmentFreeConsensusTimestampPersisted: &zeroTimestamp,
 	})}
-	mockEmptyMetadata := &cb.Metadata{}
-	mockCorruptedMetadata := &cb.Metadata{Value: []byte("corrupted data")}
-	mockInvalidTimestampMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&ab.HcsMetadata{
+	mockInvalidTimestampBlockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&ab.HcsMetadata{
 		LastConsensusTimestampPersisted:             nil,
 		LastOriginalSequenceProcessed:               0,
 		LastResubmittedConfigSequence:               0,
 		LastFragmentFreeConsensusTimestampPersisted: nil,
 	})}
 
-	t.Run("With Valid Config", func(t *testing.T) {
-		mockOrderer.HcsReturns(mockOrdererHcs)
-		_, err := consenter.HandleChain(mockSupport, mockMetadata)
-		assert.NoError(t, err, "Expected the HandleChain call to return without errors")
-	})
+	var tests = []struct {
+		name           string
+		configMetadata []byte
+		blockMetadata  *cb.Metadata
+		expectError    bool
+		expectPanic    bool
+	}{
+		{
+			name:           "WithValidConfig",
+			configMetadata: mockConfigMetadata,
+			blockMetadata:  mockBlockMetadata,
+			expectError:    false,
+			expectPanic:    false,
+		},
+		{
+			name:           "WithValidConfigAndEmptyMetadata",
+			configMetadata: mockConfigMetadata,
+			blockMetadata:  &cb.Metadata{},
+			expectError:    false,
+			expectPanic:    false,
+		},
+		{
+			name:           "WithInvalidHCSTopicID",
+			configMetadata: mockInvalidConfigMetadata,
+			blockMetadata:  mockBlockMetadata,
+			expectError:    true,
+			expectPanic:    false,
+		},
+		{
+			name:           "WithCorruptedConfigMetadata",
+			configMetadata: []byte("corrupted config metadata"),
+			blockMetadata:  mockBlockMetadata,
+			expectError:    true,
+			expectPanic:    false,
+		},
+		{
+			name:           "WithCorruptedBlockMetadata",
+			configMetadata: mockConfigMetadata,
+			blockMetadata:  &cb.Metadata{Value: []byte("corrupted data")},
+			expectError:    false,
+			expectPanic:    true,
+		},
+		{
+			name:           "WithNilTimestampInMetadata",
+			configMetadata: mockConfigMetadata,
+			blockMetadata:  mockInvalidTimestampBlockMetadata,
+			expectError:    false,
+			expectPanic:    true,
+		},
+	}
 
-	t.Run("With Valid Config and Empty Metadata", func(t *testing.T) {
-		mockOrderer.HcsReturns(mockOrdererHcs)
-		_, err := consenter.HandleChain(mockSupport, mockEmptyMetadata)
-		assert.NoError(t, err, "Expected the HandleChain call to return without errors")
-	})
-
-	t.Run("With Invalid HCS Topic ID", func(t *testing.T) {
-		mockOrderer.HcsReturns(mockInvalidOrdererHcs)
-		ch, err := consenter.HandleChain(mockSupport, mockMetadata)
-		assert.Nil(t, ch, "Expected the HandleChain call to return a nil chain")
-		assert.Error(t, err, "Expected the HandleChain call to return error")
-	})
-
-	t.Run("With Corrupted Metadata", func(t *testing.T) {
-		mockOrderer.HcsReturns(mockOrdererHcs)
-		assert.Panicsf(t, func() { consenter.HandleChain(mockSupport, mockCorruptedMetadata) }, "Expected panic when HandleChain is called")
-	})
-
-	t.Run("With Nil Timestamp in Metadata", func(t *testing.T) {
-		mockOrderer.HcsReturns(mockOrdererHcs)
-		assert.Panics(t, func() { consenter.HandleChain(mockSupport, mockInvalidTimestampMetadata) }, "Expected panic when HandleChain is called")
-	})
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockOrderer.ConsensusMetadataReturns(test.configMetadata)
+			if test.expectPanic {
+				assert.Panics(t, func() { consenter.HandleChain(mockSupport, test.blockMetadata) })
+			} else {
+				ch, err := consenter.HandleChain(mockSupport, test.blockMetadata)
+				if test.expectError {
+					assert.Nil(t, ch)
+					assert.Error(t, err)
+				} else {
+					assert.NotNil(t, ch)
+					assert.NoError(t, err)
+				}
+			}
+		})
+	}
 }
 
 var mockLocalConfig *localconfig.TopLevel

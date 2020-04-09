@@ -89,7 +89,7 @@ func newChain(
 	logger.Infof("[channel: %s] starting chain with last persisted consensus timestamp %d and "+
 		"last recorded block [%d]", support.ChannelID(), lastConsensusTimestampPersisted.UnixNano(), lastCutBlockNumber)
 
-	network, operatorID, operatorPrivateKey, topicID, err := parseConfig(consenter.sharedHcsConfig(), support.SharedConfig().Hcs().TopicId)
+	network, operatorID, operatorPrivateKey, topicID, err := parseConfig(consenter.sharedHcsConfig(), support.SharedConfig().ConsensusMetadata())
 	if err != nil {
 		logger.Errorf("[channel: %s] err parsing config = %v", support.ChannelID(), err)
 		return nil, err
@@ -153,7 +153,7 @@ func newChain(
 		gcmCipher:                          gcmCipher,
 		nonceReader:                        crand.Reader,
 	}
-	healthChecker.RegisterChecker(support.SharedConfig().Hcs().TopicId, chain)
+	healthChecker.RegisterChecker(topicID.String(), chain)
 	return chain, nil
 }
 
@@ -920,7 +920,7 @@ func startThread(chain *chainImpl) {
 
 func parseConfig(
 	config *localconfig.Hcs,
-	channelTopicID string,
+	configMetadata []byte,
 ) (network map[string]hedera.AccountID, operatorID *hedera.AccountID, privateKey *hedera.Ed25519PrivateKey, topicID *hedera.ConsensusTopicID, err error) {
 	nodes := config.Nodes
 	if len(nodes) == 0 {
@@ -953,7 +953,12 @@ func parseConfig(
 		return
 	}
 
-	tmpTopicID, err := hedera.TopicIDFromString(channelTopicID)
+	md := &ab.HcsConfigMetadata{}
+	if err = proto.Unmarshal(configMetadata, md); err != nil {
+		err = fmt.Errorf("cannot unmarshal config metadata = %v", err)
+		return
+	}
+	tmpTopicID, err := hedera.TopicIDFromString(md.TopicID)
 	if err != nil {
 		err = fmt.Errorf("invalid hcs topic ID = %v", err)
 		return

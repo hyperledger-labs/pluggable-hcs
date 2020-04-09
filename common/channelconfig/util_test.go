@@ -51,7 +51,6 @@ func TestUtilsBasic(t *testing.T) {
 	basicTest(t, AnchorPeersValue([]*pb.AnchorPeer{{}, {}}))
 	basicTest(t, ChannelCreationPolicyValue(&cb.Policy{}))
 	basicTest(t, ACLValues(map[string]string{"foo": "fooval", "bar": "barval"}))
-	basicTest(t, HcsValue("0.0.100"))
 }
 
 // createCfgBlockWithSupportedCapabilities will create a config block that contains valid capabilities and should be accepted by the peer

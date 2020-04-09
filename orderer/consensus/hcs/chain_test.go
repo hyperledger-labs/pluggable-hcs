@@ -76,15 +76,16 @@ type mocFragmentSupport interface {
 const (
 	getConsensusClientFuncName = "GetConsensusClient"
 	getMirrorClientFuncName    = "GetMirrorClient"
+	goodHcsTopicID             = "0.0.19610"
 )
 
-func newMockOrderer(batchTimeout time.Duration, hcs *ab.Hcs) *mockhcs.OrdererConfig {
+func newMockOrderer(batchTimeout time.Duration, topicID string) *mockhcs.OrdererConfig {
 	mockCapabilities := &mockhcs.OrdererCapabilities{}
 	mockCapabilities.ResubmissionReturns(false)
 	mockOrderer := &mockhcs.OrdererConfig{}
 	mockOrderer.CapabilitiesReturns(mockCapabilities)
 	mockOrderer.BatchTimeoutReturns(batchTimeout)
-	mockOrderer.HcsReturns(hcs)
+	mockOrderer.ConsensusMetadataReturns(protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: topicID}))
 	return mockOrderer
 }
 
@@ -98,8 +99,6 @@ func newMockChannel() *mockhcs.ChannelConfig {
 }
 
 var (
-	goodHcsConfig = ab.Hcs{TopicId: "0.0.19610"}
-
 	extraShortTimeout = 1 * time.Millisecond
 	shortTimeout      = 1 * time.Second
 	longTimeout       = 1 * time.Hour
@@ -125,7 +124,7 @@ func TestChain(t *testing.T) {
 			Blocks:           make(chan *cb.Block),
 			ChannelIDVal:     channelNameForTest(t),
 			HeightVal:        uint64(3),
-			SharedConfigVal:  newMockOrderer(shortTimeout, &goodHcsConfig),
+			SharedConfigVal:  newMockOrderer(shortTimeout, goodHcsTopicID),
 			ChannelConfigVal: newMockChannel(),
 		}
 		return mockConsenter, mockSupport
@@ -191,7 +190,7 @@ func TestChain(t *testing.T) {
 
 		assert.Equal(t, 1, mockHealthChecker.RegisterCheckerCallCount())
 		component, _ := mockHealthChecker.RegisterCheckerArgsForCall(0)
-		assert.Equal(t, mockSupport.SharedConfig().Hcs().TopicId, component)
+		assert.Equal(t, goodHcsTopicID, component)
 		assert.Equal(t, chain.lastCutBlockNumber, mockSupport.Height()-1)
 		assert.Equal(t, chain.lastConsensusTimestampPersisted, oldestConsensusTimestamp)
 		assert.Equal(t, chain.lastOriginalSequenceProcessed, lastOriginalOffsetProcessed)
@@ -1348,7 +1347,7 @@ func TestProcessMessages(t *testing.T) {
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1403,7 +1402,7 @@ func TestProcessMessages(t *testing.T) {
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1447,7 +1446,7 @@ func TestProcessMessages(t *testing.T) {
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 				ChannelConfigVal: newMockChannel(),
 			}
 			defer close(mockSupport.BlockCutterVal.Block)
@@ -1483,7 +1482,7 @@ func TestProcessMessages(t *testing.T) {
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 				ChannelConfigVal: newMockChannel(),
 			}
 			defer close(mockSupport.BlockCutterVal.Block)
@@ -1519,7 +1518,7 @@ func TestProcessMessages(t *testing.T) {
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 				ChannelConfigVal: newMockChannel(),
 			}
 			lastCutBlockNumber := uint64(3)
@@ -1559,7 +1558,7 @@ func TestProcessMessages(t *testing.T) {
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1596,7 +1595,7 @@ func TestProcessMessages(t *testing.T) {
 					BlockCutterVal:   mockblockcutter.NewReceiver(),
 					Blocks:           make(chan *cb.Block),
 					ChannelIDVal:     channelNameForTest(t),
-					SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+					SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
@@ -1659,7 +1658,7 @@ func TestProcessMessages(t *testing.T) {
 					BlockCutterVal:   mockblockcutter.NewReceiver(),
 					Blocks:           make(chan *cb.Block),
 					ChannelIDVal:     channelNameForTest(t),
-					SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+					SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
@@ -1698,7 +1697,7 @@ func TestProcessMessages(t *testing.T) {
 					BlockCutterVal:   mockblockcutter.NewReceiver(),
 					Blocks:           make(chan *cb.Block),
 					ChannelIDVal:     channelNameForTest(t),
-					SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+					SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
@@ -1762,7 +1761,7 @@ func TestProcessMessages(t *testing.T) {
 					ChannelIDVal:        channelNameForTest(t),
 					HeightVal:           lastCutBlockNumber,
 					ClassifyMsgVal:      msgprocessor.ConfigMsg,
-					SharedConfigVal:     newMockOrderer(shortTimeout/2, &goodHcsConfig),
+					SharedConfigVal:     newMockOrderer(shortTimeout/2, goodHcsTopicID),
 					SequenceVal:         uint64(1), // config sequence 1
 					ProcessConfigMsgErr: fmt.Errorf("invalid config message"),
 					ChannelConfigVal:    newMockChannel(),
@@ -1806,7 +1805,7 @@ func TestProcessMessages(t *testing.T) {
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1848,7 +1847,7 @@ func TestProcessMessages(t *testing.T) {
 			BlockCutterVal:   mockblockcutter.NewReceiver(),
 			Blocks:           make(chan *cb.Block),
 			ChannelIDVal:     channelNameForTest(t),
-			SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+			SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 			ChannelConfigVal: newMockChannel(),
 		}
 		hcf := newDefaultMockHcsClientFactory()
@@ -2050,7 +2049,7 @@ func TestResubmission(t *testing.T) {
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicID),
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -2104,7 +2103,7 @@ func TestResubmission(t *testing.T) {
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
 				HeightVal:        lastCutBlockNumber,
-				SharedConfigVal:  newMockOrderer(longTimeout, &goodHcsConfig),
+				SharedConfigVal:  newMockOrderer(longTimeout, goodHcsTopicID),
 				SequenceVal:      uint64(0),
 				ChannelConfigVal: newMockChannel(),
 			}
@@ -2170,7 +2169,7 @@ func TestResubmission(t *testing.T) {
 				Blocks:              make(chan *cb.Block),
 				ChannelIDVal:        channelNameForTest(t),
 				HeightVal:           lastCutBlockNumber,
-				SharedConfigVal:     newMockOrderer(shortTimeout/2, &goodHcsConfig),
+				SharedConfigVal:     newMockOrderer(shortTimeout/2, goodHcsTopicID),
 				SequenceVal:         uint64(1),
 				ProcessNormalMsgErr: fmt.Errorf("invalid normal message"),
 				ChannelConfigVal:    newMockChannel(),
@@ -2218,7 +2217,7 @@ func TestResubmission(t *testing.T) {
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
 				HeightVal:        lastCutBlockNumber,
-				SharedConfigVal:  newMockOrderer(longTimeout, &goodHcsConfig),
+				SharedConfigVal:  newMockOrderer(longTimeout, goodHcsTopicID),
 				SequenceVal:      uint64(1),
 				ConfigSeqVal:     uint64(1),
 				ChannelConfigVal: newMockChannel(),
@@ -2297,7 +2296,7 @@ func TestResubmission(t *testing.T) {
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
 				HeightVal:        lastCutBlockNumber,
-				SharedConfigVal:  newMockOrderer(longTimeout, &goodHcsConfig),
+				SharedConfigVal:  newMockOrderer(longTimeout, goodHcsTopicID),
 				SequenceVal:      uint64(1),
 				ConfigSeqVal:     uint64(1),
 				ChannelConfigVal: newMockChannel(),
@@ -2345,7 +2344,7 @@ func TestResubmission(t *testing.T) {
 				Blocks:              make(chan *cb.Block),
 				ChannelIDVal:        channelNameForTest(t),
 				HeightVal:           lastCutBlockNumber,
-				SharedConfigVal:     newMockOrderer(longTimeout, &goodHcsConfig),
+				SharedConfigVal:     newMockOrderer(longTimeout, goodHcsTopicID),
 				SequenceVal:         uint64(1),
 				ConfigSeqVal:        uint64(1),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
@@ -2421,7 +2420,7 @@ func TestResubmission(t *testing.T) {
 				Blocks:              make(chan *cb.Block),
 				ChannelIDVal:        channelNameForTest(t),
 				HeightVal:           lastCutBlockNumber,
-				SharedConfigVal:     newMockOrderer(longTimeout, &goodHcsConfig),
+				SharedConfigVal:     newMockOrderer(longTimeout, goodHcsTopicID),
 				SequenceVal:         uint64(2),
 				ConfigSeqVal:        uint64(2),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
@@ -2484,7 +2483,7 @@ func TestResubmission(t *testing.T) {
 				Blocks:                    make(chan *cb.Block),
 				ChannelIDVal:              channelNameForTest(t),
 				HeightVal:                 lastCutBlockNumber,
-				SharedConfigVal:           newMockOrderer(longTimeout, &goodHcsConfig),
+				SharedConfigVal:           newMockOrderer(longTimeout, goodHcsTopicID),
 				SequenceVal:               uint64(1),
 				ConfigSeqVal:              uint64(1),
 				ProcessConfigUpdateMsgErr: fmt.Errorf("invalid config message"),
@@ -2533,7 +2532,7 @@ func TestResubmission(t *testing.T) {
 				Blocks:              make(chan *cb.Block),
 				ChannelIDVal:        channelNameForTest(t),
 				HeightVal:           lastCutBlockNumber,
-				SharedConfigVal:     newMockOrderer(longTimeout, &goodHcsConfig),
+				SharedConfigVal:     newMockOrderer(longTimeout, goodHcsTopicID),
 				SequenceVal:         uint64(1),
 				ConfigSeqVal:        uint64(1),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
@@ -2682,17 +2681,17 @@ func TestGetStateFromMetadata(t *testing.T) {
 
 func TestParseConfig(t *testing.T) {
 	mockHcsConfig := mockLocalConfig.Hcs
-	mockTopicIDStr := "0.0.18286"
+	mockHcsConfigMetadata := protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "0.0.18286"})
 
 	t.Run("WithValidConfig", func(t *testing.T) {
-		network, operatorID, privateKey, topicID, err := parseConfig(&mockHcsConfig, mockTopicIDStr)
+		network, operatorID, privateKey, topicID, err := parseConfig(&mockHcsConfig, mockHcsConfigMetadata)
 
 		assert.NoError(t, err, "Expected parseConfig returns no errors")
 		assert.NotNil(t, network, "Expect non-nil chain.network")
 		assert.Equal(t, len(mockHcsConfig.Nodes), len(network), "Expect chain.network has correct number of entries")
 		assert.Equal(t, mockHcsConfig.Operator.Id, operatorID.String(), "Expect correct operator ID string")
 		assert.Equal(t, mockHcsConfig.Operator.PrivateKey.Key, privateKey.String(), "Expect correct operator private key")
-		assert.Equal(t, mockTopicIDStr, topicID.String(), "Expected correct topicID")
+		assert.Equal(t, "0.0.18286", topicID.String(), "Expected correct topicID")
 	})
 
 	t.Run("WithValidPEMKey", func(t *testing.T) {
@@ -2703,20 +2702,20 @@ func TestParseConfig(t *testing.T) {
 			Bytes: rawKey,
 		}
 		localHcsConfig.Operator.PrivateKey.Key = string(pem.EncodeToMemory(block))
-		network, operatorID, privateKey, topicID, err := parseConfig(&localHcsConfig, mockTopicIDStr)
+		network, operatorID, privateKey, topicID, err := parseConfig(&localHcsConfig, mockHcsConfigMetadata)
 
 		assert.NoError(t, err, "Expected parseConfig returns no errors")
 		assert.NotNil(t, network, "Expect non-nil chain.network")
 		assert.Equal(t, len(mockHcsConfig.Nodes), len(network), "Expect chain.network has correct number of entries")
 		assert.Equal(t, mockHcsConfig.Operator.Id, operatorID.String(), "Expect correct operator ID string")
 		assert.Equal(t, mockHcsConfig.Operator.PrivateKey.Key, privateKey.String(), "Expect correct operator private key")
-		assert.Equal(t, mockTopicIDStr, topicID.String(), "Expected correct topicID")
+		assert.Equal(t, "0.0.18286", topicID.String(), "Expected correct topicID")
 	})
 
 	t.Run("WithEmptyNodes", func(t *testing.T) {
 		invalidMockHcsConfig := mockHcsConfig
 		invalidMockHcsConfig.Nodes = make(map[string]string)
-		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockTopicIDStr)
+		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockHcsConfigMetadata)
 		assert.Error(t, err, "Expected parseConfig returns error when Nodes in HcsConfig is empty")
 
 	})
@@ -2727,7 +2726,7 @@ func TestParseConfig(t *testing.T) {
 			"127.0.0.1:50211": "0.0.3",
 			"127.0.0.2:50211": "invalid account id",
 		}
-		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockTopicIDStr)
+		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockHcsConfigMetadata)
 		assert.Error(t, err, "Expected parseConfig returns err when account ID in Nodes in invalid")
 
 	})
@@ -2735,19 +2734,25 @@ func TestParseConfig(t *testing.T) {
 	t.Run("WithInvalidOperatorID", func(t *testing.T) {
 		invalidMockHcsConfig := mockHcsConfig
 		invalidMockHcsConfig.Operator.Id = "invalid operator id"
-		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockTopicIDStr)
+		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockHcsConfigMetadata)
 		assert.Error(t, err, "Expected parseConfig returns error when operator ID is invalid")
 	})
 
 	t.Run("WithInvalidPrivateKey", func(t *testing.T) {
 		invalidMockHcsConfig := mockHcsConfig
 		invalidMockHcsConfig.Operator.PrivateKey.Key = "invalid key string"
-		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockTopicIDStr)
+		_, _, _, _, err := parseConfig(&invalidMockHcsConfig, mockHcsConfigMetadata)
 		assert.Error(t, err, "Expected parseConfig returns error when operator private key is invalid")
 	})
 
 	t.Run("WithInvalidHCSTopicID", func(t *testing.T) {
-		_, _, _, _, err := parseConfig(&mockHcsConfig, "invalid hcs topic ID")
+		invalidHcsConfigMetadata := protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "0.0.abcd"})
+		_, _, _, _, err := parseConfig(&mockHcsConfig, invalidHcsConfigMetadata)
+		assert.Error(t, err, "Expected parseConfig returns error when hcs topic ID is invalid")
+	})
+
+	t.Run("WithCorruptedMetadata", func(t *testing.T) {
+		_, _, _, _, err := parseConfig(&mockHcsConfig, []byte("corrupted metadata"))
 		assert.Error(t, err, "Expected parseConfig returns error when hcs topic ID is invalid")
 	})
 }

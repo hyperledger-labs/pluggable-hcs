@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package genesisconfig
 
 import (
+	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"path/filepath"
 	"time"
 
@@ -165,7 +166,7 @@ type Orderer struct {
 	BatchTimeout  time.Duration            `yaml:"BatchTimeout"`
 	BatchSize     BatchSize                `yaml:"BatchSize"`
 	Kafka         Kafka                    `yaml:"Kafka"`
-	Hcs           Hcs                      `yaml:"Hcs"`
+	Hcs           *ab.HcsConfigMetadata    `yaml:"Hcs"`
 	EtcdRaft      *etcdraft.ConfigMetadata `yaml:"EtcdRaft"`
 	Organizations []*Organization          `yaml:"Organizations"`
 	MaxChannels   uint64                   `yaml:"MaxChannels"`
@@ -183,10 +184,6 @@ type BatchSize struct {
 // Kafka contains configuration for the Kafka-based orderer.
 type Kafka struct {
 	Brokers []string `yaml:"Brokers"`
-}
-
-type Hcs struct {
-	TopicId string `yaml:"TopicId"`
 }
 
 var genesisDefaults = TopLevel{
@@ -387,8 +384,11 @@ loop:
 			ord.Kafka.Brokers = genesisDefaults.Orderer.Kafka.Brokers
 		}
 	case "hcs":
-		if _, err := hedera.TopicIDFromString(ord.Hcs.TopicId); err != nil {
-			logger.Panicf("invalid HCS Topic ID '%s', %v", ord.Hcs.TopicId, err)
+		if ord.Hcs == nil {
+			logger.Panic("HCS configuration missing")
+		}
+		if _, err := hedera.TopicIDFromString(ord.Hcs.TopicID); err != nil {
+			logger.Panicf("invalid HCS Topic ID '%s', %v", ord.Hcs.TopicID, err)
 		}
 	case EtcdRaft:
 		if ord.EtcdRaft == nil {
