@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package genesisconfig
 
 import (
+	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"testing"
 
 	"github.com/hyperledger/fabric-protos-go/orderer/etcdraft"
@@ -128,15 +129,29 @@ func TestConsensusSpecificInit(t *testing.T) {
 	})
 
 	t.Run("hcs", func(t *testing.T) {
-		profile := &Profile{
-			Orderer: &Orderer{
-				OrdererType: "hcs",
-				Hcs:         Hcs{},
+		profile := &Profile{Orderer: &Orderer{OrdererType: "hcs"}}
+		var testData = []struct {
+			name string
+			hcs  *ab.HcsConfigMetadata
+		}{
+			{
+				name: "HCS section not specified in profile",
+				hcs:  nil,
+			},
+			{
+				name: "HCS section with invalid topic ID",
+				hcs:  &ab.HcsConfigMetadata{TopicID: "invalid topic id"},
 			},
 		}
-		assert.Panics(t, func() {
-			profile.completeInitialization(devConfigDir)
-		})
+
+		for _, test := range testData {
+			t.Run(test.name, func(t *testing.T) {
+				profile.Orderer.Hcs = test.hcs
+				assert.Panics(t, func() {
+					profile.completeInitialization(devConfigDir)
+				})
+			})
+		}
 	})
 
 	t.Run("raft", func(t *testing.T) {

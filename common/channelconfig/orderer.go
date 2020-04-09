@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hashgraph/hedera-sdk-go"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/common/capabilities"
@@ -50,11 +49,11 @@ const (
 
 // OrdererProtos is used as the source of the OrdererConfig.
 type OrdererProtos struct {
-	ConsensusType       *ab.ConsensusType
-	BatchSize           *ab.BatchSize
-	BatchTimeout        *ab.BatchTimeout
-	KafkaBrokers        *ab.KafkaBrokers
-	Hcs                 *ab.Hcs
+	ConsensusType *ab.ConsensusType
+	BatchSize     *ab.BatchSize
+	BatchTimeout  *ab.BatchTimeout
+	KafkaBrokers  *ab.KafkaBrokers
+	//Hcs                 *ab.Hcs
 	ChannelRestrictions *ab.ChannelRestrictions
 	Capabilities        *cb.Capabilities
 }
@@ -195,17 +194,11 @@ func (oc *OrdererConfig) Capabilities() OrdererCapabilities {
 	return capabilities.NewOrdererProvider(oc.protos.Capabilities.Capabilities)
 }
 
-// Hcs returns HCS related config
-func (oc *OrdererConfig) Hcs() *ab.Hcs {
-	return oc.protos.Hcs
-}
-
 func (oc *OrdererConfig) Validate() error {
 	for _, validator := range []func() error{
 		oc.validateBatchSize,
 		oc.validateBatchTimeout,
 		oc.validateKafkaBrokers,
-		oc.validateHcs,
 	} {
 		if err := validator(); err != nil {
 			return err
@@ -249,22 +242,6 @@ func (oc *OrdererConfig) validateKafkaBrokers() error {
 			return fmt.Errorf("Invalid broker entry: %s", broker)
 		}
 	}
-	return nil
-}
-
-func (oc *OrdererConfig) validateHcs() error {
-	if oc.protos.ConsensusType == nil {
-		return fmt.Errorf("ConsensusType must be set")
-	}
-	if oc.protos.ConsensusType.Type != "hcs" {
-		return nil
-	}
-
-	_, err := hedera.TopicIDFromString(oc.protos.Hcs.TopicId)
-	if err != nil {
-		return fmt.Errorf("Invalid HCS topic ID '%v', %v", oc.protos.Hcs.TopicId, err)
-	}
-
 	return nil
 }
 

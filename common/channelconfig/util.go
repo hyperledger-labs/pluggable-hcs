@@ -164,16 +164,6 @@ func KafkaBrokersValue(brokers []string) *StandardConfigValue {
 	}
 }
 
-// HcsValue returns the config definition for HCS. It is a value for the Channel/Orderer group.
-func HcsValue(topicId string) *StandardConfigValue {
-	return &StandardConfigValue{
-		key: HcsKey,
-		value: &ab.Hcs{
-			TopicId: topicId,
-		},
-	}
-}
-
 // MSPValue returns the config definition for an MSP.
 // It is a value for the /Channel/Orderer/*, /Channel/Application/*, and /Channel/Consortiums/*/*/* groups.
 func MSPValue(mspDef *mspprotos.MSPConfig) *StandardConfigValue {
@@ -317,4 +307,9 @@ func MarshalEtcdRaftMetadata(md *etcdraft.ConfigMetadata) ([]byte, error) {
 		c.ServerTlsCert = serverCert
 	}
 	return proto.Marshal(copyMd)
+}
+
+// MarshalHcsMetadata serializes HCS config metadata.
+func MarshalHcsMetadata(md *ab.HcsConfigMetadata) ([]byte, error) {
+	return proto.Marshal(md)
 }
