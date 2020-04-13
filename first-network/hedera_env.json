@@ -2,6 +2,6 @@
     "operatorId": "put your testnet account id here",
     "operatorKey": "put your account private key here",
     "nodeId": "0.0.4",
-    "nodeAddress": "35.224.154.10:50211",
-    "mirrorNodeAddress": "35.204.38.119:5600"
+    "nodeAddress": "1.testnet.hedera.com:50211",
+    "mirrorNodeAddress": "hcs.testnet.mirrornode.hedera.com:5600"
 }
