@@ -13,7 +13,7 @@ the repo directory will be referred as FABRIC_REPO_DIR.
    $ mkdir -p $GOPATH/src/github.com/hyperledger && cd $GOPATH/src/github.com/hyperledger
    $ git clone https://github.com/hashgraph/fabric-hcs.git fabric
    $ cd fabric
-   $ git checkout feature/hcs
+   $ git checkout hcs-dev
    ```
 1. A hedera testnet account. Please go to [Hedera Portal](https://portal.hedera.com) to register an account if you don't have one.
 Please note down your account id and private key.
