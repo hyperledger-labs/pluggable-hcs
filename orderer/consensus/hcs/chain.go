@@ -81,6 +81,7 @@ func newChain(
 	support consensus.ConsenterSupport,
 	healthChecker healthChecker,
 	hcf factory.HcsClientFactory,
+	topicID hedera.ConsensusTopicID,
 	lastConsensusTimestampPersisted time.Time,
 	lastOriginalSequenceProcessed uint64,
 	lastResubmittedConfigSequence uint64,
@@ -90,7 +91,7 @@ func newChain(
 	logger.Infof("[channel: %s] starting chain with last persisted consensus timestamp %d and "+
 		"last recorded block [%d]", support.ChannelID(), lastConsensusTimestampPersisted.UnixNano(), lastCutBlockNumber)
 
-	network, operatorID, operatorPrivateKey, topicID, err := parseConfig(consenter.sharedHcsConfig(), support.SharedConfig().ConsensusMetadata())
+	network, operatorID, operatorPrivateKey, err := parseConfig(consenter.sharedHcsConfig())
 	if err != nil {
 		logger.Errorf("[channel: %s] err parsing config = %v", support.ChannelID(), err)
 		return nil, err
@@ -143,7 +144,7 @@ func newChain(
 		network:                            network,
 		operatorID:                         operatorID,
 		operatorPrivateKey:                 operatorPrivateKey,
-		topicID:                            topicID,
+		topicID:                            &topicID,
 		haltChan:                           make(chan struct{}),
 		startChan:                          make(chan struct{}),
 		doneReprocessingMsgInFlight:        doneReprocessingMsgInFlight,
@@ -924,8 +925,7 @@ func startThread(chain *chainImpl) {
 
 func parseConfig(
 	config *localconfig.Hcs,
-	configMetadata []byte,
-) (network map[string]hedera.AccountID, operatorID *hedera.AccountID, privateKey *hedera.Ed25519PrivateKey, topicID *hedera.ConsensusTopicID, err error) {
+) (network map[string]hedera.AccountID, operatorID *hedera.AccountID, privateKey *hedera.Ed25519PrivateKey, err error) {
 	nodes := config.Nodes
 	if len(nodes) == 0 {
 		err = fmt.Errorf("empty nodes list in hcs config")
@@ -957,21 +957,9 @@ func parseConfig(
 		return
 	}
 
-	md := &ab.HcsConfigMetadata{}
-	if err = proto.Unmarshal(configMetadata, md); err != nil {
-		err = fmt.Errorf("cannot unmarshal config metadata = %v", err)
-		return
-	}
-	tmpTopicID, err := hedera.TopicIDFromString(md.TopicID)
-	if err != nil {
-		err = fmt.Errorf("invalid hcs topic ID = %v", err)
-		return
-	}
-
 	network = tmpNetwork
 	operatorID = &tmpOperatorID
 	privateKey = &tmpPrivateKey
-	topicID = &tmpTopicID
 	return
 }
 
