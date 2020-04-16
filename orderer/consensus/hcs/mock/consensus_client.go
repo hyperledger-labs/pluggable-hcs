@@ -18,19 +18,6 @@ type ConsensusClient struct {
 	closeReturnsOnCall map[int]struct {
 		result1 error
 	}
-	GetAccountBalanceStub        func(*hedera.AccountID) (hedera.Hbar, error)
-	getAccountBalanceMutex       sync.RWMutex
-	getAccountBalanceArgsForCall []struct {
-		arg1 *hedera.AccountID
-	}
-	getAccountBalanceReturns struct {
-		result1 hedera.Hbar
-		result2 error
-	}
-	getAccountBalanceReturnsOnCall map[int]struct {
-		result1 hedera.Hbar
-		result2 error
-	}
 	GetConsensusTopicInfoStub        func(*hedera.ConsensusTopicID) (*hedera.ConsensusTopicInfo, error)
 	getConsensusTopicInfoMutex       sync.RWMutex
 	getConsensusTopicInfoArgsForCall []struct {
@@ -56,6 +43,17 @@ type ConsensusClient struct {
 	getTransactionReceiptReturnsOnCall map[int]struct {
 		result1 *hedera.TransactionReceipt
 		result2 error
+	}
+	PingStub        func(*hedera.AccountID) error
+	pingMutex       sync.RWMutex
+	pingArgsForCall []struct {
+		arg1 *hedera.AccountID
+	}
+	pingReturns struct {
+		result1 error
+	}
+	pingReturnsOnCall map[int]struct {
+		result1 error
 	}
 	SubmitConsensusMessageStub        func([]byte, *hedera.ConsensusTopicID) (*hedera.TransactionID, error)
 	submitConsensusMessageMutex       sync.RWMutex
@@ -125,69 +123,6 @@ func (fake *ConsensusClient) CloseReturnsOnCall(i int, result1 error) {
 	fake.closeReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
-}
-
-func (fake *ConsensusClient) GetAccountBalance(arg1 *hedera.AccountID) (hedera.Hbar, error) {
-	fake.getAccountBalanceMutex.Lock()
-	ret, specificReturn := fake.getAccountBalanceReturnsOnCall[len(fake.getAccountBalanceArgsForCall)]
-	fake.getAccountBalanceArgsForCall = append(fake.getAccountBalanceArgsForCall, struct {
-		arg1 *hedera.AccountID
-	}{arg1})
-	fake.recordInvocation("GetAccountBalance", []interface{}{arg1})
-	fake.getAccountBalanceMutex.Unlock()
-	if fake.GetAccountBalanceStub != nil {
-		return fake.GetAccountBalanceStub(arg1)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	fakeReturns := fake.getAccountBalanceReturns
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *ConsensusClient) GetAccountBalanceCallCount() int {
-	fake.getAccountBalanceMutex.RLock()
-	defer fake.getAccountBalanceMutex.RUnlock()
-	return len(fake.getAccountBalanceArgsForCall)
-}
-
-func (fake *ConsensusClient) GetAccountBalanceCalls(stub func(*hedera.AccountID) (hedera.Hbar, error)) {
-	fake.getAccountBalanceMutex.Lock()
-	defer fake.getAccountBalanceMutex.Unlock()
-	fake.GetAccountBalanceStub = stub
-}
-
-func (fake *ConsensusClient) GetAccountBalanceArgsForCall(i int) *hedera.AccountID {
-	fake.getAccountBalanceMutex.RLock()
-	defer fake.getAccountBalanceMutex.RUnlock()
-	argsForCall := fake.getAccountBalanceArgsForCall[i]
-	return argsForCall.arg1
-}
-
-func (fake *ConsensusClient) GetAccountBalanceReturns(result1 hedera.Hbar, result2 error) {
-	fake.getAccountBalanceMutex.Lock()
-	defer fake.getAccountBalanceMutex.Unlock()
-	fake.GetAccountBalanceStub = nil
-	fake.getAccountBalanceReturns = struct {
-		result1 hedera.Hbar
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *ConsensusClient) GetAccountBalanceReturnsOnCall(i int, result1 hedera.Hbar, result2 error) {
-	fake.getAccountBalanceMutex.Lock()
-	defer fake.getAccountBalanceMutex.Unlock()
-	fake.GetAccountBalanceStub = nil
-	if fake.getAccountBalanceReturnsOnCall == nil {
-		fake.getAccountBalanceReturnsOnCall = make(map[int]struct {
-			result1 hedera.Hbar
-			result2 error
-		})
-	}
-	fake.getAccountBalanceReturnsOnCall[i] = struct {
-		result1 hedera.Hbar
-		result2 error
-	}{result1, result2}
 }
 
 func (fake *ConsensusClient) GetConsensusTopicInfo(arg1 *hedera.ConsensusTopicID) (*hedera.ConsensusTopicInfo, error) {
@@ -316,6 +251,66 @@ func (fake *ConsensusClient) GetTransactionReceiptReturnsOnCall(i int, result1 *
 	}{result1, result2}
 }
 
+func (fake *ConsensusClient) Ping(arg1 *hedera.AccountID) error {
+	fake.pingMutex.Lock()
+	ret, specificReturn := fake.pingReturnsOnCall[len(fake.pingArgsForCall)]
+	fake.pingArgsForCall = append(fake.pingArgsForCall, struct {
+		arg1 *hedera.AccountID
+	}{arg1})
+	fake.recordInvocation("Ping", []interface{}{arg1})
+	fake.pingMutex.Unlock()
+	if fake.PingStub != nil {
+		return fake.PingStub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	fakeReturns := fake.pingReturns
+	return fakeReturns.result1
+}
+
+func (fake *ConsensusClient) PingCallCount() int {
+	fake.pingMutex.RLock()
+	defer fake.pingMutex.RUnlock()
+	return len(fake.pingArgsForCall)
+}
+
+func (fake *ConsensusClient) PingCalls(stub func(*hedera.AccountID) error) {
+	fake.pingMutex.Lock()
+	defer fake.pingMutex.Unlock()
+	fake.PingStub = stub
+}
+
+func (fake *ConsensusClient) PingArgsForCall(i int) *hedera.AccountID {
+	fake.pingMutex.RLock()
+	defer fake.pingMutex.RUnlock()
+	argsForCall := fake.pingArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *ConsensusClient) PingReturns(result1 error) {
+	fake.pingMutex.Lock()
+	defer fake.pingMutex.Unlock()
+	fake.PingStub = nil
+	fake.pingReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *ConsensusClient) PingReturnsOnCall(i int, result1 error) {
+	fake.pingMutex.Lock()
+	defer fake.pingMutex.Unlock()
+	fake.PingStub = nil
+	if fake.pingReturnsOnCall == nil {
+		fake.pingReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.pingReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
 func (fake *ConsensusClient) SubmitConsensusMessage(arg1 []byte, arg2 *hedera.ConsensusTopicID) (*hedera.TransactionID, error) {
 	var arg1Copy []byte
 	if arg1 != nil {
@@ -390,12 +385,12 @@ func (fake *ConsensusClient) Invocations() map[string][][]interface{} {
 	defer fake.invocationsMutex.RUnlock()
 	fake.closeMutex.RLock()
 	defer fake.closeMutex.RUnlock()
-	fake.getAccountBalanceMutex.RLock()
-	defer fake.getAccountBalanceMutex.RUnlock()
 	fake.getConsensusTopicInfoMutex.RLock()
 	defer fake.getConsensusTopicInfoMutex.RUnlock()
 	fake.getTransactionReceiptMutex.RLock()
 	defer fake.getTransactionReceiptMutex.RUnlock()
+	fake.pingMutex.RLock()
+	defer fake.pingMutex.RUnlock()
 	fake.submitConsensusMessageMutex.RLock()
 	defer fake.submitConsensusMessageMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}

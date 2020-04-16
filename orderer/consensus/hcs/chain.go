@@ -19,6 +19,7 @@ import (
 	"io/ioutil"
 	"math"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -866,11 +867,14 @@ func (chain *chainImpl) reprocessPending() {
 }
 
 func (chain *chainImpl) HealthCheck(ctx context.Context) error {
-	_, err := chain.topicProducer.GetAccountBalance(chain.operatorID)
-	if err != nil {
-		if _, ok := err.(hedera.ErrHederaNetwork); ok {
-			return err
+	failed := make([]string, 0, len(chain.network))
+	for address, nodeID := range chain.network {
+		if err := chain.topicProducer.Ping(&nodeID); err != nil {
+			failed = append(failed, address)
 		}
+	}
+	if len(failed) != 0 {
+		return fmt.Errorf("cannot connect to: %s", strings.Join(failed, ", "))
 	}
 	return nil
 }

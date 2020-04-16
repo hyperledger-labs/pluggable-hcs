@@ -2607,22 +2607,29 @@ func TestHealthCheck(t *testing.T) {
 		ConsenterSupport:        mockSupport,
 		topicProducer:           producer,
 		singleNodeTopicProducer: producer,
+		network: map[string]hedera.AccountID{
+			"127.0.0.1:52011": {
+				Shard:   0,
+				Realm:   0,
+				Account: 19988,
+			},
+			"127.0.0.2:52011": {
+				Shard:   0,
+				Realm:   0,
+				Account: 19989,
+			},
+		},
 	}
 	mockProducer := producer.(*mockhcs.ConsensusClient)
 
 	t.Run("Proper", func(t *testing.T) {
-		mockProducer.GetAccountBalanceReturns(hedera.NewHbar(1), nil)
+		mockProducer.PingReturns(nil)
 		assert.NoError(t, chain.HealthCheck(context.Background()), "Expected HealthCHeck returns no error")
 	})
 
-	t.Run("WithErrHederaNetwork", func(t *testing.T) {
-		mockProducer.GetAccountBalanceReturns(hedera.Hbar{}, hedera.ErrHederaNetwork{})
+	t.Run("WithError", func(t *testing.T) {
+		mockProducer.PingReturns(fmt.Errorf("test error message"))
 		assert.Error(t, chain.HealthCheck(context.Background()), "Expected HealthCHeck returns error")
-	})
-
-	t.Run("WithOtherError", func(t *testing.T) {
-		mockProducer.GetAccountBalanceReturns(hedera.Hbar{}, fmt.Errorf("test error message"))
-		assert.NoError(t, chain.HealthCheck(context.Background()), "Expected HealthCHeck returns no error")
 	})
 }
 
