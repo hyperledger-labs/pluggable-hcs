@@ -5,8 +5,12 @@ SPDX-License-Identifier: Apache-2.0
 package hcs
 
 import (
+	"fmt"
+	"github.com/golang/protobuf/proto"
+	"github.com/hashgraph/hedera-sdk-go"
 	"github.com/hyperledger/fabric-lib-go/healthz"
 	cb "github.com/hyperledger/fabric-protos-go/common"
+	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/metrics"
 	"github.com/hyperledger/fabric/msp"
@@ -35,6 +39,7 @@ func New(config localconfig.Hcs, publicIdentity msp.Identity, metricsProvider me
 		identityVal:        identity,
 		metrics:            NewMetrics(metricsProvider),
 		healthChecker:      healthChecker,
+		topicChannelMap:    make(map[string]string),
 	}
 }
 
@@ -46,6 +51,7 @@ type consenterImpl struct {
 	identityVal        []byte
 	metrics            *Metrics
 	healthChecker      healthChecker
+	topicChannelMap    map[string]string
 }
 
 // HandleChain creates/returns a reference to a consensus.Chain object for the
@@ -53,13 +59,32 @@ type consenterImpl struct {
 // interface. Called by consensus.newChainSupport(), which is itself called by
 // multichannel.NewManagerImpl() when ranging over the ledgerFactory's
 // existingChains.
-func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, metadata *cb.Metadata) (consensus.Chain, error) {
+func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, metadata *cb.Metadata) (ch consensus.Chain, err error) {
+	var topicID hedera.ConsensusTopicID
+	defer func() {
+		if err == nil {
+			consenter.topicChannelMap[topicID.String()] = support.ChannelID()
+		}
+	}()
+
+	configMetadata := &ab.HcsConfigMetadata{}
+	if proto.Unmarshal(support.SharedConfig().ConsensusMetadata(), configMetadata) != nil {
+		return nil, fmt.Errorf("cannot unmarshal config metadata = %v", err)
+	}
+	if topicID, err = hedera.TopicIDFromString(configMetadata.TopicID); err != nil {
+		return nil, fmt.Errorf("invalid HCS Topic ID = %v", err)
+	}
+	if channelID, ok := consenter.topicChannelMap[configMetadata.TopicID]; ok {
+		return nil, fmt.Errorf("HCS Topic ID %s is already used for channel %s", configMetadata.TopicID, channelID)
+	}
+
 	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentFreeConsensusTimestamp := getStateFromMetadata(metadata.Value, support.ChannelID())
 	return newChain(
 		consenter,
 		support,
 		consenter.healthChecker,
 		defaultHcsClientFactory,
+		topicID,
 		lastConsensusTimestampPersisted,
 		lastOriginalSequenceProcessed,
 		lastResubmittedConfigSequence,

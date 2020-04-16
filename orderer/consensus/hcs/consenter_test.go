@@ -62,16 +62,9 @@ func TestHandleChain(t *testing.T) {
 	publicIdentity := &mock.Identity{}
 	publicIdentity.SerializeReturns(make([]byte, 16), nil)
 	healthChecker := &mock.HealthChecker{}
-	consenter := New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{}, healthChecker)
-
 	mockOrderer := &mock.OrdererConfig{}
 	mockConfigMetadata := protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "0.0.19718"})
 	mockInvalidConfigMetadata := protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "invalid hcs topic id"})
-	mockSupport := &mockmultichannel.ConsenterSupport{
-		SharedConfigVal:  mockOrderer,
-		ChannelIDVal:     channelNameForTest(t),
-		ChannelConfigVal: newMockChannel(),
-	}
 
 	zeroTimestamp := timestamp.Timestamp{Seconds: 0, Nanos: 0}
 	mockBlockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&ab.HcsMetadata{
@@ -123,6 +116,13 @@ func TestHandleChain(t *testing.T) {
 			expectPanic:    false,
 		},
 		{
+			name:           "WithNilConfigMetadata",
+			configMetadata: nil,
+			blockMetadata:  mockBlockMetadata,
+			expectError:    true,
+			expectPanic:    false,
+		},
+		{
 			name:           "WithCorruptedBlockMetadata",
 			configMetadata: mockConfigMetadata,
 			blockMetadata:  &cb.Metadata{Value: []byte("corrupted data")},
@@ -140,7 +140,14 @@ func TestHandleChain(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			consenter := New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{}, healthChecker)
+
 			mockOrderer.ConsensusMetadataReturns(test.configMetadata)
+			mockSupport := &mockmultichannel.ConsenterSupport{
+				SharedConfigVal:  mockOrderer,
+				ChannelIDVal:     channelNameForTest(t),
+				ChannelConfigVal: newMockChannel(),
+			}
 			if test.expectPanic {
 				assert.Panics(t, func() { consenter.HandleChain(mockSupport, test.blockMetadata) })
 			} else {
@@ -155,6 +162,54 @@ func TestHandleChain(t *testing.T) {
 			}
 		})
 	}
+
+	// test when a HCS Topic ID is already map to an existing channel
+	t.Run("WithInUseHcsTopicID", func(t *testing.T) {
+		consenter := New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{}, healthChecker)
+
+		mockOrderer.ConsensusMetadataReturns(mockConfigMetadata)
+		mockSupport := &mockmultichannel.ConsenterSupport{
+			SharedConfigVal:  mockOrderer,
+			ChannelIDVal:     channelNameForTest(t),
+			ChannelConfigVal: newMockChannel(),
+		}
+		ch, err := consenter.HandleChain(mockSupport, mockBlockMetadata)
+		assert.NoError(t, err, "Expected HandleChain returns no error")
+		assert.NotNil(t, ch, "Expected HandleChain returns a non-nil chain")
+
+		mockSupport = &mockmultichannel.ConsenterSupport{
+			SharedConfigVal:  mockOrderer,
+			ChannelIDVal:     channelNameForTest(t) + ".1",
+			ChannelConfigVal: newMockChannel(),
+		}
+		ch, err = consenter.HandleChain(mockSupport, mockBlockMetadata)
+		assert.Error(t, err, "Expected HandleChain returns error")
+		assert.Nil(t, ch, "Expected HandleChain returns a nil chain")
+	})
+
+	t.Run("ProperWithDifferentHcsTopicID", func(t *testing.T) {
+		consenter := New(mockLocalConfig.Hcs, publicIdentity, &disabled.Provider{}, healthChecker)
+
+		mockOrderer.ConsensusMetadataReturns(mockConfigMetadata)
+		mockSupport := &mockmultichannel.ConsenterSupport{
+			SharedConfigVal:  mockOrderer,
+			ChannelIDVal:     channelNameForTest(t),
+			ChannelConfigVal: newMockChannel(),
+		}
+		ch, err := consenter.HandleChain(mockSupport, mockBlockMetadata)
+		assert.NoError(t, err, "Expected HandleChain returns no error")
+		assert.NotNil(t, ch, "Expected HandleChain returns a non-nil chain")
+
+		mockOrderer.ConsensusMetadataReturns(protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "0.0.5530"}))
+		mockSupport = &mockmultichannel.ConsenterSupport{
+			SharedConfigVal:  mockOrderer,
+			ChannelIDVal:     channelNameForTest(t) + ".1",
+			ChannelConfigVal: newMockChannel(),
+		}
+		ch, err = consenter.HandleChain(mockSupport, mockBlockMetadata)
+		assert.NoError(t, err, "Expected HandleChain returns no error")
+		assert.NotNil(t, ch, "Expected HandleChain returns a non-nil chain")
+	})
 }
 
 var mockLocalConfig *localconfig.TopLevel
