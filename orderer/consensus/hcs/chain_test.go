@@ -1141,14 +1141,14 @@ func TestChain(t *testing.T) {
 				handle := chain.topicSubscriptionHandle.(*mockMirrorSubscriptionHandle)
 				handle.errChan <- status.Error(code, "Topic does not exist")
 
+				// let the subscription retry succeed
+				subscribeTopicSyncChan <- struct{}{}
+
 				select {
 				case <-chain.Errored():
 				case <-time.After(shortTimeout):
 					t.Fatal("Expected errChan is closed")
 				}
-
-				// let the subscription retry succeed
-				subscribeTopicSyncChan <- struct{}{}
 
 				doneWait := make(chan struct{})
 				tryWaitReady := func() {
