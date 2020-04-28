@@ -195,7 +195,6 @@ type chainImpl struct {
 	singleNodeTopicProducer factory.ConsensusClient
 	topicConsumer           factory.MirrorClient
 	topicSubscriptionHandle factory.MirrorSubscriptionHandle
-	topicErrorChan          chan struct{}
 	subscriptionRetryTimer  <-chan time.Time
 
 	fragmenter     fragmentSupport
@@ -222,26 +221,18 @@ func (chain *chainImpl) Configure(config *common.Envelope, configSeq uint64) err
 func (chain *chainImpl) WaitReady() error {
 	select {
 	case <-chain.startChan:
-		waitChan := make(chan struct{})
-		cancel := make(chan struct{})
-		defer close(cancel)
-		go func() {
-			chans := []<-chan struct{}{chain.doneReprocessing(), chain.topicErrorChan}
-		Loop:
-			for _, ch := range chans {
-				select {
-				case <-ch:
-				case <-cancel:
-					break Loop
-				}
-			}
-			close(waitChan)
-		}()
 		select {
-		case <-chain.haltChan:
-			return fmt.Errorf("consenter for this channel has been halted")
-		case <-waitChan:
-			return nil
+		case <-chain.haltChan: // The chain has been halted, stop here
+			return fmt.Errorf("[channel: %s] consenter for this channel has been halted", chain.ChannelID())
+		case <-chain.doneReprocessing(): // Block waiting for all re-submitted messages to be reprocessed
+			select {
+			// re-check haltChan since select is random. if the chain is halted, although it's done reprocessing,
+			// error should be returned
+			case <-chain.haltChan:
+				return fmt.Errorf("[channel: %s] consenter for this channel has been halted", chain.ChannelID())
+			default:
+				return nil
+			}
 		}
 	default:
 		return fmt.Errorf("consenter has not completed bootstraping; try again later")
@@ -307,12 +298,6 @@ func (chain *chainImpl) processMessages() error {
 		default:
 			close(chain.errorChan)
 		}
-
-		select {
-		case <-chain.topicErrorChan:
-		default:
-			close(chain.topicErrorChan)
-		}
 	}()
 
 	recollectPendingFragments := !chain.lastConsensusTimestampPersisted.Equal(chain.lastFragmentFreeConsensusTimestamp)
@@ -341,12 +326,6 @@ func (chain *chainImpl) processMessages() error {
 			st, ok := status.FromError(hcsErr)
 			if ok && isSubscriptionErrorRecoverable(st.Code()) && subscriptionRetryCount < subscriptionRetryMax {
 				// the new topic may have not propagated to the mirror node yet, retry subscription
-				select {
-				case <-chain.topicErrorChan:
-					// block sending when retrying subscription
-					chain.topicErrorChan = make(chan struct{})
-				default: // do nothing if chan is already created
-				}
 				delay := time.Duration(float64(subscriptionRetryBaseDelay) * math.Pow(2, float64(subscriptionRetryCount)))
 				logger.Infof("[channel: %s] the topic may be not ready yet, retry in %dms", chain.ChannelID(), delay.Milliseconds())
 				chain.subscriptionRetryTimer = time.After(delay)
@@ -374,12 +353,6 @@ func (chain *chainImpl) processMessages() error {
 				chain.errorChan = make(chan struct{}) // make a new one, make the chain available again
 				logger.Infof("[channel: %s] marked chain as available again", chain.ChannelID())
 			default:
-			}
-			select {
-			case <-chain.topicErrorChan:
-			default:
-				close(chain.topicErrorChan) // unblock WaitReady
-				logger.Infof("[channel: %s] close topicErrorChan to unblock ingress", chain.ChannelID())
 			}
 
 			plain, err := chain.decrypt(resp.Message)
@@ -907,8 +880,6 @@ func startThread(chain *chainImpl) {
 	if err != nil {
 		logger.Panicf("[channel: %s] failed to start topic subscription = %v", chain.ChannelID(), err)
 	}
-	chain.topicErrorChan = make(chan struct{})
-	close(chain.topicErrorChan)
 
 	chain.doneProcessingMessages = make(chan struct{})
 	chain.errorChan = make(chan struct{})

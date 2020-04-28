@@ -1118,6 +1118,7 @@ func TestChain(t *testing.T) {
 				hcf := newDefaultMockHcsClientFactory()
 				chain, _ := newChain(mockConsenter, mockSupport, &mockhcs.HealthChecker{}, hcf, goodHcsTopicID, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp)
 				close(mockSupport.BlockCutterVal.Block)
+				mockSupport.BlockCutterVal.CutNext = true
 
 				chain.Start()
 				select {
@@ -1127,6 +1128,7 @@ func TestChain(t *testing.T) {
 					t.Fatal("startChan should have been closed by now")
 				}
 				close(getRespSyncChan(chain.topicSubscriptionHandle))
+
 				mockMirrorClient := chain.topicConsumer.(*mockhcs.MirrorClient)
 				oldSubscribeTopicStub := mockMirrorClient.SubscribeTopicStub
 				subscribeTopicSyncChan := make(chan struct{})
@@ -1138,6 +1140,7 @@ func TestChain(t *testing.T) {
 				})
 
 				// send an error to the subscription handle
+				errorChan := chain.Errored()
 				handle := chain.topicSubscriptionHandle.(*mockMirrorSubscriptionHandle)
 				handle.errChan <- status.Error(code, "Topic does not exist")
 
@@ -1145,21 +1148,9 @@ func TestChain(t *testing.T) {
 				subscribeTopicSyncChan <- struct{}{}
 
 				select {
-				case <-chain.Errored():
+				case <-errorChan:
 				case <-time.After(shortTimeout):
 					t.Fatal("Expected errChan is closed")
-				}
-
-				doneWait := make(chan struct{})
-				tryWaitReady := func() {
-					chain.WaitReady()
-					doneWait <- struct{}{}
-				}
-				go tryWaitReady()
-				select {
-				case <-doneWait:
-					t.Fatal("Expected WaitReady to block")
-				case <-time.After(shortTimeout):
 				}
 
 				// send a message to unblock WaitReady
@@ -1167,11 +1158,8 @@ func TestChain(t *testing.T) {
 				fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(hcsMessage), chain.fragmentKey, 0)
 				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID)
 
-				select {
-				case <-doneWait:
-				case <-time.After(shortTimeout):
-					t.Fatal("Expected WaitReady to return")
-				}
+				// sync
+				<-mockSupport.Blocks
 
 				select {
 				case <-chain.Errored():
@@ -1230,17 +1218,6 @@ func TestChain(t *testing.T) {
 				case <-chain.Errored():
 				case <-time.After(shortTimeout):
 					t.Fatalf("Expected errChan closed")
-				}
-
-				doneWait := make(chan struct{})
-				go func() {
-					chain.WaitReady()
-					doneWait <- struct{}{}
-				}()
-				select {
-				case <-doneWait:
-				case <-time.After(shortTimeout):
-					t.Fatal("Expected WaitReady to not block")
 				}
 
 				select {
@@ -1322,8 +1299,6 @@ func TestProcessMessages(t *testing.T) {
 		}
 		topicSubscriptionHandle, _ := topicConsumer.SubscribeTopic(topicID, &unixEpoch, nil)
 		assert.NotNil(t, topicSubscriptionHandle, "Expected topic subscription handle created successfully")
-		topicErrorChan := make(chan struct{})
-		close(topicErrorChan)
 
 		chain := &chainImpl{
 			consenter:        mockConsenter,
@@ -1336,7 +1311,6 @@ func TestProcessMessages(t *testing.T) {
 			singleNodeTopicProducer: topicProducer,
 			topicConsumer:           topicConsumer,
 			topicSubscriptionHandle: topicSubscriptionHandle,
-			topicErrorChan:          topicErrorChan,
 
 			errorChan:              errorChan,
 			haltChan:               haltChan,
@@ -2026,8 +2000,6 @@ func TestResubmission(t *testing.T) {
 		}
 		topicSubscriptionHandle, _ := topicConsumer.SubscribeTopic(topicID, &unixEpoch, nil)
 		assert.NotNil(t, topicSubscriptionHandle, "Expected topic subscription handle created successfully")
-		topicErrorChan := make(chan struct{})
-		close(topicErrorChan)
 
 		return &chainImpl{
 			consenter:        mockConsenter,
@@ -2041,7 +2013,6 @@ func TestResubmission(t *testing.T) {
 			singleNodeTopicProducer: topicProducer,
 			topicConsumer:           topicConsumer,
 			topicSubscriptionHandle: topicSubscriptionHandle,
-			topicErrorChan:          topicErrorChan,
 
 			startChan:                   startChan,
 			errorChan:                   errorChan,
