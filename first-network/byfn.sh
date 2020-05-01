@@ -155,22 +155,24 @@ function generateAESKey() {
 }
 
 function generateChannelsForHCS() {
-  set -e
   installHCSCli
-  TOPICS=($(hcscli topic create 2 | grep -o '[0-9]\+\.[0-9\+\.[0-9]\+'))
+  OUTPUT=$(hcscli topic create 2) || { echo "failed to create topics using hcscli!!!" && exit 1; }
+  TOPICS=($(echo $OUTPUT | grep -o '[0-9]\+\.[0-9\+\.[0-9]\+'))
   echo "generated HCS topics: ${TOPICS[@]}"
   echo "${TOPICS[0]} will be used for the system channel, and ${TOPICS[1]} will be used for the application channel"
   sed -e 's/SYS_HCS_TOPIC_ID/'${TOPICS[0]}'/' -e 's/APP_HCS_TOPIC_ID/'${TOPICS[1]}'/' ./configtx-template.yaml > ./configtx.yaml
-  set +e
 }
 
 function installHCSCli() {
-    set -e
-    if [ ! -e ../bin/hcscli ]; then
-        echo "installing hcscli ..."
-        GO111MODULE=on GOBIN=$PWD/../build/bin go get github.com/hashgraph/hcscli@v0.1.0
+    HCSCLI_VERSION="v0.2.0"
+    LOCAL_VERSION=
+    if [ -x ../build/bin/hcscli ]; then
+      LOCAL_VERSION=$(../build/bin/hcscli version 2>&1 | grep -o 'v[0-9]\+\.[0-9]\+\.[0-9]\+')
     fi
-    set +e
+    if [ "$LOCAL_VERSION" != "$HCSCLI_VERSION" ]; then
+        echo "installing hcscli ..."
+        GO111MODULE=on GOBIN=$PWD/../build/bin go get github.com/hashgraph/hcscli@v0.2.0
+    fi
 }
 
 # Generate the needed certificates, the genesis block and start the network.

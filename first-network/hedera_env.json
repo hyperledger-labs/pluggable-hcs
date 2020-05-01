@@ -1,7 +1,13 @@
 {
     "operatorId": "put your testnet account id here",
     "operatorKey": "put your account private key here",
-    "nodeId": "0.0.4",
-    "nodeAddress": "1.testnet.hedera.com:50211",
+    "nodeId": "",
+    "nodeAddress": "",
+    "network": {
+        "0.testnet.hedera.com:50211": "0.0.3",
+        "1.testnet.hedera.com:50211": "0.0.4",
+        "2.testnet.hedera.com:50211": "0.0.5",
+        "3.testnet.hedera.com:50211": "0.0.6"
+    },
     "mirrorNodeAddress": "hcs.testnet.mirrornode.hedera.com:5600"
 }
