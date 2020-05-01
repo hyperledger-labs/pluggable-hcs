@@ -1056,8 +1056,7 @@ func TestChain(t *testing.T) {
 				done <- struct{}{}
 			}()
 			close(getRespSyncChan(chain.topicSubscriptionHandle))
-			handle := chain.topicSubscriptionHandle.(*mockMirrorSubscriptionHandle)
-			handle.errChan <- status.Error(codes.Aborted, "test error message")
+			sendError(chain.topicSubscriptionHandle, status.Error(codes.Aborted, "test error message"))
 
 			select {
 			case <-done:
@@ -1094,8 +1093,7 @@ func TestChain(t *testing.T) {
 				done <- struct{}{}
 			}()
 			close(getRespSyncChan(chain.topicSubscriptionHandle))
-			handle := chain.topicSubscriptionHandle.(*mockMirrorSubscriptionHandle)
-			handle.errChan <- fmt.Errorf("test error message")
+			sendError(chain.topicSubscriptionHandle, fmt.Errorf("test error message"))
 
 			select {
 			case <-done:
@@ -1141,8 +1139,7 @@ func TestChain(t *testing.T) {
 
 				// send an error to the subscription handle
 				errorChan := chain.Errored()
-				handle := chain.topicSubscriptionHandle.(*mockMirrorSubscriptionHandle)
-				handle.errChan <- status.Error(code, "Topic does not exist")
+				sendError(chain.topicSubscriptionHandle, status.Error(code, "Topic does not exist"))
 
 				// let the subscription retry succeed
 				subscribeTopicSyncChan <- struct{}{}
@@ -1196,23 +1193,19 @@ func TestChain(t *testing.T) {
 				mockMirrorClient := chain.topicConsumer.(*mockhcs.MirrorClient)
 				oldSubscribeTopicStub := mockMirrorClient.SubscribeTopicStub
 				subscribeTopicSyncChan := make(chan struct{})
-				var handle *mockMirrorSubscriptionHandle
 				mockMirrorClient.SubscribeTopicCalls(func(topicID *hedera.ConsensusTopicID, start *time.Time, end *time.Time) (factory.MirrorSubscriptionHandle, error) {
 					defer func() {
 						<-subscribeTopicSyncChan
 					}()
-					h, err := oldSubscribeTopicStub(topicID, start, end)
-					handle = h.(*mockMirrorSubscriptionHandle)
-					return h, err
+					return oldSubscribeTopicStub(topicID, start, end)
 				})
 
-				handle = chain.topicSubscriptionHandle.(*mockMirrorSubscriptionHandle)
 				for i := 0; i < subscriptionRetryMax; i++ {
-					handle.errChan <- status.Error(code, "Topic does not exist")
+					sendError(chain.topicSubscriptionHandle, status.Error(code, "Topic does not exist"))
 					subscribeTopicSyncChan <- struct{}{}
 				}
 				// this last error should cause retry count exceed the max, thus errChan will be closed
-				handle.errChan <- status.Error(code, "Topic does not exist")
+				sendError(chain.topicSubscriptionHandle, status.Error(code, "Topic does not exist"))
 
 				select {
 				case <-chain.Errored():
@@ -1605,18 +1598,18 @@ func TestProcessMessages(t *testing.T) {
 				msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
 				fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 				assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
+				block1ProtoTimestamp := timestampProtoOrPanic(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
 				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID)
 				mockSupport.BlockCutterVal.Block <- struct{}{}
-				block1ProtoTimestamp := timestampProtoOrPanic(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
 				respSyncChan <- struct{}{}
 
 				mockSupport.BlockCutterVal.IsolatedTx = true
 
 				// second message
 				fragments[0].FragmentId++
+				block2ProtoTimestamp := timestampProtoOrPanic(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
 				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID)
 				mockSupport.BlockCutterVal.Block <- struct{}{}
-				block2ProtoTimestamp := timestampProtoOrPanic(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
 				respSyncChan <- struct{}{}
 
 				var block1, block2 *cb.Block
@@ -3103,6 +3096,7 @@ type mockMirrorSubscriptionHandle struct {
 	transport              <-chan []byte
 	respChan               chan *hedera.MirrorConsensusTopicResponse
 	errChan                chan error
+	errChanIn              chan error
 	done                   chan struct{}
 	l                      sync.Mutex
 	nextSequenceNumber     uint64
@@ -3112,6 +3106,7 @@ type mockMirrorSubscriptionHandle struct {
 
 func (h *mockMirrorSubscriptionHandle) start() {
 	go func() {
+	LOOP:
 		for {
 			select {
 			case msg, ok := <-h.transport:
@@ -3128,21 +3123,28 @@ func (h *mockMirrorSubscriptionHandle) start() {
 					SequenceNumber:     h.nextSequenceNumber,
 				}
 				h.l.Unlock()
-
 				h.respChan <- &resp
-				<-h.respSyncChan
 
 				h.l.Lock()
 				h.nextConsensusTimestamp = h.nextConsensusTimestamp.Add(time.Nanosecond)
 				h.nextSequenceNumber++
 				h.l.Unlock()
+				<-h.respSyncChan
 			case <-h.done:
 				//h.errChan <- fmt.Errorf("subscription is cancelled by caller")
 				close(h.respChan)
 				close(h.errChan)
+				close(h.errChanIn)
 				return
+			case err := <-h.errChanIn:
+				h.errChan <- err
+				close(h.errChanIn)
+				break LOOP
 			}
 		}
+		<-h.done
+		close(h.respChan)
+		close(h.errChan)
 	}()
 }
 
@@ -3170,6 +3172,10 @@ func (h *mockMirrorSubscriptionHandle) getNextConsensusTimestamp() time.Time {
 	return h.nextConsensusTimestamp
 }
 
+func (h *mockMirrorSubscriptionHandle) sendError(err error) {
+	h.errChanIn <- err
+}
+
 func (h *mockMirrorSubscriptionHandle) Unsubscribe() {
 	select {
 	case <-h.done:
@@ -3191,6 +3197,7 @@ func newMockMirrorSubscriptionHandle(transport <-chan []byte) *mockMirrorSubscri
 		transport:              transport,
 		respChan:               make(chan *hedera.MirrorConsensusTopicResponse),
 		errChan:                make(chan error),
+		errChanIn:              make(chan error),
 		done:                   make(chan struct{}),
 		respSyncChan:           make(chan struct{}),
 		nextConsensusTimestamp: time.Now(),
@@ -3221,6 +3228,11 @@ func setNextConsensusTimestamp(handle factory.MirrorSubscriptionHandle, ts time.
 func getRespSyncChan(handle factory.MirrorSubscriptionHandle) chan struct{} {
 	mockHandle := handle.(*mockMirrorSubscriptionHandle)
 	return mockHandle.respSyncChan
+}
+
+func sendError(handle factory.MirrorSubscriptionHandle, err error) {
+	mockHandle := handle.(*mockMirrorSubscriptionHandle)
+	mockHandle.sendError(err)
 }
 
 type badReader struct{}
