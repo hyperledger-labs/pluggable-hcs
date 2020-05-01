@@ -18,6 +18,7 @@ import (
 	"github.com/hyperledger/fabric-protos-go/orderer/etcdraft"
 	pb "github.com/hyperledger/fabric-protos-go/peer"
 	"github.com/hyperledger/fabric/bccsp"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
 )
@@ -310,6 +311,6 @@ func MarshalEtcdRaftMetadata(md *etcdraft.ConfigMetadata) ([]byte, error) {
 }
 
 // MarshalHcsMetadata serializes HCS config metadata.
-func MarshalHcsMetadata(md *ab.HcsConfigMetadata) ([]byte, error) {
+func MarshalHcsMetadata(md *hb.HcsConfigMetadata) ([]byte, error) {
 	return proto.Marshal(md)
 }

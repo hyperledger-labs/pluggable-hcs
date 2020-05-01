@@ -21,6 +21,7 @@ import (
 	"github.com/hyperledger/fabric/internal/configtxgen/encoder/fakes"
 	"github.com/hyperledger/fabric/internal/configtxgen/genesisconfig"
 	"github.com/hyperledger/fabric/internal/pkg/identity"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 	"github.com/hyperledger/fabric/protoutil"
 )
 
@@ -370,7 +371,7 @@ var _ = Describe("Encoder", func() {
 		Context("when the consensus type is hcs", func() {
 			BeforeEach(func() {
 				conf.OrdererType = "hcs"
-				conf.Hcs = &ab.HcsConfigMetadata{TopicID: "0.0.1230"}
+				conf.Hcs = &hb.HcsConfigMetadata{TopicID: "0.0.1230"}
 			})
 
 			It("adds the hcs topic key", func() {
@@ -381,7 +382,7 @@ var _ = Describe("Encoder", func() {
 				err = proto.Unmarshal(cg.Values["ConsensusType"].Value, consensusType)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(consensusType.Type).To(Equal("hcs"))
-				metadata := &ab.HcsConfigMetadata{}
+				metadata := &hb.HcsConfigMetadata{}
 				err = proto.Unmarshal(consensusType.Metadata, metadata)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(metadata.TopicID).To(Equal("0.0.1230"))
@@ -389,7 +390,7 @@ var _ = Describe("Encoder", func() {
 
 			Context("when the hcs topic id is bad", func() {
 				BeforeEach(func() {
-					conf.Hcs = &ab.HcsConfigMetadata{TopicID: "a.b.dead"}
+					conf.Hcs = &hb.HcsConfigMetadata{TopicID: "a.b.dead"}
 				})
 
 				It("wraps and returns the error", func() {

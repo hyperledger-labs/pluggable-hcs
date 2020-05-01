@@ -7,11 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package genesisconfig
 
 import (
-	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"testing"
 
 	"github.com/hyperledger/fabric-protos-go/orderer/etcdraft"
 	"github.com/hyperledger/fabric/core/config/configtest"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -132,7 +132,7 @@ func TestConsensusSpecificInit(t *testing.T) {
 		profile := &Profile{Orderer: &Orderer{OrdererType: "hcs"}}
 		var testData = []struct {
 			name string
-			hcs  *ab.HcsConfigMetadata
+			hcs  *hb.HcsConfigMetadata
 		}{
 			{
 				name: "HCS section not specified in profile",
@@ -140,7 +140,7 @@ func TestConsensusSpecificInit(t *testing.T) {
 			},
 			{
 				name: "HCS section with invalid topic ID",
-				hcs:  &ab.HcsConfigMetadata{TopicID: "invalid topic id"},
+				hcs:  &hb.HcsConfigMetadata{TopicID: "invalid topic id"},
 			},
 		}
 

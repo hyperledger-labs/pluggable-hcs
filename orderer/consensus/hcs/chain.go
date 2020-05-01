@@ -31,8 +31,8 @@ import (
 	"github.com/hashgraph/hedera-sdk-go"
 	"github.com/hyperledger/fabric-protos-go/common"
 	cb "github.com/hyperledger/fabric-protos-go/common"
-	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/orderer/consensus"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
 )
@@ -51,7 +51,7 @@ const (
 
 func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, uint64, uint64, time.Time) {
 	if metadataValue != nil {
-		hcsMetadata := &ab.HcsMetadata{}
+		hcsMetadata := &hb.HcsMetadata{}
 		if err := proto.Unmarshal(metadataValue, hcsMetadata); err != nil {
 			logger.Panicf("[channel: %s] Ledger may be corrupted: "+
 				"cannot unmarshal orderer metadata in most recent block", channelID)
@@ -309,7 +309,7 @@ func (chain *chainImpl) processMessages() error {
 		logger.Debugf("[channel: %s] going into the normal message processing loop", chain.ChannelID())
 	}
 	subscriptionRetryCount := 0
-	msg := new(ab.HcsMessage)
+	msg := new(hb.HcsMessage)
 	for {
 		select {
 		case <-chain.haltChan:
@@ -360,7 +360,7 @@ func (chain *chainImpl) processMessages() error {
 				logger.Errorf("[channel: %s] failed to decrypt message payload in MirrorConsensusTopicResponse, %v", chain.ChannelID(), err)
 				continue
 			}
-			fragment := new(ab.HcsMessageFragment)
+			fragment := new(hb.HcsMessageFragment)
 			if err := proto.Unmarshal(plain, fragment); err != nil {
 				logger.Panicf("[channel: %s] failed to unmarshal ordered message into HCS fragment = %v", chain.ChannelID(), err)
 			}
@@ -381,16 +381,16 @@ func (chain *chainImpl) processMessages() error {
 			if !recollectPendingFragments {
 				// use ConseusTimestamp and SequenceNumber of the last received fragment for that of a message
 				switch msg.Type.(type) {
-				case *ab.HcsMessage_Regular:
+				case *hb.HcsMessage_Regular:
 					if err := chain.processRegularMessage(msg.GetRegular(), resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
 						logger.Warningf("[channel: %s] error when processing incoming message of type REGULAR = %s", chain.ChannelID(), err)
 					}
-				case *ab.HcsMessage_TimeToCut:
+				case *hb.HcsMessage_TimeToCut:
 					if err := chain.processTimeToCutMessage(msg.GetTimeToCut(), resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
 						logger.Criticalf("[channel: %s] consenter for channel exiting, %s", chain.ChannelID(), err)
 						return err
 					}
-				case *ab.HcsMessage_OrdererStarted:
+				case *hb.HcsMessage_OrdererStarted:
 					chain.processOrdererStartedMessage(msg.GetOrdererStarted())
 				}
 			} else {
@@ -512,7 +512,7 @@ func (chain *chainImpl) commitConfigMessage(message *cb.Envelope, curConsensusTi
 	chain.timer = nil
 }
 
-func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts time.Time, receivedSequence uint64) error {
+func (chain *chainImpl) processRegularMessage(msg *hb.HcsMessageRegular, ts time.Time, receivedSequence uint64) error {
 	curConfigSeq := chain.Sequence()
 	env := &cb.Envelope{}
 	if err := proto.Unmarshal(msg.Payload, env); err != nil {
@@ -526,7 +526,7 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts time
 		chain.ChannelID(), msg.Class.String(), msg.ConfigSeq, curConfigSeq)
 
 	switch msg.Class {
-	case ab.HcsMessageRegular_NORMAL:
+	case hb.HcsMessageRegular_NORMAL:
 		// This is a message that is re-validated and re-ordered
 		if msg.OriginalSeq != 0 {
 			logger.Debugf("[channel: %s] Received re-submitted normal message with original sequence %d", chain.ChannelID(), msg.OriginalSeq)
@@ -578,7 +578,7 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts time
 
 		chain.commitNormalMessage(env, ts, newSeq)
 
-	case ab.HcsMessageRegular_CONFIG:
+	case hb.HcsMessageRegular_CONFIG:
 		// This is a message that is re-validated and re-ordered
 		if msg.OriginalSeq != 0 {
 			logger.Debugf("[channel: %s] Received re-submitted config message with original offset %d", chain.ChannelID(), msg.OriginalSeq)
@@ -655,7 +655,7 @@ func (chain *chainImpl) processRegularMessage(msg *ab.HcsMessageRegular, ts time
 	return nil
 }
 
-func (chain *chainImpl) processTimeToCutMessage(msg *ab.HcsMessageTimeToCut, ts time.Time, sequence uint64) error {
+func (chain *chainImpl) processTimeToCutMessage(msg *hb.HcsMessageTimeToCut, ts time.Time, sequence uint64) error {
 	blockNumber := msg.GetBlockNumber()
 	if blockNumber == chain.lastCutBlockNumber+1 {
 		chain.timer = nil
@@ -678,7 +678,7 @@ func (chain *chainImpl) processTimeToCutMessage(msg *ab.HcsMessageTimeToCut, ts 
 	return nil
 }
 
-func (chain *chainImpl) processOrdererStartedMessage(msg *ab.HcsMessageOrdererStarted) {
+func (chain *chainImpl) processOrdererStartedMessage(msg *hb.HcsMessageOrdererStarted) {
 	logger.Debugf("[channel: %s] orderer %s just started", chain.ChannelID(), hex.EncodeToString(msg.OrdererIdentity))
 	if count, err := chain.fragmenter.ExpireByFragmentKey(msg.OrdererIdentity); err == nil {
 		logger.Debugf("[channel: %s] %d pending messages from orderer %s dropped", chain.ChannelID(), count, hex.EncodeToString(msg.OrdererIdentity))
@@ -772,7 +772,7 @@ func (chain *chainImpl) configure(config *cb.Envelope, configSeq uint64, origina
 	return nil
 }
 
-func (chain *chainImpl) enqueue(message *ab.HcsMessage, isResubmission bool) bool {
+func (chain *chainImpl) enqueue(message *hb.HcsMessage, isResubmission bool) bool {
 	logger.Debugf("[channel: %s] Enqueueing envelope...", chain.ChannelID())
 	select {
 	case <-chain.startChan: // The Start phase has completed
@@ -789,7 +789,7 @@ func (chain *chainImpl) enqueue(message *ab.HcsMessage, isResubmission bool) boo
 	}
 }
 
-func (chain *chainImpl) enqueueChecked(message *ab.HcsMessage, isResubmission bool) bool {
+func (chain *chainImpl) enqueueChecked(message *hb.HcsMessage, isResubmission bool) bool {
 	payload, err := protoutil.Marshal(message)
 	if err != nil {
 		logger.Errorf("[channel: %s] unable to marshal HCS message because = %s", chain.ChannelID(), err)
@@ -985,46 +985,46 @@ func getRandomNode(network map[string]hedera.AccountID) (string, hedera.AccountI
 	return "", hedera.AccountID{}
 }
 
-func newConfigMessage(config []byte, configSeq uint64, originalSeq uint64) *ab.HcsMessage {
-	return &ab.HcsMessage{
-		Type: &ab.HcsMessage_Regular{
-			Regular: &ab.HcsMessageRegular{
+func newConfigMessage(config []byte, configSeq uint64, originalSeq uint64) *hb.HcsMessage {
+	return &hb.HcsMessage{
+		Type: &hb.HcsMessage_Regular{
+			Regular: &hb.HcsMessageRegular{
 				Payload:     config,
 				ConfigSeq:   configSeq,
-				Class:       ab.HcsMessageRegular_CONFIG,
+				Class:       hb.HcsMessageRegular_CONFIG,
 				OriginalSeq: originalSeq,
 			},
 		},
 	}
 }
 
-func newNormalMessage(payload []byte, configSeq uint64, originalSeq uint64) *ab.HcsMessage {
-	return &ab.HcsMessage{
-		Type: &ab.HcsMessage_Regular{
-			Regular: &ab.HcsMessageRegular{
+func newNormalMessage(payload []byte, configSeq uint64, originalSeq uint64) *hb.HcsMessage {
+	return &hb.HcsMessage{
+		Type: &hb.HcsMessage_Regular{
+			Regular: &hb.HcsMessageRegular{
 				Payload:     payload,
 				ConfigSeq:   configSeq,
-				Class:       ab.HcsMessageRegular_NORMAL,
+				Class:       hb.HcsMessageRegular_NORMAL,
 				OriginalSeq: originalSeq,
 			},
 		},
 	}
 }
 
-func newTimeToCutMessage(blockNumber uint64) *ab.HcsMessage {
-	return &ab.HcsMessage{
-		Type: &ab.HcsMessage_TimeToCut{
-			TimeToCut: &ab.HcsMessageTimeToCut{
+func newTimeToCutMessage(blockNumber uint64) *hb.HcsMessage {
+	return &hb.HcsMessage{
+		Type: &hb.HcsMessage_TimeToCut{
+			TimeToCut: &hb.HcsMessageTimeToCut{
 				BlockNumber: blockNumber,
 			},
 		},
 	}
 }
 
-func newOrdererStartedMessage(identity []byte) *ab.HcsMessage {
-	return &ab.HcsMessage{
-		Type: &ab.HcsMessage_OrdererStarted{
-			OrdererStarted: &ab.HcsMessageOrdererStarted{
+func newOrdererStartedMessage(identity []byte) *hb.HcsMessage {
+	return &hb.HcsMessage{
+		Type: &hb.HcsMessage_OrdererStarted{
+			OrdererStarted: &hb.HcsMessageOrdererStarted{
 				OrdererIdentity: identity,
 			},
 		},
@@ -1036,8 +1036,8 @@ func newHcsMetadata(
 	lastOriginalSequenceProcessed uint64,
 	lastResubmittedConfigSequence uint64,
 	lastFragmentFreeConsensusTimestampPersisted *timestamp.Timestamp,
-) *ab.HcsMetadata {
-	return &ab.HcsMetadata{
+) *hb.HcsMetadata {
+	return &hb.HcsMetadata{
 		LastConsensusTimestampPersisted:             lastConsensusTimestampPersisted,
 		LastOriginalSequenceProcessed:               lastOriginalSequenceProcessed,
 		LastResubmittedConfigSequence:               lastResubmittedConfigSequence,

@@ -14,12 +14,12 @@ import (
 
 	"github.com/golang/protobuf/ptypes/timestamp"
 	cb "github.com/hyperledger/fabric-protos-go/common"
-	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/orderer/consensus/hcs/mock"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 	mockmultichannel "github.com/hyperledger/fabric/orderer/mocks/common/multichannel"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/stretchr/testify/assert"
@@ -63,17 +63,17 @@ func TestHandleChain(t *testing.T) {
 	publicIdentity.SerializeReturns(make([]byte, 16), nil)
 	healthChecker := &mock.HealthChecker{}
 	mockOrderer := &mock.OrdererConfig{}
-	mockConfigMetadata := protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "0.0.19718"})
-	mockInvalidConfigMetadata := protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "invalid hcs topic id"})
+	mockConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicID: "0.0.19718"})
+	mockInvalidConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicID: "invalid hcs topic id"})
 
 	zeroTimestamp := timestamp.Timestamp{Seconds: 0, Nanos: 0}
-	mockBlockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&ab.HcsMetadata{
+	mockBlockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&hb.HcsMetadata{
 		LastConsensusTimestampPersisted:             &zeroTimestamp,
 		LastOriginalSequenceProcessed:               0,
 		LastResubmittedConfigSequence:               0,
 		LastFragmentFreeConsensusTimestampPersisted: &zeroTimestamp,
 	})}
-	mockInvalidTimestampBlockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&ab.HcsMetadata{
+	mockInvalidTimestampBlockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&hb.HcsMetadata{
 		LastConsensusTimestampPersisted:             nil,
 		LastOriginalSequenceProcessed:               0,
 		LastResubmittedConfigSequence:               0,
@@ -200,7 +200,7 @@ func TestHandleChain(t *testing.T) {
 		assert.NoError(t, err, "Expected HandleChain returns no error")
 		assert.NotNil(t, ch, "Expected HandleChain returns a non-nil chain")
 
-		mockOrderer.ConsensusMetadataReturns(protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "0.0.5530"}))
+		mockOrderer.ConsensusMetadataReturns(protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicID: "0.0.5530"}))
 		mockSupport = &mockmultichannel.ConsenterSupport{
 			SharedConfigVal:  mockOrderer,
 			ChannelIDVal:     channelNameForTest(t) + ".1",
