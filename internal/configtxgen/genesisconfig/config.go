@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package genesisconfig
 
 import (
-	ab "github.com/hyperledger/fabric-protos-go/orderer"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 	"path/filepath"
 	"time"
 
@@ -166,7 +166,7 @@ type Orderer struct {
 	BatchTimeout  time.Duration            `yaml:"BatchTimeout"`
 	BatchSize     BatchSize                `yaml:"BatchSize"`
 	Kafka         Kafka                    `yaml:"Kafka"`
-	Hcs           *ab.HcsConfigMetadata    `yaml:"Hcs"`
+	Hcs           *hb.HcsConfigMetadata    `yaml:"Hcs"`
 	EtcdRaft      *etcdraft.ConfigMetadata `yaml:"EtcdRaft"`
 	Organizations []*Organization          `yaml:"Organizations"`
 	MaxChannels   uint64                   `yaml:"MaxChannels"`

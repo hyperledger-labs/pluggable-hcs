@@ -10,12 +10,12 @@ import (
 	"github.com/hashgraph/hedera-sdk-go"
 	"github.com/hyperledger/fabric-lib-go/healthz"
 	cb "github.com/hyperledger/fabric-protos-go/common"
-	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/metrics"
 	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/consensus"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 )
 
 var logger = flogging.MustGetLogger("orderer.consensus.hcs")
@@ -67,7 +67,7 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 		}
 	}()
 
-	configMetadata := &ab.HcsConfigMetadata{}
+	configMetadata := &hb.HcsConfigMetadata{}
 	if proto.Unmarshal(support.SharedConfig().ConsensusMetadata(), configMetadata) != nil {
 		return nil, fmt.Errorf("cannot unmarshal config metadata = %v", err)
 	}

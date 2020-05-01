@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"testing"
 
-	ab "github.com/hyperledger/fabric-protos-go/orderer"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -136,7 +136,7 @@ func TestIsPending(t *testing.T) {
 		fragmenter := newFragmentSupport(maxConsensusMessageSize)
 		assert.False(t, fragmenter.IsPending(), "Expected isPending returns false when there are no pending fragments")
 
-		fragment := &ab.HcsMessageFragment{
+		fragment := &hb.HcsMessageFragment{
 			Fragment:       make([]byte, 2),
 			FragmentKey:    fragmentKey,
 			FragmentId:     0,
@@ -149,7 +149,7 @@ func TestIsPending(t *testing.T) {
 
 	t.Run("NonEmpty", func(t *testing.T) {
 		fragmenter := newFragmentSupport(maxConsensusMessageSize)
-		fragment := &ab.HcsMessageFragment{
+		fragment := &hb.HcsMessageFragment{
 			Fragment:       make([]byte, 2),
 			FragmentKey:    fragmentKey,
 			FragmentId:     0,
@@ -167,7 +167,7 @@ func TestExpireByAge(t *testing.T) {
 	fragmenter := newFragmentSupport(maxConsensusMessageSize)
 
 	// first segment of a multi-segment message
-	fragmenter.Reassemble(&ab.HcsMessageFragment{
+	fragmenter.Reassemble(&hb.HcsMessageFragment{
 		Fragment:       make([]byte, 1),
 		FragmentKey:    fragmentKey,
 		FragmentId:     fragmentID,
@@ -178,7 +178,7 @@ func TestExpireByAge(t *testing.T) {
 
 	// reassemble 6 single-fragment messages
 	for i := 0; i < 6; i++ {
-		fragmenter.Reassemble(&ab.HcsMessageFragment{
+		fragmenter.Reassemble(&hb.HcsMessageFragment{
 			Fragment:       make([]byte, 1),
 			FragmentKey:    fragmentKey,
 			FragmentId:     fragmentID,
@@ -189,7 +189,7 @@ func TestExpireByAge(t *testing.T) {
 	}
 
 	// first segment of another multi-segment message
-	fragmenter.Reassemble(&ab.HcsMessageFragment{
+	fragmenter.Reassemble(&hb.HcsMessageFragment{
 		Fragment:       make([]byte, 1),
 		FragmentKey:    fragmentKey,
 		FragmentId:     fragmentID,
@@ -200,7 +200,7 @@ func TestExpireByAge(t *testing.T) {
 
 	// reassemble 3 single-fragment messages
 	for i := 0; i < 3; i++ {
-		fragmenter.Reassemble(&ab.HcsMessageFragment{
+		fragmenter.Reassemble(&hb.HcsMessageFragment{
 			Fragment:       make([]byte, 1),
 			FragmentKey:    fragmentKey,
 			FragmentId:     fragmentID,
@@ -244,7 +244,7 @@ func TestExpireByFragmentKey(t *testing.T) {
 
 		// 6 fragments with fragmentKey1
 		for i := 0; i < 6; i++ {
-			fragmenter.Reassemble(&ab.HcsMessageFragment{
+			fragmenter.Reassemble(&hb.HcsMessageFragment{
 				Fragment:       make([]byte, 1),
 				FragmentKey:    fragmentKey1,
 				FragmentId:     fragmentID1,
@@ -256,7 +256,7 @@ func TestExpireByFragmentKey(t *testing.T) {
 
 		// 9 fragments with fragmentKey2
 		for i := 0; i < 9; i++ {
-			fragmenter.Reassemble(&ab.HcsMessageFragment{
+			fragmenter.Reassemble(&hb.HcsMessageFragment{
 				Fragment:       make([]byte, 1),
 				FragmentKey:    fragmentKey2,
 				FragmentId:     fragmentID2,

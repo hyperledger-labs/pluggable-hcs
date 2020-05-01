@@ -1,0 +1,71 @@
+// TODO: copyright and license
+
+syntax = "proto3";
+
+option go_package = "github.com/hyperledger/fabric/orderer/consensus/hcs/proto";
+
+package proto;
+
+import "google/protobuf/timestamp.proto";
+
+// HcsMessage is a wrapper type for the messages that the HCS-based
+// orderer deals with.
+message HcsMessage {
+    oneof Type {
+        HcsMessageRegular regular = 1;
+        HcsMessageTimeToCut time_to_cut = 2;
+        HcsMessageOrdererStarted orderer_started = 3;
+    }
+}
+
+// HcsMessageRegular wraps a marshalled envelope.
+message HcsMessageRegular {
+    enum Class {
+        NORMAL = 0;
+        CONFIG = 1;
+    }
+    bytes payload = 1;
+    uint64 config_seq = 2;
+    Class class = 3;
+    uint64 original_seq = 4;
+}
+
+// TODO: a fragment key is needed to identify the subject so as to handle
+// the case that different messages are fragmented by different subjects with
+// the same fragment_id
+message HcsMessageFragment {
+    bytes fragment = 1;
+    bytes fragment_key = 2;
+    fixed64 fragment_id = 3;
+    fixed32 sequence = 4;
+    fixed32 total_fragments = 5;
+}
+
+// HcsMessageTimeToCut is used to signal to the orderers that it is time to
+// cut block <block_number>.
+message HcsMessageTimeToCut {
+    uint64 block_number = 1;
+}
+
+message HcsMessageOrdererStarted {
+    bytes orderer_identity = 1;
+}
+
+// HcsMetadata is encoded into the ORDERER block to keep track of HCS-related
+// metadata associated with this block.
+message HcsMetadata {
+    // lastTimestampPersisted is the used to keep track of the timestamp of
+    // the last ordered message in the last block so when an HCS-based orderer
+    // boots up, it knows from when to retrieve ordererd messages
+    google.protobuf.Timestamp last_consensus_timestamp_persisted = 1;
+    uint64 last_original_sequence_processed = 2;
+    uint64 last_resubmitted_config_sequence = 3;
+    // last fragment free consensus timestamp is the consensus timestamp of the last
+    // fragment free block
+    google.protobuf.Timestamp last_fragment_free_consensus_timestamp_persisted = 4;
+}
+
+message HcsConfigMetadata {
+    // HCS topic ID in the format of shard.realm.num
+    string TopicID = 1;
+}
