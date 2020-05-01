@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package privacyenabledstate
 
 import (
-	"fmt"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -19,16 +18,18 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statecouchdb"
 	"github.com/hyperledger/fabric/core/ledger/mock"
 	"github.com/hyperledger/fabric/core/ledger/util/couchdb"
-	"github.com/hyperledger/fabric/integration/runner"
+	"github.com/hyperledger/fabric/core/ledger/util/couchdbtest"
 	"github.com/stretchr/testify/assert"
 )
 
 // TestEnv - an interface that a test environment implements
 type TestEnv interface {
+	StartExternalResource()
 	Init(t testing.TB)
 	GetDBHandle(id string) DB
 	GetName() string
 	Cleanup()
+	StopExternalResource()
 }
 
 // Tests will be run against each environment in this array
@@ -69,6 +70,16 @@ func (env *LevelDBCommonStorageTestEnv) Init(t testing.TB) {
 	env.dbPath = dbPath
 }
 
+// StartExternalResource will be an empty implementation for levelDB test environment.
+func (env *LevelDBCommonStorageTestEnv) StartExternalResource() {
+	// empty implementation
+}
+
+// StopExternalResource will be an empty implementation for levelDB test environment.
+func (env *LevelDBCommonStorageTestEnv) StopExternalResource() {
+	// empty implementation
+}
+
 // GetDBHandle implements corresponding function from interface TestEnv
 func (env *LevelDBCommonStorageTestEnv) GetDBHandle(id string) DB {
 	db, err := env.provider.GetDBHandle(id)
@@ -100,20 +111,18 @@ type CouchDBCommonStorageTestEnv struct {
 	couchCleanup      func()
 }
 
-func (env *CouchDBCommonStorageTestEnv) setupCouch() string {
-	externalCouch, set := os.LookupEnv("COUCHDB_ADDR")
-	if set {
-		env.couchCleanup = func() {}
-		return externalCouch
+// StartExternalResource starts external couchDB resources.
+func (env *CouchDBCommonStorageTestEnv) StartExternalResource() {
+	if env.couchAddress == "" {
+		env.couchAddress, env.couchCleanup = couchdbtest.CouchDBSetup(nil)
 	}
+}
 
-	couchDB := &runner.CouchDB{}
-	if err := couchDB.Start(); err != nil {
-		err := fmt.Errorf("failed to start couchDB: %s", err)
-		panic(err)
+// StopExternalResource stops external couchDB resources.
+func (env *CouchDBCommonStorageTestEnv) StopExternalResource() {
+	if env.couchAddress != "" {
+		env.couchCleanup()
 	}
-	env.couchCleanup = func() { couchDB.Stop() }
-	return couchDB.Address()
 }
 
 // Init implements corresponding function from interface TestEnv
@@ -123,9 +132,7 @@ func (env *CouchDBCommonStorageTestEnv) Init(t testing.TB) {
 		t.Fatalf("Failed to create redo log directory: %s", err)
 	}
 
-	if env.couchAddress == "" {
-		env.couchAddress = env.setupCouch()
-	}
+	env.StartExternalResource()
 
 	stateDBConfig := &StateDBConfig{
 		StateDBConfig: &ledger.StateDBConfig{
@@ -173,10 +180,11 @@ func (env *CouchDBCommonStorageTestEnv) GetName() string {
 
 // Cleanup implements corresponding function from interface TestEnv
 func (env *CouchDBCommonStorageTestEnv) Cleanup() {
-	csdbProvider, _ := env.provider.(*CommonStorageDBProvider)
-	statecouchdb.CleanupDB(env.t, csdbProvider.VersionedDBProvider)
+	csdbProvider := env.provider.(*CommonStorageDBProvider)
+	if csdbProvider != nil {
+		statecouchdb.CleanupDB(env.t, csdbProvider.VersionedDBProvider)
+	}
 	os.RemoveAll(env.redoPath)
 	env.bookkeeperTestEnv.Cleanup()
 	env.provider.Close()
-	env.couchCleanup()
 }

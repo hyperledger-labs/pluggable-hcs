@@ -54,7 +54,6 @@ type policyManager interface {
 }
 
 func TestParallelStubActivation(t *testing.T) {
-	t.Parallel()
 	// Scenario: Activate the stub from different goroutines in parallel.
 	stub := &cluster.Stub{}
 	var wg sync.WaitGroup
@@ -84,7 +83,6 @@ func TestParallelStubActivation(t *testing.T) {
 }
 
 func TestDialerCustomKeepAliveOptions(t *testing.T) {
-	t.Parallel()
 	ca, err := tlsgen.NewCA()
 	assert.NoError(t, err)
 
@@ -110,8 +108,6 @@ func TestDialerCustomKeepAliveOptions(t *testing.T) {
 }
 
 func TestPredicateDialerUpdateRootCAs(t *testing.T) {
-	t.Parallel()
-
 	node1 := newTestNode(t)
 	defer node1.stop()
 
@@ -146,7 +142,6 @@ func TestPredicateDialerUpdateRootCAs(t *testing.T) {
 }
 
 func TestDialerBadConfig(t *testing.T) {
-	t.Parallel()
 	emptyCertificate := []byte("-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----")
 	dialer := &cluster.PredicateDialer{
 		Config: comm.ClientConfig{
@@ -163,7 +158,6 @@ func TestDialerBadConfig(t *testing.T) {
 }
 
 func TestDERtoPEM(t *testing.T) {
-	t.Parallel()
 	ca, err := tlsgen.NewCA()
 	assert.NoError(t, err)
 	keyPair, err := ca.NewServerCertKeyPair("localhost")
@@ -172,7 +166,6 @@ func TestDERtoPEM(t *testing.T) {
 }
 
 func TestStandardDialer(t *testing.T) {
-	t.Parallel()
 	emptyCertificate := []byte("-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----")
 	certPool := [][]byte{emptyCertificate}
 	config := comm.ClientConfig{SecOpts: comm.SecureOptions{UseTLS: true, ServerRootCAs: certPool}}
@@ -357,10 +350,11 @@ func TestVerifyBlocks(t *testing.T) {
 	}
 
 	for _, testCase := range []struct {
-		name                string
-		configureVerifier   func(*mocks.BlockVerifier)
-		mutateBlockSequence func([]*common.Block) []*common.Block
-		expectedError       string
+		name                  string
+		configureVerifier     func(*mocks.BlockVerifier)
+		mutateBlockSequence   func([]*common.Block) []*common.Block
+		expectedError         string
+		verifierExpectedCalls int
 	}{
 		{
 			name: "empty sequence",
@@ -388,7 +382,8 @@ func TestVerifyBlocks(t *testing.T) {
 				var nilEnvelope *common.ConfigEnvelope
 				verifier.On("VerifyBlockSignature", mock.Anything, nilEnvelope).Return(errors.New("bad signature"))
 			},
-			expectedError: "bad signature",
+			expectedError:         "bad signature",
+			verifierExpectedCalls: 1,
 		},
 		{
 			name: "block that its type cannot be classified",
@@ -436,10 +431,11 @@ func TestVerifyBlocks(t *testing.T) {
 				proto.Unmarshal(protoutil.MarshalOrPanic(configEnvelope1), confEnv1)
 				verifier.On("VerifyBlockSignature", sigSet2, confEnv1).Return(errors.New("bad signature")).Once()
 			},
-			expectedError: "bad signature",
+			expectedError:         "bad signature",
+			verifierExpectedCalls: 2,
 		},
 		{
-			name: "config block in the sequence needs to be verified, and it isproperly signed",
+			name: "config block in the sequence needs to be verified, and it is properly signed",
 			mutateBlockSequence: func(blockSequence []*common.Block) []*common.Block {
 				var err error
 				// Put a config transaction in block n / 4
@@ -465,6 +461,48 @@ func TestVerifyBlocks(t *testing.T) {
 				verifier.On("VerifyBlockSignature", sigSet1, nilEnvelope).Return(nil).Once()
 				verifier.On("VerifyBlockSignature", sigSet2, confEnv1).Return(nil).Once()
 			},
+			// We have a single config block in the 'middle' of the chain, so we have 2 verifications total:
+			// The last block, and the config block.
+			verifierExpectedCalls: 2,
+		},
+		{
+			name: "last two blocks are config blocks, last block only verified once",
+			mutateBlockSequence: func(blockSequence []*common.Block) []*common.Block {
+				var err error
+				// Put a config transaction in block n-2 and in n-1
+				blockSequence[len(blockSequence)-2].Data = &common.BlockData{
+					Data: [][]byte{protoutil.MarshalOrPanic(configTransaction(configEnvelope1))},
+				}
+				blockSequence[len(blockSequence)-2].Header.DataHash = protoutil.BlockDataHash(blockSequence[len(blockSequence)-2].Data)
+
+				blockSequence[len(blockSequence)-1].Data = &common.BlockData{
+					Data: [][]byte{protoutil.MarshalOrPanic(configTransaction(configEnvelope2))},
+				}
+				blockSequence[len(blockSequence)-1].Header.DataHash = protoutil.BlockDataHash(blockSequence[len(blockSequence)-1].Data)
+
+				assignHashes(blockSequence)
+
+				sigSet1, err = cluster.SignatureSetFromBlock(blockSequence[len(blockSequence)-2])
+				assert.NoError(t, err)
+
+				sigSet2, err = cluster.SignatureSetFromBlock(blockSequence[len(blockSequence)-1])
+				assert.NoError(t, err)
+
+				return blockSequence
+			},
+			configureVerifier: func(verifier *mocks.BlockVerifier) {
+				var nilEnvelope *common.ConfigEnvelope
+				confEnv1 := &common.ConfigEnvelope{}
+				proto.Unmarshal(protoutil.MarshalOrPanic(configEnvelope1), confEnv1)
+				verifier.On("VerifyBlockSignature", sigSet1, nilEnvelope).Return(nil).Once()
+				// We ensure that the signature set of the last block is verified using the config envelope of the block
+				// before it.
+				verifier.On("VerifyBlockSignature", sigSet2, confEnv1).Return(nil).Once()
+				// Note that we do not record a call to verify the last block, with the config envelope extracted from the block itself.
+			},
+			// We have 2 config blocks, yet we only verify twice- the first config block, and the next config block, but no more,
+			// since the last block is a config block.
+			verifierExpectedCalls: 2,
 		},
 	} {
 		testCase := testCase
@@ -478,6 +516,8 @@ func TestVerifyBlocks(t *testing.T) {
 			err := cluster.VerifyBlocks(blockchain, verifier)
 			if testCase.expectedError != "" {
 				assert.EqualError(t, err, testCase.expectedError)
+			} else {
+				assert.NoError(t, err)
 			}
 		})
 	}
@@ -716,7 +756,6 @@ func TestConfigFromBlockBadInput(t *testing.T) {
 }
 
 func TestBlockValidationPolicyVerifier(t *testing.T) {
-	t.Parallel()
 	config := genesisconfig.Load(genesisconfig.SampleInsecureSoloProfile, configtest.GetDevConfigDir())
 	group, err := encoder.NewChannelGroup(config)
 	assert.NoError(t, err)
@@ -794,7 +833,6 @@ func TestBlockValidationPolicyVerifier(t *testing.T) {
 }
 
 func TestBlockVerifierAssembler(t *testing.T) {
-	t.Parallel()
 	config := genesisconfig.Load(genesisconfig.SampleInsecureSoloProfile, configtest.GetDevConfigDir())
 	group, err := encoder.NewChannelGroup(config)
 	assert.NoError(t, err)
@@ -844,30 +882,9 @@ func TestLastConfigBlock(t *testing.T) {
 		},
 		{
 			name:           "nil metadata",
-			expectedError:  "no metadata in block",
+			expectedError:  "failed to retrieve metadata: no metadata in block",
 			blockRetriever: blockRetriever,
 			block:          &common.Block{},
-		},
-		{
-			name:           "no last config block metadata",
-			expectedError:  "no metadata in block",
-			blockRetriever: blockRetriever,
-			block: &common.Block{
-				Metadata: &common.BlockMetadata{
-					Metadata: [][]byte{{}},
-				},
-			},
-		},
-		{
-			name:           "bad metadata in block",
-			blockRetriever: blockRetriever,
-			expectedError: "error unmarshaling metadata from block at index " +
-				"[LAST_CONFIG]: proto: common.Metadata: illegal tag 0 (wire type 1)",
-			block: &common.Block{
-				Metadata: &common.BlockMetadata{
-					Metadata: [][]byte{{}, {1, 2, 3}},
-				},
-			},
 		},
 		{
 			name: "no block with index",
@@ -908,8 +925,6 @@ func TestLastConfigBlock(t *testing.T) {
 }
 
 func TestVerificationRegistryRegisterVerifier(t *testing.T) {
-	t.Parallel()
-
 	blockBytes, err := ioutil.ReadFile("testdata/mychannel.block")
 	assert.NoError(t, err)
 
@@ -949,7 +964,6 @@ func TestVerificationRegistryRegisterVerifier(t *testing.T) {
 }
 
 func TestVerificationRegistry(t *testing.T) {
-	t.Parallel()
 	blockBytes, err := ioutil.ReadFile("testdata/mychannel.block")
 	assert.NoError(t, err)
 

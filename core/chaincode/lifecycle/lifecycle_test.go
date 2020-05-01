@@ -59,6 +59,16 @@ var _ = Describe("ChaincodeParameters", func() {
 			})
 		})
 
+		Context("when the InitRequired differs from the current definition", func() {
+			BeforeEach(func() {
+				rhs.EndorsementInfo.InitRequired = true
+			})
+
+			It("returns an error", func() {
+				Expect(lhs.Equal(rhs)).To(MatchError("InitRequired 'false' != 'true'"))
+			})
+		})
+
 		Context("when the ValidationPlugin differs from the current definition", func() {
 			BeforeEach(func() {
 				rhs.ValidationInfo.ValidationPlugin = "different"
@@ -119,22 +129,28 @@ var _ = Describe("Resources", func() {
 		BeforeEach(func() {
 			fakePublicState = map[string][]byte{}
 			err := resources.Serializer.Serialize(lifecycle.NamespacesName, "cc-name", &lifecycle.ChaincodeDefinition{
+				Sequence: 5,
 				EndorsementInfo: &lb.ChaincodeEndorsementInfo{
-					Version: "version",
+					Version:           "version",
+					EndorsementPlugin: "my endorsement plugin",
 				},
-				ValidationInfo: &lb.ChaincodeValidationInfo{},
-				Collections:    &pb.CollectionConfigPackage{},
+				ValidationInfo: &lb.ChaincodeValidationInfo{
+					ValidationPlugin:    "my validation plugin",
+					ValidationParameter: []byte("some awesome policy"),
+				},
+				Collections: &pb.CollectionConfigPackage{},
 			}, fakePublicState)
 			Expect(err).NotTo(HaveOccurred())
 			fakeReadableState = &mock.ReadWritableState{}
 			fakeReadableState.GetStateStub = fakePublicState.GetState
 		})
 
-		It("returns that the chaincode is defined and the definition", func() {
+		It("returns that the chaincode is defined and that the chaincode definition can be converted to a string suitable for log messages", func() {
 			exists, definition, err := resources.ChaincodeDefinitionIfDefined("cc-name", fakeReadableState)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(exists).To(BeTrue())
 			Expect(definition.EndorsementInfo.Version).To(Equal("version"))
+			Expect(fmt.Sprintf("{%s}", definition)).To(Equal("{sequence: 5, endorsement info: (version: 'version', plugin: 'my endorsement plugin', init required: false), validation info: (plugin: 'my validation plugin', policy: '736f6d6520617765736f6d6520706f6c696379'), collections: ()}"))
 		})
 
 		Context("when the requested chaincode is _lifecycle", func() {
@@ -625,7 +641,7 @@ var _ = Describe("ExternalFunctions", func() {
 
 				It("returns an error", func() {
 					err := ef.ApproveChaincodeDefinitionForOrg("my-channel", "cc-name", testDefinition, "hash", fakePublicState, fakeOrgState)
-					Expect(err).To(MatchError(ContainSubstring("could not set defaults for chaincode definition in channel my-channel: Policy '/Channel/Application/Endorsement' must be defined for channel 'my-channel' before chaincode operations can be attempted")))
+					Expect(err).To(MatchError(ContainSubstring("could not set defaults for chaincode definition in channel my-channel: policy '/Channel/Application/Endorsement' must be defined for channel 'my-channel' before chaincode operations can be attempted")))
 				})
 			})
 
@@ -652,7 +668,7 @@ var _ = Describe("ExternalFunctions", func() {
 			})
 		})
 
-		Context("when the sequence number already has a definition", func() {
+		Context("when the sequence number already has a committed definition", func() {
 			BeforeEach(func() {
 				err := resources.Serializer.Serialize("namespaces", "cc-name", &lifecycle.ChaincodeDefinition{
 					Sequence: 5,
@@ -729,6 +745,28 @@ var _ = Describe("ExternalFunctions", func() {
 				It("returns an error", func() {
 					err := ef.ApproveChaincodeDefinitionForOrg("my-channel", "cc-name", testDefinition, "hash", fakePublicState, fakeOrgState)
 					Expect(err).To(MatchError("attempted to define the current sequence (5) for namespace cc-name, but: Version 'other-version' != 'version'"))
+				})
+			})
+		})
+
+		Context("when the sequence number already has an uncommitted definition", func() {
+			BeforeEach(func() {
+				err := ef.ApproveChaincodeDefinitionForOrg("my-channel", "cc-name", testDefinition, "hash", fakePublicState, fakeOrgState)
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			Context("when uncommitted definition differs from update", func() {
+				It("succeeds", func() {
+					testDefinition.ValidationInfo.ValidationParameter = []byte("more awesome policy")
+					err := ef.ApproveChaincodeDefinitionForOrg("my-channel", "cc-name", testDefinition, "hash", fakePublicState, fakeOrgState)
+					Expect(err).NotTo(HaveOccurred())
+				})
+			})
+
+			Context("when uncommitted definition is identical to update", func() {
+				It("returns error", func() {
+					err := ef.ApproveChaincodeDefinitionForOrg("my-channel", "cc-name", testDefinition, "hash", fakePublicState, fakeOrgState)
+					Expect(err).To(MatchError("attempted to redefine uncommitted sequence (5) for namespace cc-name with unchanged content"))
 				})
 			})
 		})
@@ -907,7 +945,7 @@ var _ = Describe("ExternalFunctions", func() {
 				It("returns an error", func() {
 					_, err := ef.CheckCommitReadiness("my-channel", "cc-name", testDefinition, fakePublicState, []lifecycle.OpaqueState{fakeOrgStates[0], fakeOrgStates[1]})
 					Expect(err).To(MatchError(ContainSubstring("could not set defaults for chaincode definition in " +
-						"channel my-channel: Policy '/Channel/Application/Endorsement' must be defined " +
+						"channel my-channel: policy '/Channel/Application/Endorsement' must be defined " +
 						"for channel 'my-channel' before chaincode operations can be attempted")))
 				})
 			})
@@ -1076,7 +1114,7 @@ var _ = Describe("ExternalFunctions", func() {
 				It("returns an error", func() {
 					_, err := ef.CommitChaincodeDefinition("my-channel", "cc-name", testDefinition, fakePublicState, []lifecycle.OpaqueState{fakeOrgStates[0], fakeOrgStates[1]})
 					Expect(err).To(MatchError(ContainSubstring("could not set defaults for chaincode definition in " +
-						"channel my-channel: Policy '/Channel/Application/Endorsement' must be defined " +
+						"channel my-channel: policy '/Channel/Application/Endorsement' must be defined " +
 						"for channel 'my-channel' before chaincode operations can be attempted")))
 				})
 			})

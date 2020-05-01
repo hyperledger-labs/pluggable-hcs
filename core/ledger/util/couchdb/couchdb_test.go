@@ -20,7 +20,7 @@ import (
 
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
-	"github.com/hyperledger/fabric/integration/runner"
+	"github.com/hyperledger/fabric/core/ledger/util/couchdbtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -55,6 +55,7 @@ type Asset struct {
 var assetJSON = []byte(`{"asset_name":"marble1","color":"blue","size":"35","owner":"jerry"}`)
 
 var testAddress string
+var cleanupCouchDB = func() {}
 
 func testConfig() *Config {
 	return &Config{
@@ -69,37 +70,23 @@ func testConfig() *Config {
 }
 
 func TestMain(m *testing.M) {
-	os.Exit(testMain(m))
-}
-
-func testMain(m *testing.M) int {
-	// Switch to CouchDB
-	address, cleanup := couchDBSetup()
-	testAddress = address
-	defer cleanup()
-
 	//set the logging level to DEBUG to test debug only code
 	flogging.ActivateSpec("couchdb=debug")
 
-	//run the tests
-	return m.Run()
+	rc := m.Run()
+	cleanupCouchDB()
+
+	os.Exit(rc)
 }
 
-func couchDBSetup() (addr string, cleanup func()) {
-	externalCouch, set := os.LookupEnv("COUCHDB_ADDR")
-	if set {
-		return externalCouch, func() {}
+func startCouchDB() {
+	if testAddress == "" {
+		testAddress, cleanupCouchDB = couchdbtest.CouchDBSetup((nil))
 	}
-
-	couchDB := &runner.CouchDB{}
-	if err := couchDB.Start(); err != nil {
-		err := fmt.Errorf("failed to start couchDB: %s", err)
-		panic(err)
-	}
-	return couchDB.Address(), func() { couchDB.Stop() }
 }
 
 func TestDBBadConnectionDef(t *testing.T) {
+	startCouchDB()
 	config := testConfig()
 	config.Address = badParseConnectURL
 	_, err := CreateCouchInstance(config, &disabled.Provider{})
@@ -126,6 +113,7 @@ func TestEncodePathElement(t *testing.T) {
 }
 
 func TestHealthCheck(t *testing.T) {
+	startCouchDB()
 	client := &http.Client{}
 
 	config := testConfig()

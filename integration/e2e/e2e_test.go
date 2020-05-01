@@ -33,6 +33,7 @@ import (
 	"github.com/onsi/gomega/gbytes"
 	"github.com/onsi/gomega/gexec"
 	"github.com/tedsuo/ifrit"
+	"github.com/tedsuo/ifrit/ginkgomon"
 )
 
 var _ = Describe("EndToEnd", func() {
@@ -77,14 +78,14 @@ var _ = Describe("EndToEnd", func() {
 		os.RemoveAll(testDir)
 	})
 
-	Describe("basic solo network with 2 orgs", func() {
+	Describe("basic solo network with 2 orgs and no docker", func() {
 		var datagramReader *DatagramReader
 
 		BeforeEach(func() {
 			datagramReader = NewDatagramReader()
 			go datagramReader.Start()
 
-			network = nwo.New(nwo.BasicSolo(), testDir, client, StartPort(), components)
+			network = nwo.New(nwo.BasicSolo(), testDir, nil, StartPort(), components)
 			network.MetricsProvider = "statsd"
 			network.StatsdEndpoint = datagramReader.Address()
 			network.Profiles = append(network.Profiles, &nwo.Profile{
@@ -100,6 +101,11 @@ var _ = Describe("EndToEnd", func() {
 			})
 
 			network.GenerateConfigTree()
+			for _, peer := range network.PeersWithChannel("testchannel") {
+				core := network.ReadPeerConfig(peer)
+				core.VM = nil
+				network.WritePeerConfig(peer, core)
+			}
 			network.Bootstrap()
 
 			networkRunner := network.NetworkGroupRunner()
@@ -113,7 +119,7 @@ var _ = Describe("EndToEnd", func() {
 			}
 		})
 
-		It("executes a basic solo network with 2 orgs", func() {
+		It("executes a basic solo network with 2 orgs and no docker", func() {
 			By("getting the orderer by name")
 			orderer := network.Orderer("orderer")
 
@@ -136,11 +142,11 @@ var _ = Describe("EndToEnd", func() {
 
 			CheckPeerStatsdStreamMetrics(datagramReader.String())
 			CheckPeerStatsdMetrics(datagramReader.String(), "org1_peer0")
-			CheckPeerStatsdMetrics(datagramReader.String(), "org2_peer1")
+			CheckPeerStatsdMetrics(datagramReader.String(), "org2_peer0")
 			CheckOrdererStatsdMetrics(datagramReader.String(), "ordererorg_orderer")
 
 			By("setting up a channel from a base profile")
-			additionalPeer := network.Peer("Org2", "peer1")
+			additionalPeer := network.Peer("Org2", "peer0")
 			network.CreateChannel("baseprofilechannel", orderer, peer, additionalPeer)
 		})
 	})
@@ -190,43 +196,76 @@ var _ = Describe("EndToEnd", func() {
 			}
 
 			orderer := network.Orderer("orderer")
-			peer := network.Peer("Org1", "peer1")
 
 			network.CreateAndJoinChannel(orderer, "testchannel")
 			nwo.EnableCapabilities(network, "testchannel", "Application", "V2_0", orderer, network.Peer("Org1", "peer0"), network.Peer("Org2", "peer0"))
 
 			// package, install, and approve by org1 - module chaincode
-			packageInstallApproveChaincode(network, "testchannel", orderer, chaincode, network.Peer("Org1", "peer0"), network.Peer("Org1", "peer1"))
+			packageInstallApproveChaincode(network, "testchannel", orderer, chaincode, network.Peer("Org1", "peer0"))
 
 			// package, install, and approve by org2 - gopath chaincode, same logic
-			packageInstallApproveChaincode(network, "testchannel", orderer, gopathChaincode, network.Peer("Org2", "peer0"), network.Peer("Org2", "peer1"))
+			packageInstallApproveChaincode(network, "testchannel", orderer, gopathChaincode, network.Peer("Org2", "peer0"))
 
 			testPeers := network.PeersWithChannel("testchannel")
 			nwo.CheckCommitReadinessUntilReady(network, "testchannel", chaincode, network.PeerOrgs(), testPeers...)
 			nwo.CommitChaincode(network, "testchannel", orderer, chaincode, testPeers[0], testPeers...)
 			nwo.InitChaincode(network, "testchannel", orderer, chaincode, testPeers...)
 
-			RunQueryInvokeQuery(network, orderer, peer, "testchannel")
+			RunQueryInvokeQuery(network, orderer, network.Peer("Org1", "peer0"), "testchannel")
 
-			CheckPeerOperationEndpoints(network, network.Peer("Org2", "peer1"))
+			CheckPeerOperationEndpoints(network, network.Peer("Org2", "peer0"))
 			CheckOrdererOperationEndpoints(network, orderer)
 		})
 	})
 
 	Describe("basic single node etcdraft network", func() {
+		var (
+			peerRunners    []*ginkgomon.Runner
+			processes      map[string]ifrit.Process
+			ordererProcess ifrit.Process
+		)
+
 		BeforeEach(func() {
 			network = nwo.New(nwo.MultiChannelEtcdRaft(), testDir, client, StartPort(), components)
 			network.GenerateConfigTree()
+			for _, peer := range network.Peers {
+				core := network.ReadPeerConfig(peer)
+				core.Peer.Gossip.UseLeaderElection = false
+				core.Peer.Gossip.OrgLeader = true
+				core.Peer.Deliveryclient.ReconnectTotalTimeThreshold = time.Duration(time.Second)
+				network.WritePeerConfig(peer, core)
+			}
 			network.Bootstrap()
 
-			networkRunner := network.NetworkGroupRunner()
-			process = ifrit.Invoke(networkRunner)
-			Eventually(process.Ready(), network.EventuallyTimeout).Should(BeClosed())
+			ordererRunner := network.OrdererGroupRunner()
+			ordererProcess = ifrit.Invoke(ordererRunner)
+			Eventually(ordererProcess.Ready(), network.EventuallyTimeout).Should(BeClosed())
+
+			peerRunners = make([]*ginkgomon.Runner, len(network.Peers))
+			processes = map[string]ifrit.Process{}
+			for i, peer := range network.Peers {
+				pr := network.PeerRunner(peer)
+				peerRunners[i] = pr
+				p := ifrit.Invoke(pr)
+				processes[peer.ID()] = p
+				Eventually(p.Ready(), network.EventuallyTimeout).Should(BeClosed())
+			}
+		})
+
+		AfterEach(func() {
+			if ordererProcess != nil {
+				ordererProcess.Signal(syscall.SIGTERM)
+				Eventually(ordererProcess.Wait(), network.EventuallyTimeout).Should(Receive())
+			}
+			for _, p := range processes {
+				p.Signal(syscall.SIGTERM)
+				Eventually(p.Wait(), network.EventuallyTimeout).Should(Receive())
+			}
 		})
 
 		It("creates two channels with two orgs trying to reconfigure and update metadata", func() {
 			orderer := network.Orderer("orderer")
-			peer := network.Peer("Org1", "peer1")
+			peer := network.Peer("Org1", "peer0")
 
 			By("Create first channel and deploy the chaincode")
 			network.CreateAndJoinChannel(orderer, "testchannel")
@@ -270,6 +309,12 @@ var _ = Describe("EndToEnd", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(len(files)).To(Equal(numOfSnaps))
 
+			By("ensuring that static leaders do not give up on retrieving blocks after the orderer goes down")
+			ordererProcess.Signal(syscall.SIGTERM)
+			Eventually(ordererProcess.Wait(), network.EventuallyTimeout).Should(Receive())
+			for _, peerRunner := range peerRunners {
+				Eventually(peerRunner.Err(), network.EventuallyTimeout).Should(gbytes.Say("peer is a static leader, ignoring peer.deliveryclient.reconnectTotalTimeThreshold"))
+			}
 		})
 	})
 
@@ -322,7 +367,7 @@ var _ = Describe("EndToEnd", func() {
 
 			orderer := network.Orderer("orderer")
 			ordererConfig := network.ReadOrdererConfig(orderer)
-			ordererConfig.General.GenesisMethod = "none"
+			ordererConfig.General.BootstrapMethod = "none"
 			network.WriteOrdererConfig(orderer, ordererConfig)
 			network.Bootstrap()
 
@@ -354,9 +399,9 @@ var _ = Describe("EndToEnd", func() {
 		})
 	})
 
-	Describe("basic solo network with containers being interroped", func() {
+	Describe("basic solo network with containers being interrupted", func() {
 		BeforeEach(func() {
-			network = nwo.New(nwo.BasicSolo(), testDir, client, StartPort(), components)
+			network = nwo.New(nwo.FullSolo(), testDir, client, StartPort(), components)
 
 			network.GenerateConfigTree()
 			network.Bootstrap()
@@ -387,7 +432,7 @@ var _ = Describe("EndToEnd", func() {
 			network.CreateAndJoinChannels(orderer)
 
 			By("enabling new lifecycle capabilities")
-			nwo.EnableCapabilities(network, "testchannel", "Application", "V2_0", orderer, network.Peer("Org1", "peer1"), network.Peer("Org2", "peer1"))
+			nwo.EnableCapabilities(network, "testchannel", "Application", "V2_0", orderer, network.Peer("Org1", "peer0"), network.Peer("Org2", "peer0"))
 			By("deploying the chaincode")
 			nwo.DeployChaincode(network, "testchannel", orderer, chaincode)
 
@@ -460,7 +505,7 @@ func RunQueryInvokeQuery(n *nwo.Network, orderer *nwo.Orderer, peer *nwo.Peer, c
 		Ctor:      `{"Args":["invoke","a","b","10"]}`,
 		PeerAddresses: []string{
 			n.PeerAddress(n.Peer("Org1", "peer0"), nwo.ListenPort),
-			n.PeerAddress(n.Peer("Org2", "peer1"), nwo.ListenPort),
+			n.PeerAddress(n.Peer("Org2", "peer0"), nwo.ListenPort),
 		},
 		WaitForEvent: true,
 	})
@@ -486,8 +531,8 @@ func RunRespondWith(n *nwo.Network, orderer *nwo.Orderer, peer *nwo.Peer, channe
 		Name:      "mycc",
 		Ctor:      `{"Args":["respond","300","response-message","response-payload"]}`,
 		PeerAddresses: []string{
-			n.PeerAddress(n.Peer("Org1", "peer1"), nwo.ListenPort),
-			n.PeerAddress(n.Peer("Org2", "peer1"), nwo.ListenPort),
+			n.PeerAddress(n.Peer("Org1", "peer0"), nwo.ListenPort),
+			n.PeerAddress(n.Peer("Org2", "peer0"), nwo.ListenPort),
 		},
 		WaitForEvent: true,
 	})
@@ -502,8 +547,8 @@ func RunRespondWith(n *nwo.Network, orderer *nwo.Orderer, peer *nwo.Peer, channe
 		Name:      "mycc",
 		Ctor:      `{"Args":["respond","400","response-message","response-payload"]}`,
 		PeerAddresses: []string{
-			n.PeerAddress(n.Peer("Org1", "peer1"), nwo.ListenPort),
-			n.PeerAddress(n.Peer("Org2", "peer1"), nwo.ListenPort),
+			n.PeerAddress(n.Peer("Org1", "peer0"), nwo.ListenPort),
+			n.PeerAddress(n.Peer("Org2", "peer0"), nwo.ListenPort),
 		},
 		WaitForEvent: true,
 	})

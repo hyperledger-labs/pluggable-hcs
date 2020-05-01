@@ -93,9 +93,9 @@ Launch the network
 
           This tutorial demonstrates the JavaScript versions of the ``FabCar``
           smart contract and application, but the ``fabric-samples`` repo also
-          contains Java and TypeScript versions of this sample. To try the
-          Java or TypeScript versions, change the ``javascript`` argument
-          for ``./startFabric.sh`` below to either ``java`` or ``typescript``
+          contains Go, Java and TypeScript versions of this sample. To try the
+          Go, Java or TypeScript versions, change the ``javascript`` argument
+          for ``./startFabric.sh`` below to either ``go``, ``java`` or ``typescript``
           and follow the instructions written to the terminal.
 
 Launch your network using the ``startFabric.sh`` shell script. This command will
@@ -271,11 +271,11 @@ The application connects to the network using a gateway:
 This code creates a new gateway and then uses it to connect the application to
 the network. ``ccp`` describes the network that the gateway will access with the
 identity ``user1`` from ``wallet``. See how the ``ccp`` has been loaded from
-``../../basic-network/connection.json`` and parsed as a JSON file:
+``../../first-network/connection.json`` and parsed as a JSON file:
 
 .. code:: bash
 
-  const ccpPath = path.resolve(__dirname, '..', '..', 'basic-network', 'connection.json');
+  const ccpPath = path.resolve(__dirname, '..', '..', 'first-network', 'connection.json');
   const ccpJSON = fs.readFileSync(ccpPath, 'utf8');
   const ccp = JSON.parse(ccpJSON);
 

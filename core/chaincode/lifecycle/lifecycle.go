@@ -114,6 +114,8 @@ func (cp *ChaincodeParameters) Equal(ocp *ChaincodeParameters) error {
 		return errors.Errorf("Version '%s' != '%s'", cp.EndorsementInfo.Version, ocp.EndorsementInfo.Version)
 	case cp.EndorsementInfo.EndorsementPlugin != ocp.EndorsementInfo.EndorsementPlugin:
 		return errors.Errorf("EndorsementPlugin '%s' != '%s'", cp.EndorsementInfo.EndorsementPlugin, ocp.EndorsementInfo.EndorsementPlugin)
+	case cp.EndorsementInfo.InitRequired != ocp.EndorsementInfo.InitRequired:
+		return errors.Errorf("InitRequired '%t' != '%t'", cp.EndorsementInfo.InitRequired, ocp.EndorsementInfo.InitRequired)
 	case cp.ValidationInfo.ValidationPlugin != ocp.ValidationInfo.ValidationPlugin:
 		return errors.Errorf("ValidationPlugin '%s' != '%s'", cp.ValidationInfo.ValidationPlugin, ocp.ValidationInfo.ValidationPlugin)
 	case !bytes.Equal(cp.ValidationInfo.ValidationParameter, ocp.ValidationInfo.ValidationParameter):
@@ -282,7 +284,7 @@ func (ef *ExternalFunctions) CheckCommitReadiness(chname, ccname string, cd *Cha
 		return nil, err
 	}
 
-	logger.Infof("successfully checked commit readiness of chaincode definition %s, name '%s' on channel '%s'", cd, ccname, chname)
+	logger.Infof("Successfully checked commit readiness of chaincode name '%s' on channel '%s' with definition {%s}", ccname, chname, cd)
 
 	return approvals, nil
 }
@@ -303,8 +305,6 @@ func (ef *ExternalFunctions) CommitChaincodeDefinition(chname, ccname string, cd
 		return nil, errors.WithMessage(err, "could not serialize chaincode definition")
 	}
 
-	logger.Infof("successfully committed definition %s, name '%s' on channel '%s'", cd, ccname, chname)
-
 	return approvals, nil
 }
 
@@ -322,7 +322,7 @@ func (ef *ExternalFunctions) DefaultEndorsementPolicyAsBytes(channelID string) (
 	}
 
 	return nil, errors.Errorf(
-		"Policy '%s' must be defined for channel '%s' before chaincode operations can be attempted",
+		"policy '%s' must be defined for channel '%s' before chaincode operations can be attempted",
 		DefaultEndorsementPolicyRef,
 		channelID,
 	)
@@ -405,6 +405,30 @@ func (ef *ExternalFunctions) ApproveChaincodeDefinitionForOrg(chname, ccname str
 	}
 
 	privateName := fmt.Sprintf("%s#%d", ccname, requestedSequence)
+
+	// if requested sequence is not committed, and attempt is made to update its content,
+	// we need to check whether new definition actually contains updated content, to avoid
+	// empty write set.
+	if requestedSequence == currentSequence+1 {
+		uncommittedMetadata, ok, err := ef.Resources.Serializer.DeserializeMetadata(NamespacesName, privateName, orgState)
+		if err != nil {
+			return errors.WithMessage(err, "could not fetch uncommitted definition")
+		}
+
+		if ok {
+			logger.Debugf("Attempting to redefine uncommitted definition at sequence %d", requestedSequence)
+
+			uncommittedParameters := &ChaincodeParameters{}
+			if err := ef.Resources.Serializer.Deserialize(NamespacesName, privateName, uncommittedMetadata, uncommittedParameters, orgState); err != nil {
+				return errors.WithMessagef(err, "could not deserialize namespace %s as chaincode", privateName)
+			}
+
+			if err := uncommittedParameters.Equal(cd.Parameters()); err == nil {
+				return errors.Errorf("attempted to redefine uncommitted sequence (%d) for namespace %s with unchanged content", requestedSequence, ccname)
+			}
+		}
+	}
+
 	if err := ef.Resources.Serializer.Serialize(NamespacesName, privateName, cd.Parameters(), orgState); err != nil {
 		return errors.WithMessage(err, "could not serialize chaincode parameters to state")
 	}
@@ -421,7 +445,7 @@ func (ef *ExternalFunctions) ApproveChaincodeDefinitionForOrg(chname, ccname str
 		return errors.WithMessage(err, "could not serialize chaincode package info to state")
 	}
 
-	logger.Infof("successfully approved definition %s, name '%s' on channel '%s'", cd, ccname, chname)
+	logger.Infof("Successfully endorsed chaincode approval with name '%s', package ID '%s', on channel '%s' with definition {%s}", ccname, packageID, chname, cd)
 
 	return nil
 }
@@ -453,7 +477,7 @@ func (ef *ExternalFunctions) QueryChaincodeDefinition(name string, publicState R
 		return nil, errors.WithMessagef(err, "could not deserialize namespace %s as chaincode", name)
 	}
 
-	logger.Infof("successfully queried definition %s, name '%s'", definedChaincode, name)
+	logger.Infof("Successfully queried chaincode name '%s' with definition {%s},", name, definedChaincode)
 
 	return definedChaincode, nil
 }
@@ -510,7 +534,7 @@ func (ef *ExternalFunctions) InstallChaincode(chaincodeInstallPackage []byte) (*
 		ef.InstallListener.HandleChaincodeInstalled(pkg.Metadata, packageID)
 	}
 
-	logger.Infof("successfully installed chaincode with package ID '%s'", packageID)
+	logger.Infof("Successfully installed chaincode with package ID '%s'", packageID)
 
 	return &chaincode.InstalledChaincode{
 		PackageID: packageID,
