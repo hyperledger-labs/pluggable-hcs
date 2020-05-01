@@ -1700,18 +1700,16 @@ func TestProcessMessages(t *testing.T) {
 				msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
 				fragments := chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 0)
 				assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
+				normalBlockTimestamp := timestampProtoOrPanic(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
 				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID)
-				normalBlockTimestamp, err1 := ptypes.TimestampProto(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
-				assert.NoError(t, err1, "Expect conversion from time.Time to proto timestamp successful")
 				respSyncChan <- struct{}{}
 
 				// config message
 				msg = newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), uint64(0), uint64(0))
 				fragments = chain.fragmenter.MakeFragments(protoutil.MarshalOrPanic(msg), chain.fragmentKey, 1)
 				assert.Equal(t, 1, len(fragments), "Expect one fragment created from test message")
+				configBlockTimestamp := timestampProtoOrPanic(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
 				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(fragments[0]), chain.topicID)
-				configBlockTimestamp, err1 := ptypes.TimestampProto(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
-				assert.NoError(t, err1, "Expect conversion from time.Time to proto timestamp successful")
 				respSyncChan <- struct{}{}
 
 				var normalBlock, configBlock *cb.Block
