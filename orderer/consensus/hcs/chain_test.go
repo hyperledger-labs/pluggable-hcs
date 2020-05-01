@@ -25,12 +25,12 @@ import (
 	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/hashgraph/hedera-sdk-go"
 	cb "github.com/hyperledger/fabric-protos-go/common"
-	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/orderer/common/msgprocessor"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/orderer/consensus/hcs/factory"
 	mockhcs "github.com/hyperledger/fabric/orderer/consensus/hcs/mock"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 	mockblockcutter "github.com/hyperledger/fabric/orderer/mocks/common/blockcutter"
 	mockmultichannel "github.com/hyperledger/fabric/orderer/mocks/common/multichannel"
 	"github.com/hyperledger/fabric/protoutil"
@@ -85,7 +85,7 @@ func newMockOrderer(batchTimeout time.Duration, topicID string) *mockhcs.Orderer
 	mockOrderer := &mockhcs.OrdererConfig{}
 	mockOrderer.CapabilitiesReturns(mockCapabilities)
 	mockOrderer.BatchTimeoutReturns(batchTimeout)
-	mockOrderer.ConsensusMetadataReturns(protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: topicID}))
+	mockOrderer.ConsensusMetadataReturns(protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicID: topicID}))
 	return mockOrderer
 }
 
@@ -1839,14 +1839,14 @@ func TestProcessMessages(t *testing.T) {
 		mockFragmenter.IsPendingCalls(func() bool {
 			return origFragmenter.IsPending()
 		})
-		mockFragmenter.MakeFragmentsCalls(func(data []byte, fragmentKey []byte, fragmentID uint64) []*ab.HcsMessageFragment {
+		mockFragmenter.MakeFragmentsCalls(func(data []byte, fragmentKey []byte, fragmentID uint64) []*hb.HcsMessageFragment {
 			return origFragmenter.MakeFragments(data, fragmentKey, fragmentID)
 		})
 		mockFragmenter.ExpireByAgeCalls(func(maxAge uint64) int {
 			return origFragmenter.ExpireByAge(maxAge)
 		})
 		reassembleSyncChan := make(chan struct{})
-		mockFragmenter.ReassembleCalls(func(fragment *ab.HcsMessageFragment) []byte {
+		mockFragmenter.ReassembleCalls(func(fragment *hb.HcsMessageFragment) []byte {
 			defer func() {
 				<-reassembleSyncChan
 			}()
@@ -1872,9 +1872,9 @@ func TestProcessMessages(t *testing.T) {
 		}()
 
 		// 1st fragment of 6 messages with fragmentKey1
-		var fragment *ab.HcsMessageFragment
+		var fragment *hb.HcsMessageFragment
 		for i := 0; i < 6; i++ {
-			fragment = &ab.HcsMessageFragment{
+			fragment = &hb.HcsMessageFragment{
 				Fragment:       make([]byte, 1),
 				FragmentKey:    fragmentKey1,
 				FragmentId:     fragmentID1,
@@ -1889,7 +1889,7 @@ func TestProcessMessages(t *testing.T) {
 
 		// 1st fragment of 5 messages with fragmentKey2
 		for i := 0; i < 5; i++ {
-			fragment = &ab.HcsMessageFragment{
+			fragment = &hb.HcsMessageFragment{
 				Fragment:       make([]byte, 1),
 				FragmentKey:    fragmentKey2,
 				FragmentId:     fragmentID2,
@@ -1903,7 +1903,7 @@ func TestProcessMessages(t *testing.T) {
 		assert.Equal(t, 11, mockFragmenter.ReassembleCallCount(), "Expected Reassemble called 11 times")
 
 		// expire all fragments with fragmentKey1
-		ordererStartedFragment := &ab.HcsMessageFragment{
+		ordererStartedFragment := &hb.HcsMessageFragment{
 			Fragment:       protoutil.MarshalOrPanic(newOrdererStartedMessage(fragmentKey1)),
 			FragmentKey:    fragmentKey1,
 			FragmentId:     fragmentID1,
@@ -1915,7 +1915,7 @@ func TestProcessMessages(t *testing.T) {
 		expireByFragmentKeySyncChan <- struct{}{}
 
 		// expire all fragments with fragmentKey2
-		fragment = &ab.HcsMessageFragment{
+		fragment = &hb.HcsMessageFragment{
 			Fragment:       protoutil.MarshalOrPanic(newOrdererStartedMessage(fragmentKey2)),
 			FragmentKey:    fragmentKey2,
 			FragmentId:     fragmentID2,
@@ -2126,7 +2126,7 @@ func TestResubmission(t *testing.T) {
 			case block := <-mockSupport.Blocks:
 				metadata := &cb.Metadata{}
 				proto.Unmarshal(block.Metadata.Metadata[cb.BlockMetadataIndex_ORDERER], metadata)
-				hcsMetadata := &ab.HcsMetadata{}
+				hcsMetadata := &hb.HcsMetadata{}
 				proto.Unmarshal(metadata.Value, hcsMetadata)
 				assert.Equal(t, lastOriginalSequenceProcessed+1, hcsMetadata.LastOriginalSequenceProcessed)
 			case <-time.After(shortTimeout):
@@ -2243,11 +2243,11 @@ func TestResubmission(t *testing.T) {
 			consensusClient := chain.topicProducer.(*mockhcs.ConsensusClient)
 			assert.Equal(t, 2, consensusClient.SubmitConsensusMessageCallCount(), "Expect SubmitConsensusMessage called once")
 			marshalledMsg, _ := consensusClient.SubmitConsensusMessageArgsForCall(1)
-			fragment := &ab.HcsMessageFragment{}
+			fragment := &hb.HcsMessageFragment{}
 			assert.NoError(t, proto.Unmarshal(marshalledMsg, fragment), "Expected data unmarshalled successfully to HcsMessageFragment")
-			hcsMessage := &ab.HcsMessage{}
+			hcsMessage := &hb.HcsMessage{}
 			assert.NoError(t, proto.Unmarshal(fragment.Fragment, hcsMessage), "Expected data unmarshalled successfully to HcsMessage")
-			normalMessage := hcsMessage.Type.(*ab.HcsMessage_Regular).Regular
+			normalMessage := hcsMessage.Type.(*hb.HcsMessage_Regular).Regular
 			assert.Equal(t, mockSupport.ConfigSeqVal, normalMessage.ConfigSeq, "Expect configseq to be current")
 			assert.Equal(t, sequence, normalMessage.OriginalSeq, "Expect originalSeq to match")
 
@@ -2375,7 +2375,7 @@ func TestResubmission(t *testing.T) {
 			case block := <-mockSupport.Blocks:
 				metadata, err := protoutil.GetMetadataFromBlock(block, cb.BlockMetadataIndex_ORDERER)
 				assert.NoError(t, err, "Expected get metadata from block successful")
-				hcsMetadata := &ab.HcsMetadata{}
+				hcsMetadata := &hb.HcsMetadata{}
 				assert.NoError(t, proto.Unmarshal(metadata.Value, hcsMetadata), "Expected unmarsal into HcsMetadata successful")
 
 				assert.Equal(t, lastOriginalSequenceProcessed+1, hcsMetadata.LastResubmittedConfigSequence, "Expected lastResubmittedConfigSequence correct")
@@ -2667,7 +2667,7 @@ func TestGetStateFromMetadata(t *testing.T) {
 
 func TestParseConfig(t *testing.T) {
 	mockHcsConfig := mockLocalConfig.Hcs
-	//mockHcsConfigMetadata := protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "0.0.18286"})
+	//mockHcsConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicID: "0.0.18286"})
 
 	t.Run("WithValidConfig", func(t *testing.T) {
 		network, operatorID, privateKey, err := parseConfig(&mockHcsConfig)
@@ -2730,7 +2730,7 @@ func TestParseConfig(t *testing.T) {
 	})
 
 	//t.Run("WithInvalidHCSTopicID", func(t *testing.T) {
-	//	invalidHcsConfigMetadata := protoutil.MarshalOrPanic(&ab.HcsConfigMetadata{TopicID: "0.0.abcd"})
+	//	invalidHcsConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicID: "0.0.abcd"})
 	//	_, _, _, _, err := parseConfig(&mockHcsConfig, invalidHcsConfigMetadata)
 	//	assert.Error(t, err, "Expected parseConfig returns error when hcs topic ID is invalid")
 	//})
@@ -2790,13 +2790,13 @@ func TestNewConfigMessage(t *testing.T) {
 	configSeq := uint64(3)
 	originalSeq := uint64(8)
 	msg := newConfigMessage(data, configSeq, originalSeq)
-	assert.IsType(t, &ab.HcsMessage_Regular{}, msg.Type, "Expected message type to be HcsMessage_Regular")
-	regular := msg.Type.(*ab.HcsMessage_Regular)
-	assert.IsType(t, &ab.HcsMessageRegular{}, regular.Regular, "Expected message type to be HcsMessageRegular")
+	assert.IsType(t, &hb.HcsMessage_Regular{}, msg.Type, "Expected message type to be HcsMessage_Regular")
+	regular := msg.Type.(*hb.HcsMessage_Regular)
+	assert.IsType(t, &hb.HcsMessageRegular{}, regular.Regular, "Expected message type to be HcsMessageRegular")
 	config := regular.Regular
 	assert.Equal(t, data, config.Payload, "Expected payload to match")
 	assert.Equal(t, configSeq, config.ConfigSeq, "Expected configSeq to match")
-	assert.Equal(t, ab.HcsMessageRegular_CONFIG, config.Class, "Expected Class to be CONFIG")
+	assert.Equal(t, hb.HcsMessageRegular_CONFIG, config.Class, "Expected Class to be CONFIG")
 	assert.Equal(t, originalSeq, config.OriginalSeq, "Expected OriginalSeq to match")
 }
 
@@ -2805,22 +2805,22 @@ func TestNewNormalMessage(t *testing.T) {
 	configSeq := uint64(3)
 	originalSeq := uint64(8)
 	msg := newNormalMessage(data, configSeq, originalSeq)
-	assert.IsType(t, &ab.HcsMessage_Regular{}, msg.Type, "Expected message type to be HcsMessage_Regular")
-	regular := msg.Type.(*ab.HcsMessage_Regular)
-	assert.IsType(t, &ab.HcsMessageRegular{}, regular.Regular, "Expected message type to be HcsMessageRegular")
+	assert.IsType(t, &hb.HcsMessage_Regular{}, msg.Type, "Expected message type to be HcsMessage_Regular")
+	regular := msg.Type.(*hb.HcsMessage_Regular)
+	assert.IsType(t, &hb.HcsMessageRegular{}, regular.Regular, "Expected message type to be HcsMessageRegular")
 	config := regular.Regular
 	assert.Equal(t, data, config.Payload, "Expected payload to match")
 	assert.Equal(t, configSeq, config.ConfigSeq, "Expected configSeq to match")
-	assert.Equal(t, ab.HcsMessageRegular_NORMAL, config.Class, "Expected Class to be NORMAL")
+	assert.Equal(t, hb.HcsMessageRegular_NORMAL, config.Class, "Expected Class to be NORMAL")
 	assert.Equal(t, originalSeq, config.OriginalSeq, "Expected OriginalSeq to match")
 }
 
 func TestNewTimeToCutMessage(t *testing.T) {
 	blockNumber := uint64(9)
 	msg := newTimeToCutMessage(blockNumber)
-	assert.IsType(t, &ab.HcsMessage_TimeToCut{}, msg.Type, "Expected message type to be HcsMessage_TimeToCut")
-	regular := msg.Type.(*ab.HcsMessage_TimeToCut)
-	assert.IsType(t, &ab.HcsMessageTimeToCut{}, regular.TimeToCut, "Expected message type to be HcsMessageTimeToCut")
+	assert.IsType(t, &hb.HcsMessage_TimeToCut{}, msg.Type, "Expected message type to be HcsMessage_TimeToCut")
+	regular := msg.Type.(*hb.HcsMessage_TimeToCut)
+	assert.IsType(t, &hb.HcsMessageTimeToCut{}, regular.TimeToCut, "Expected message type to be HcsMessageTimeToCut")
 	ttc := regular.TimeToCut
 	assert.Equal(t, blockNumber, ttc.BlockNumber, "Expected blockNumber to match")
 }
@@ -2828,9 +2828,9 @@ func TestNewTimeToCutMessage(t *testing.T) {
 func TestNewOrdererStartedMessage(t *testing.T) {
 	identity := []byte("test orderer identity")
 	msg := newOrdererStartedMessage(identity)
-	assert.IsType(t, &ab.HcsMessage_OrdererStarted{}, msg.Type, "Expected message type to be HcsMessage_OrdererStarted")
-	ordererStartedMsg := msg.Type.(*ab.HcsMessage_OrdererStarted)
-	assert.IsType(t, &ab.HcsMessageOrdererStarted{}, ordererStartedMsg.OrdererStarted, "Expected message type to be HcsMessageOrdererStarted")
+	assert.IsType(t, &hb.HcsMessage_OrdererStarted{}, msg.Type, "Expected message type to be HcsMessage_OrdererStarted")
+	ordererStartedMsg := msg.Type.(*hb.HcsMessage_OrdererStarted)
+	assert.IsType(t, &hb.HcsMessageOrdererStarted{}, ordererStartedMsg.OrdererStarted, "Expected message type to be HcsMessageOrdererStarted")
 	assert.Equal(t, identity, ordererStartedMsg.OrdererStarted.OrdererIdentity, "Expected identity to match")
 }
 
@@ -3263,14 +3263,14 @@ func newMockConfigEnvelope() *cb.Envelope {
 
 func extractConsensusTimestamp(block *cb.Block) *timestamp.Timestamp {
 	omd, _ := protoutil.GetMetadataFromBlock(block, cb.BlockMetadataIndex_ORDERER)
-	metadata := &ab.HcsMetadata{}
+	metadata := &hb.HcsMetadata{}
 	_ = proto.Unmarshal(omd.GetValue(), metadata)
 	return metadata.LastConsensusTimestampPersisted
 }
 
 func extractLastFragmentFreeConsensusTimestamp(block *cb.Block) *timestamp.Timestamp {
 	omd, _ := protoutil.GetMetadataFromBlock(block, cb.BlockMetadataIndex_ORDERER)
-	metadata := &ab.HcsMetadata{}
+	metadata := &hb.HcsMetadata{}
 	_ = proto.Unmarshal(omd.GetValue(), metadata)
 	return metadata.GetLastFragmentFreeConsensusTimestampPersisted()
 }

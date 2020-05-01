@@ -9,12 +9,12 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	ab "github.com/hyperledger/fabric-protos-go/orderer"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 )
 
 type fragmentSupport interface {
-	MakeFragments(data []byte, fragmentKey []byte, fragmentID uint64) []*ab.HcsMessageFragment
-	Reassemble(fragment *ab.HcsMessageFragment) []byte
+	MakeFragments(data []byte, fragmentKey []byte, fragmentID uint64) []*hb.HcsMessageFragment
+	Reassemble(fragment *hb.HcsMessageFragment) []byte
 	IsPending() bool
 	ExpireByAge(maxAge uint64) int
 	ExpireByFragmentKey(fragmentKey []byte) (int, error)
@@ -80,7 +80,7 @@ func (fragmenter *fragmentSupportImpl) ExpireByFragmentKey(fragmentKey []byte) (
 	return count, nil
 }
 
-func (fragmenter *fragmentSupportImpl) Reassemble(fragment *ab.HcsMessageFragment) (reassembled []byte) {
+func (fragmenter *fragmentSupportImpl) Reassemble(fragment *hb.HcsMessageFragment) (reassembled []byte) {
 	isValidFragment := false
 	var holder *fragmentHolder
 	defer func() {
@@ -160,16 +160,16 @@ func (fragmenter *fragmentSupportImpl) removeHolder(holder *fragmentHolder, remo
 	}
 }
 
-func (fragmenter *fragmentSupportImpl) MakeFragments(data []byte, fragmentKey []byte, fragmentID uint64) []*ab.HcsMessageFragment {
+func (fragmenter *fragmentSupportImpl) MakeFragments(data []byte, fragmentKey []byte, fragmentID uint64) []*hb.HcsMessageFragment {
 	fragmentSize := fragmenter.fragmentSize
-	fragments := make([]*ab.HcsMessageFragment, (len(data)+fragmentSize-1)/fragmentSize)
+	fragments := make([]*hb.HcsMessageFragment, (len(data)+fragmentSize-1)/fragmentSize)
 	for i := 0; i < len(fragments); i++ {
 		first := i * fragmentSize
 		last := (i + 1) * fragmentSize
 		if last > len(data) {
 			last = len(data)
 		}
-		fragments[i] = &ab.HcsMessageFragment{
+		fragments[i] = &hb.HcsMessageFragment{
 			Fragment:       data[first:last],
 			FragmentKey:    fragmentKey,
 			FragmentId:     fragmentID,
@@ -181,7 +181,7 @@ func (fragmenter *fragmentSupportImpl) MakeFragments(data []byte, fragmentKey []
 }
 
 type fragmentHolder struct {
-	fragments []*ab.HcsMessageFragment
+	fragments []*hb.HcsMessageFragment
 	key       string
 	count     uint32
 	size      uint32
@@ -190,7 +190,7 @@ type fragmentHolder struct {
 }
 
 func newFragmentHolder(total uint32, key string) *fragmentHolder {
-	return &fragmentHolder{fragments: make([]*ab.HcsMessageFragment, total), key: key}
+	return &fragmentHolder{fragments: make([]*hb.HcsMessageFragment, total), key: key}
 }
 
 // helper functions

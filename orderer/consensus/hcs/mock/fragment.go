@@ -4,7 +4,7 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger/fabric-protos-go/orderer"
+	"github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 )
 
 type FragmentSupport struct {
@@ -42,7 +42,7 @@ type FragmentSupport struct {
 	isPendingReturnsOnCall map[int]struct {
 		result1 bool
 	}
-	MakeFragmentsStub        func([]byte, []byte, uint64) []*orderer.HcsMessageFragment
+	MakeFragmentsStub        func([]byte, []byte, uint64) []*proto.HcsMessageFragment
 	makeFragmentsMutex       sync.RWMutex
 	makeFragmentsArgsForCall []struct {
 		arg1 []byte
@@ -50,15 +50,15 @@ type FragmentSupport struct {
 		arg3 uint64
 	}
 	makeFragmentsReturns struct {
-		result1 []*orderer.HcsMessageFragment
+		result1 []*proto.HcsMessageFragment
 	}
 	makeFragmentsReturnsOnCall map[int]struct {
-		result1 []*orderer.HcsMessageFragment
+		result1 []*proto.HcsMessageFragment
 	}
-	ReassembleStub        func(*orderer.HcsMessageFragment) []byte
+	ReassembleStub        func(*proto.HcsMessageFragment) []byte
 	reassembleMutex       sync.RWMutex
 	reassembleArgsForCall []struct {
-		arg1 *orderer.HcsMessageFragment
+		arg1 *proto.HcsMessageFragment
 	}
 	reassembleReturns struct {
 		result1 []byte
@@ -250,7 +250,7 @@ func (fake *FragmentSupport) IsPendingReturnsOnCall(i int, result1 bool) {
 	}{result1}
 }
 
-func (fake *FragmentSupport) MakeFragments(arg1 []byte, arg2 []byte, arg3 uint64) []*orderer.HcsMessageFragment {
+func (fake *FragmentSupport) MakeFragments(arg1 []byte, arg2 []byte, arg3 uint64) []*proto.HcsMessageFragment {
 	var arg1Copy []byte
 	if arg1 != nil {
 		arg1Copy = make([]byte, len(arg1))
@@ -286,7 +286,7 @@ func (fake *FragmentSupport) MakeFragmentsCallCount() int {
 	return len(fake.makeFragmentsArgsForCall)
 }
 
-func (fake *FragmentSupport) MakeFragmentsCalls(stub func([]byte, []byte, uint64) []*orderer.HcsMessageFragment) {
+func (fake *FragmentSupport) MakeFragmentsCalls(stub func([]byte, []byte, uint64) []*proto.HcsMessageFragment) {
 	fake.makeFragmentsMutex.Lock()
 	defer fake.makeFragmentsMutex.Unlock()
 	fake.MakeFragmentsStub = stub
@@ -299,34 +299,34 @@ func (fake *FragmentSupport) MakeFragmentsArgsForCall(i int) ([]byte, []byte, ui
 	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
 }
 
-func (fake *FragmentSupport) MakeFragmentsReturns(result1 []*orderer.HcsMessageFragment) {
+func (fake *FragmentSupport) MakeFragmentsReturns(result1 []*proto.HcsMessageFragment) {
 	fake.makeFragmentsMutex.Lock()
 	defer fake.makeFragmentsMutex.Unlock()
 	fake.MakeFragmentsStub = nil
 	fake.makeFragmentsReturns = struct {
-		result1 []*orderer.HcsMessageFragment
+		result1 []*proto.HcsMessageFragment
 	}{result1}
 }
 
-func (fake *FragmentSupport) MakeFragmentsReturnsOnCall(i int, result1 []*orderer.HcsMessageFragment) {
+func (fake *FragmentSupport) MakeFragmentsReturnsOnCall(i int, result1 []*proto.HcsMessageFragment) {
 	fake.makeFragmentsMutex.Lock()
 	defer fake.makeFragmentsMutex.Unlock()
 	fake.MakeFragmentsStub = nil
 	if fake.makeFragmentsReturnsOnCall == nil {
 		fake.makeFragmentsReturnsOnCall = make(map[int]struct {
-			result1 []*orderer.HcsMessageFragment
+			result1 []*proto.HcsMessageFragment
 		})
 	}
 	fake.makeFragmentsReturnsOnCall[i] = struct {
-		result1 []*orderer.HcsMessageFragment
+		result1 []*proto.HcsMessageFragment
 	}{result1}
 }
 
-func (fake *FragmentSupport) Reassemble(arg1 *orderer.HcsMessageFragment) []byte {
+func (fake *FragmentSupport) Reassemble(arg1 *proto.HcsMessageFragment) []byte {
 	fake.reassembleMutex.Lock()
 	ret, specificReturn := fake.reassembleReturnsOnCall[len(fake.reassembleArgsForCall)]
 	fake.reassembleArgsForCall = append(fake.reassembleArgsForCall, struct {
-		arg1 *orderer.HcsMessageFragment
+		arg1 *proto.HcsMessageFragment
 	}{arg1})
 	fake.recordInvocation("Reassemble", []interface{}{arg1})
 	fake.reassembleMutex.Unlock()
@@ -346,13 +346,13 @@ func (fake *FragmentSupport) ReassembleCallCount() int {
 	return len(fake.reassembleArgsForCall)
 }
 
-func (fake *FragmentSupport) ReassembleCalls(stub func(*orderer.HcsMessageFragment) []byte) {
+func (fake *FragmentSupport) ReassembleCalls(stub func(*proto.HcsMessageFragment) []byte) {
 	fake.reassembleMutex.Lock()
 	defer fake.reassembleMutex.Unlock()
 	fake.ReassembleStub = stub
 }
 
-func (fake *FragmentSupport) ReassembleArgsForCall(i int) *orderer.HcsMessageFragment {
+func (fake *FragmentSupport) ReassembleArgsForCall(i int) *proto.HcsMessageFragment {
 	fake.reassembleMutex.RLock()
 	defer fake.reassembleMutex.RUnlock()
 	argsForCall := fake.reassembleArgsForCall[i]
