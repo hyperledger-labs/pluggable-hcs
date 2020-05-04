@@ -203,8 +203,8 @@ func NewOrdererGroup(conf *genesisconfig.Orderer) (*cb.ConfigGroup, error) {
 			return nil, errors.Errorf("cannot marshal metadata for orderer type %s: %s", ConsensusTypeEtcdRaft, err)
 		}
 	case ConsensusTypeHcs:
-		if _, err := hedera.TopicIDFromString(conf.Hcs.TopicID); err != nil {
-			return nil, errors.Errorf("invalid HCS topic ID '%v', %v", conf.Hcs.TopicID, err)
+		if _, err := hedera.TopicIDFromString(conf.Hcs.TopicId); err != nil {
+			return nil, errors.Errorf("invalid HCS topic ID '%v', %v", conf.Hcs.TopicId, err)
 		}
 		if consensusMetadata, err = channelconfig.MarshalHcsMetadata(conf.Hcs); err != nil {
 			return nil, errors.Errorf("cannot marshal metadata for orderer type %s: %s", ConsensusTypeHcs, err)

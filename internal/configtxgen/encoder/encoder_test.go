@@ -371,7 +371,7 @@ var _ = Describe("Encoder", func() {
 		Context("when the consensus type is hcs", func() {
 			BeforeEach(func() {
 				conf.OrdererType = "hcs"
-				conf.Hcs = &hb.HcsConfigMetadata{TopicID: "0.0.1230"}
+				conf.Hcs = &hb.HcsConfigMetadata{TopicId: "0.0.1230"}
 			})
 
 			It("adds the hcs topic key", func() {
@@ -385,12 +385,12 @@ var _ = Describe("Encoder", func() {
 				metadata := &hb.HcsConfigMetadata{}
 				err = proto.Unmarshal(consensusType.Metadata, metadata)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(metadata.TopicID).To(Equal("0.0.1230"))
+				Expect(metadata.TopicId).To(Equal("0.0.1230"))
 			})
 
 			Context("when the hcs topic id is bad", func() {
 				BeforeEach(func() {
-					conf.Hcs = &hb.HcsConfigMetadata{TopicID: "a.b.dead"}
+					conf.Hcs = &hb.HcsConfigMetadata{TopicId: "a.b.dead"}
 				})
 
 				It("wraps and returns the error", func() {

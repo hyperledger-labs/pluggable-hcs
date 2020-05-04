@@ -1,4 +1,6 @@
-// TODO: copyright and license
+/*
+SPDX-License-Identifier: Apache-2.0
+*/
 
 syntax = "proto3";
 
@@ -30,17 +32,6 @@ message HcsMessageRegular {
     uint64 original_seq = 4;
 }
 
-// TODO: a fragment key is needed to identify the subject so as to handle
-// the case that different messages are fragmented by different subjects with
-// the same fragment_id
-message HcsMessageFragment {
-    bytes fragment = 1;
-    bytes fragment_key = 2;
-    fixed64 fragment_id = 3;
-    fixed32 sequence = 4;
-    fixed32 total_fragments = 5;
-}
-
 // HcsMessageTimeToCut is used to signal to the orderers that it is time to
 // cut block <block_number>.
 message HcsMessageTimeToCut {
@@ -60,12 +51,37 @@ message HcsMetadata {
     google.protobuf.Timestamp last_consensus_timestamp_persisted = 1;
     uint64 last_original_sequence_processed = 2;
     uint64 last_resubmitted_config_sequence = 3;
-    // last fragment free consensus timestamp is the consensus timestamp of the last
-    // fragment free block
-    google.protobuf.Timestamp last_fragment_free_consensus_timestamp_persisted = 4;
+    // last chunk free consensus timestamp is the consensus timestamp of the last
+    // chunk free block
+    google.protobuf.Timestamp last_chunk_free_consensus_timestamp_persisted = 4;
 }
 
 message HcsConfigMetadata {
     // HCS topic ID in the format of shard.realm.num
-    string TopicID = 1;
+    string topic_id = 1;
+    // ed25519 public keys of orderer nodes for signature verification
+    repeated string public_keys = 2;
+}
+
+message ApplicationMessageID {
+    google.protobuf.Timestamp validStart = 1;
+    bytes applicationID = 2;
+}
+
+// a complete message containing data provided by an app
+message ApplicationMessage {
+    ApplicationMessageID applicationMessageId = 1;
+
+    bytes businessProcessMessage = 2;  // the payload
+    bytes unencryptedBusinessProcessMessageHash  = 3;
+    bytes businessProcessSignatureOnHash  = 4;
+    bytes encryptionRandom = 5;  // random number used for ivspec. it doubles as a flag to test if message is encrypted
+}
+
+// parts of a complete message
+message ApplicationMessageChunk {
+    ApplicationMessageID applicationMessageId = 1;
+    int32 chunksCount = 2; // The total number of parts to make up a complete message
+    int32 chunkIndex = 3; // This message part index
+    bytes messageChunk = 4; // The message part
 }

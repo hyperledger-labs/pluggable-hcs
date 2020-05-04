@@ -5,6 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 package hcs
 
 import (
+	"crypto/rand"
 	"fmt"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
 	"strings"
@@ -35,7 +36,10 @@ type identity interface {
 	msp.Identity
 }
 
-const testOperatorPrivateKey = "302e020100300506032b657004220420e373811ccb438637a4358db3cbb72dd899eeda6b764c0b8128c61063752b4fe4"
+const (
+	testOperatorPrivateKey = "302e020100300506032b657004220420e373811ccb438637a4358db3cbb72dd899eeda6b764c0b8128c61063752b4fe4"
+	testOperatorPublicKey  = "302a300506032b6570032100a6e31434f78ac1d799161431e4e2545c7ac357223a7aca677c5951fbb437d844"
+)
 
 func init() {
 	mockLocalConfig = newMockLocalConfig(false)
@@ -63,21 +67,21 @@ func TestHandleChain(t *testing.T) {
 	publicIdentity.SerializeReturns(make([]byte, 16), nil)
 	healthChecker := &mock.HealthChecker{}
 	mockOrderer := &mock.OrdererConfig{}
-	mockConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicID: "0.0.19718"})
-	mockInvalidConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicID: "invalid hcs topic id"})
+	mockConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicId: "0.0.19718"})
+	mockInvalidConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicId: "invalid hcs topic id"})
 
 	zeroTimestamp := timestamp.Timestamp{Seconds: 0, Nanos: 0}
 	mockBlockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&hb.HcsMetadata{
-		LastConsensusTimestampPersisted:             &zeroTimestamp,
-		LastOriginalSequenceProcessed:               0,
-		LastResubmittedConfigSequence:               0,
-		LastFragmentFreeConsensusTimestampPersisted: &zeroTimestamp,
+		LastConsensusTimestampPersisted:          &zeroTimestamp,
+		LastOriginalSequenceProcessed:            0,
+		LastResubmittedConfigSequence:            0,
+		LastChunkFreeConsensusTimestampPersisted: &zeroTimestamp,
 	})}
 	mockInvalidTimestampBlockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&hb.HcsMetadata{
-		LastConsensusTimestampPersisted:             nil,
-		LastOriginalSequenceProcessed:               0,
-		LastResubmittedConfigSequence:               0,
-		LastFragmentFreeConsensusTimestampPersisted: nil,
+		LastConsensusTimestampPersisted:          nil,
+		LastOriginalSequenceProcessed:            0,
+		LastResubmittedConfigSequence:            0,
+		LastChunkFreeConsensusTimestampPersisted: nil,
 	})}
 
 	var tests = []struct {
@@ -200,7 +204,7 @@ func TestHandleChain(t *testing.T) {
 		assert.NoError(t, err, "Expected HandleChain returns no error")
 		assert.NotNil(t, ch, "Expected HandleChain returns a non-nil chain")
 
-		mockOrderer.ConsensusMetadataReturns(protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicID: "0.0.5530"}))
+		mockOrderer.ConsensusMetadataReturns(protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicId: "0.0.5530"}))
 		mockSupport = &mockmultichannel.ConsenterSupport{
 			SharedConfigVal:  mockOrderer,
 			ChannelIDVal:     channelNameForTest(t) + ".1",
@@ -215,6 +219,8 @@ func TestHandleChain(t *testing.T) {
 var mockLocalConfig *localconfig.TopLevel
 
 func newMockLocalConfig(enableTLS bool) *localconfig.TopLevel {
+	key := make([]byte, 32)
+	rand.Read(key)
 	return &localconfig.TopLevel{
 		General: localconfig.General{
 			TLS: localconfig.TLS{
@@ -234,6 +240,7 @@ func newMockLocalConfig(enableTLS bool) *localconfig.TopLevel {
 					Key:  testOperatorPrivateKey,
 				},
 			},
+			EncryptionKey: string(key),
 		},
 	}
 }
