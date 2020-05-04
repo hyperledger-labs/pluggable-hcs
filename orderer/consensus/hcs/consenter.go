@@ -71,24 +71,23 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 	if proto.Unmarshal(support.SharedConfig().ConsensusMetadata(), configMetadata) != nil {
 		return nil, fmt.Errorf("cannot unmarshal config metadata = %v", err)
 	}
-	if topicID, err = hedera.TopicIDFromString(configMetadata.TopicID); err != nil {
+	if topicID, err = hedera.TopicIDFromString(configMetadata.TopicId); err != nil {
 		return nil, fmt.Errorf("invalid HCS Topic ID = %v", err)
 	}
-	if channelID, ok := consenter.topicChannelMap[configMetadata.TopicID]; ok {
-		return nil, fmt.Errorf("HCS Topic ID %s is already used for channel %s", configMetadata.TopicID, channelID)
+	if channelID, ok := consenter.topicChannelMap[configMetadata.TopicId]; ok {
+		return nil, fmt.Errorf("HCS Topic ID %s is already used for channel %s", configMetadata.TopicId, channelID)
 	}
 
-	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastFragmentFreeConsensusTimestamp := getStateFromMetadata(metadata.Value, support.ChannelID())
+	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastChunkFreeConsensusTimestamp := getStateFromMetadata(metadata.Value, support.ChannelID())
 	return newChain(
 		consenter,
 		support,
 		consenter.healthChecker,
 		defaultHcsClientFactory,
-		topicID,
 		lastConsensusTimestampPersisted,
 		lastOriginalSequenceProcessed,
 		lastResubmittedConfigSequence,
-		lastFragmentFreeConsensusTimestamp,
+		lastChunkFreeConsensusTimestamp,
 	)
 }
 

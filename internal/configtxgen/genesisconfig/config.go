@@ -387,8 +387,8 @@ loop:
 		if ord.Hcs == nil {
 			logger.Panic("HCS configuration missing")
 		}
-		if _, err := hedera.TopicIDFromString(ord.Hcs.TopicID); err != nil {
-			logger.Panicf("invalid HCS Topic ID '%s', %v", ord.Hcs.TopicID, err)
+		if _, err := hedera.TopicIDFromString(ord.Hcs.TopicId); err != nil {
+			logger.Panicf("invalid HCS Topic ID '%s', %v", ord.Hcs.TopicId, err)
 		}
 	case EtcdRaft:
 		if ord.EtcdRaft == nil {

@@ -140,7 +140,7 @@ func TestConsensusSpecificInit(t *testing.T) {
 			},
 			{
 				name: "HCS section with invalid topic ID",
-				hcs:  &hb.HcsConfigMetadata{TopicID: "invalid topic id"},
+				hcs:  &hb.HcsConfigMetadata{TopicId: "invalid topic id"},
 			},
 		}
 
