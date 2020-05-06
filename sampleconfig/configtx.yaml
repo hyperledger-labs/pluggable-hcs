@@ -320,6 +320,7 @@ Orderer: &OrdererDefaults
 
     Hcs:
         TopicId: 0.0.1230
+        PublicKeys:
 
     # EtcdRaft defines configuration which must be set when the "etcdraft"
     # orderertype is chosen.

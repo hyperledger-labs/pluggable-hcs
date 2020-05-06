@@ -149,7 +149,7 @@ func newChain(
 	if gcmCipher != nil {
 		blkCipher = chain
 	}
-	if chain.appMsgProcessor, err = newAppMsgProcessor(chain.appID, maxConsensusMessageSize, chain, blkCipher); err != nil {
+	if chain.appMsgProcessor, err = newAppMsgProcessor(*chain.operatorID, chain.appID, maxConsensusMessageSize, chain, blkCipher); err != nil {
 		logger.Errorf("[channel: %s] failed to create appMsgProcessor with chunk size %d bytes", chain.ChannelID(), maxConsensusMessageSize)
 		return nil, fmt.Errorf("failed to create appMsgProcessor with chunk size %d bytes - %v", maxConsensusMessageSize, err)
 	}

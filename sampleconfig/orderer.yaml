@@ -279,11 +279,13 @@ Hcs:
 
     # map of mainnet/testnet nodes, each entry contains NodeAddress / NodeId
     Nodes:
-        "34_66_214_12:50211": 0.0.8
-        "34_66_214_12:50219": 0.0.198
+        "0_testnet_hedera_com:50211": 0.0.3
+        "1_testnet_hedera_com:50211": 0.0.4
+        "2_testnet_hedera_com:50211": 0.0.5
+        "3_testnet_hedera_com:50211": 0.0.6
 
     # mirror node address in the format of host:port
-    MirrorNodeAddress: 34.66.214.12:6552
+    MirrorNodeAddress: hcs.testnet.mirrornode.hedera.com:5600
 
     # operator set for the orderer
     Operator:
@@ -298,6 +300,8 @@ Hcs:
                 # As an alternative, uncomment the following "File" key and specify the PEM
                 # file name from which to load the key
                 #File: path/to/file
+        # 256-bit AES block cipher key or path to the key file
+        EncryptionKey:
 
 ################################################################################
 #
