@@ -246,6 +246,7 @@ Orderer: &OrdererDefaults
 
     Hcs:
         TopicId: SYS_HCS_TOPIC_ID
+        PublicKeys:
 
     # Policies defines the set of policies at this level of the config tree
     # For Orderer policies, their canonical path is

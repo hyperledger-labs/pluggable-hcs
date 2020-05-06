@@ -9,6 +9,7 @@ option go_package = "github.com/hyperledger/fabric/orderer/consensus/hcs/proto";
 package proto;
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
 
 // HcsMessage is a wrapper type for the messages that the HCS-based
 // orderer deals with.
@@ -63,9 +64,16 @@ message HcsConfigMetadata {
     repeated string public_keys = 2;
 }
 
+message AccountID {
+    int64 shardNum = 1; //The shard number (nonnegative)
+    int64 realmNum = 2; //The realm number (nonnegative)
+    int64 accountNum = 3; //A nonnegative account number unique within its realm
+}
+
 message ApplicationMessageID {
     google.protobuf.Timestamp validStart = 1;
-    bytes applicationID = 2;
+    AccountID accountID = 2; //The Account ID that paid for this transaction
+    google.protobuf.Any metadata = 3;
 }
 
 // a complete message containing data provided by an app
@@ -76,6 +84,9 @@ message ApplicationMessage {
     bytes unencryptedBusinessProcessMessageHash  = 3;
     bytes businessProcessSignatureOnHash  = 4;
     bytes encryptionRandom = 5;  // random number used for ivspec. it doubles as a flag to test if message is encrypted
+    google.protobuf.Any metadata = 6;
+    bytes metadataHash = 7;
+    bytes metadataSignatureOnHash = 8;
 }
 
 // parts of a complete message
@@ -84,4 +95,5 @@ message ApplicationMessageChunk {
     int32 chunksCount = 2; // The total number of parts to make up a complete message
     int32 chunkIndex = 3; // This message part index
     bytes messageChunk = 4; // The message part
+    google.protobuf.Any metadata = 5;
 }

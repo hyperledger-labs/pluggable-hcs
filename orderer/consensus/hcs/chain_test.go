@@ -1499,7 +1499,7 @@ func TestProcessMessages(t *testing.T) {
 			appID:       []byte("bare-minimum appID"),
 			maxChunkAge: calcMaxChunkAge(200, len(mockSupport.ChannelConfig().OrdererAddresses())),
 		}
-		chain.appMsgProcessor, err = newAppMsgProcessor(chain.appID, maxConsensusMessageSize, chain, nil)
+		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, chain, nil)
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
 		if lastConsensusTimestampPersisted != nil {
@@ -2106,7 +2106,7 @@ func TestResubmission(t *testing.T) {
 			appID:       []byte("bare-minimum appID"),
 			maxChunkAge: calcMaxChunkAge(200, len(mockSupport.ChannelConfig().OrdererAddresses())),
 		}
-		chain.appMsgProcessor, err = newAppMsgProcessor(chain.appID, maxConsensusMessageSize, chain, nil)
+		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, chain, nil)
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 		return chain
 	}

@@ -11,6 +11,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/golang/protobuf/proto"
+	any "github.com/golang/protobuf/ptypes/any"
+	"github.com/hashgraph/hedera-sdk-go"
 	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 	"github.com/hyperledger/fabric/protoutil"
 	"reflect"
@@ -35,7 +37,7 @@ type appMsgProcessor interface {
 	ExpireByAppID(appID []byte) (int, error)
 }
 
-func newAppMsgProcessor(appID []byte, chunkSize int, signer signer, blockCipher blockCipher) (appMsgProcessor, error) {
+func newAppMsgProcessor(accountID hedera.AccountID, appID []byte, chunkSize int, signer signer, blockCipher blockCipher) (appMsgProcessor, error) {
 	if chunkSize <= 0 {
 		return nil, fmt.Errorf("invalid chunkSize - %d", chunkSize)
 	}
@@ -49,6 +51,7 @@ func newAppMsgProcessor(appID []byte, chunkSize int, signer signer, blockCipher 
 		return nil, fmt.Errorf("must provide signer")
 	}
 	return &appMsgProcessorImpl{
+		accountID:       accountID,
 		appID:           appID,
 		chunkSize:       chunkSize,
 		signer:          signer,
@@ -61,6 +64,7 @@ func newAppMsgProcessor(appID []byte, chunkSize int, signer signer, blockCipher 
 }
 
 type appMsgProcessorImpl struct {
+	accountID     hedera.AccountID
 	appID         []byte
 	chunkSize     int
 	signer        signer
@@ -83,8 +87,15 @@ func (processor *appMsgProcessorImpl) Split(message []byte) ([]*hb.ApplicationMe
 	// wrap message into ApplicationMessage
 	appMsg := &hb.ApplicationMessage{
 		ApplicationMessageId: &hb.ApplicationMessageID{
-			ValidStart:    timestampProtoOrPanic(time.Now()),
-			ApplicationID: processor.appID,
+			ValidStart: timestampProtoOrPanic(time.Now()),
+			AccountID: &hb.AccountID{
+				ShardNum:   int64(processor.accountID.Shard),
+				RealmNum:   int64(processor.accountID.Realm),
+				AccountNum: int64(processor.accountID.Account),
+			},
+			Metadata: &any.Any{
+				Value: processor.appID,
+			},
 		},
 		BusinessProcessMessage: message,
 	}
@@ -171,7 +182,7 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 		}
 		isValidChunk = true
 		holder.chunks[index] = chunk
-		holder.appID = chunk.ApplicationMessageId.ApplicationID
+		holder.appID = chunk.ApplicationMessageId.Metadata.Value
 		holder.count++
 		holder.size += uint32(len(chunk.MessageChunk))
 		if holder.count != int32(len(holder.chunks)) {
@@ -286,7 +297,8 @@ func newChunkHolder(total int32, key string) *chunkHolder {
 // helper functions
 
 func makeHolderKey(id hb.ApplicationMessageID) string {
-	return fmt.Sprintf("%s%s", hex.EncodeToString(id.ApplicationID), id.ValidStart)
+	appID := id.Metadata.Value
+	return fmt.Sprintf("%s%s", hex.EncodeToString(appID), id.ValidStart)
 }
 
 func calcAge(bornTick uint64, currentTick uint64) uint64 {
