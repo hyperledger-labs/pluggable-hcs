@@ -6,6 +6,7 @@ package hcs
 
 import (
 	"fmt"
+	"github.com/hashgraph/hedera-sdk-go"
 	"math/rand"
 	"testing"
 
@@ -24,6 +25,14 @@ type mockSigner interface {
 type mockBlockCipher interface {
 	blockCipher
 }
+
+var (
+	testAccountID = hedera.AccountID{
+		Shard:   0,
+		Realm:   0,
+		Account: 160,
+	}
+)
 
 func TestNewEmptyAppMsgProcessor(t *testing.T) {
 	type args struct {
@@ -111,7 +120,7 @@ func TestNewEmptyAppMsgProcessor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			amp, err := newAppMsgProcessor(tt.args.appID, tt.args.chunkSize, tt.args.signer, tt.args.blockCipher)
+			amp, err := newAppMsgProcessor(testAccountID, tt.args.appID, tt.args.chunkSize, tt.args.signer, tt.args.blockCipher)
 			if !tt.wantErr {
 				assert.NoError(t, err, "Expected newAppMsgProcessor returns no error")
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor returns non-nil value")
@@ -203,7 +212,7 @@ func TestAppMsgProcessor(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				amp, err := newAppMsgProcessor(fakeAppID, maxConsensusMessageSize, tt.signer, tt.blockCipher)
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, tt.signer, tt.blockCipher)
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no err")
 
@@ -225,7 +234,7 @@ func TestAppMsgProcessor(t *testing.T) {
 						if index != len(chunks)-1 {
 							assert.Equal(t, maxConsensusMessageSize, len(chunk.MessageChunk), "Expected a full chunk")
 						}
-						assert.Equal(t, fakeAppID, chunk.ApplicationMessageId.ApplicationID, "Expected correct appID")
+						assert.Equal(t, fakeAppID, chunk.ApplicationMessageId.Metadata.Value, "Expected correct appID")
 						assert.Equal(t, tt.wantChunkCount, int(chunk.ChunksCount), "Expected correct ChunksCount")
 						assert.Equal(t, index, int(chunk.ChunkIndex), "Expected correct ChunkIndex")
 						assert.Equal(t, 1, tt.signer.SignCallCount()-prevSignCallCount, "Expected Sign called one time")
@@ -435,7 +444,7 @@ func TestAppMsgProcessor(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				amp, err := newAppMsgProcessor(fakeAppID, maxConsensusMessageSize, tt.signer, tt.blockCipher)
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, tt.signer, tt.blockCipher)
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
@@ -492,14 +501,14 @@ func TestAppMsgProcessor(t *testing.T) {
 		mockSigner.VerifyReturns(true)
 
 		t.Run("ProperEmpty", func(t *testing.T) {
-			amp, err := newAppMsgProcessor(fakeAppID, maxConsensusMessageSize, mockSigner, nil)
+			amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, mockSigner, nil)
 			assert.NotNil(t, amp, "Expected newAppMsgProcessor returns non-nil value")
 			assert.NoError(t, err, "Expected newAppMsgProcessor returns no error")
 			assert.False(t, amp.IsPending(), "Expected new amp IsPending = false")
 		})
 
 		t.Run("ProperWithData", func(t *testing.T) {
-			amp, err := newAppMsgProcessor(fakeAppID, maxConsensusMessageSize, mockSigner, nil)
+			amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, mockSigner, nil)
 			assert.NotNil(t, amp, "Expected newAppMsgProcessor returns non-nil value")
 			assert.NoError(t, err, "Expected newAppMsgProcessor returns no error")
 
@@ -526,7 +535,7 @@ func TestAppMsgProcessor(t *testing.T) {
 		fakesSigner.SignReturns([]byte("fake signature"), nil)
 		fakesSigner.VerifyReturns(true)
 
-		amp, err := newAppMsgProcessor(fakeAppID, maxConsensusMessageSize, fakesSigner, nil)
+		amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, fakesSigner, nil)
 		assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
@@ -611,7 +620,7 @@ func TestAppMsgProcessor(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				amp, err := newAppMsgProcessor(fakeAppID, maxConsensusMessageSize, fakesSigner, nil)
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, fakesSigner, nil)
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
