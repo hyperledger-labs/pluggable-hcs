@@ -6,6 +6,7 @@ package hcs
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
 	"strings"
@@ -240,7 +241,7 @@ func newMockLocalConfig(enableTLS bool) *localconfig.TopLevel {
 					Key:  testOperatorPrivateKey,
 				},
 			},
-			EncryptionKey: string(key),
+			EncryptionKey: base64.StdEncoding.EncodeToString(key),
 		},
 	}
 }
