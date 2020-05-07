@@ -300,7 +300,7 @@ Hcs:
                 # As an alternative, uncomment the following "File" key and specify the PEM
                 # file name from which to load the key
                 #File: path/to/file
-        # 256-bit AES block cipher key or path to the key file
+        # base64 encoded 256-bit AES block cipher key or path to the key file
         EncryptionKey:
 
 ################################################################################

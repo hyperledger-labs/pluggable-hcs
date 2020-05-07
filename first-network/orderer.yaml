@@ -298,7 +298,7 @@ Hcs:
             # key string (hex or PEM encoded) or path to the key file
             Key: Your Hedera testnet account private key string here
 
-    # 256-bit AES block cipher key or path to the key file
+    # base64 encoded 256-bit AES block cipher key or path to the key file
     EncryptionKey:
         File: /var/hyperledger/orderer/aes.key
 

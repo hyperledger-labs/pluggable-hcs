@@ -149,12 +149,20 @@ function checkPrereqs() {
 }
 
 function generateAESKey() {
+  echo "##########################################################"
+  echo "#########     Generating 256-bit AES Key    ##############"
+  echo "##########################################################"
+
   set -e
-  dd bs=32 count=1 if=/dev/urandom of=./aes.key
+  dd bs=32 count=1 if=/dev/urandom 2>/dev/null | base64 -o ./aes.key
   set +e
 }
 
 function generateChannelsForHCS() {
+  echo "##########################################################"
+  echo "#########  Creating Topic IDs for Channels  ##############"
+  echo "##########################################################"
+
   installHCSCli
   OUTPUT=$(hcscli topic create 2) || { echo "failed to create topics using hcscli!!!" && exit 1; }
   TOPICS=($(echo $OUTPUT | grep -o '[0-9]\+\.[0-9\+\.[0-9]\+'))

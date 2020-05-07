@@ -10,6 +10,7 @@ import (
 	"crypto/cipher"
 	"crypto/md5"
 	crand "crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
@@ -111,7 +112,12 @@ func newChain(
 	appID := md5.Sum(consenter.identity())
 	var gcmCipher cipher.AEAD
 	if consenter.sharedHcsConfig().EncryptionKey != "" {
-		if gcmCipher, err = makeGCMCipher(consenter.sharedHcsConfig().EncryptionKey); err != nil {
+		key, err := base64.StdEncoding.DecodeString(consenter.sharedHcsConfig().EncryptionKey)
+		if err != nil {
+			logger.Errorf("[channel: %s] EncryptionKey is not a valid base64 string = %v", support.ChannelID(), err)
+			return nil, err
+		}
+		if gcmCipher, err = makeGCMCipher(key); err != nil {
 			logger.Errorf("[channel: %s] failed to create gcm cipher = %v", support.ChannelID(), err)
 			return nil, err
 		}
@@ -767,12 +773,12 @@ func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset
 	return nil
 }
 
-func makeGCMCipher(keyStr string) (cipher.AEAD, error) {
-	if len(keyStr) != 32 {
+func makeGCMCipher(key []byte) (cipher.AEAD, error) {
+	if len(key) != 32 {
 		return nil, fmt.Errorf("failed to create the cipher, key size is not 256 bit")
 	}
 
-	block, err := aes.NewCipher([]byte(keyStr))
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create the AES block cipher, err = %v", err)
 	}
