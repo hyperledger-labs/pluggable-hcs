@@ -7,6 +7,7 @@ package hcs
 import (
 	"context"
 	crand "crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
@@ -150,50 +151,108 @@ func TestChain(t *testing.T) {
 	}
 
 	t.Run("New", func(t *testing.T) {
-		mockConsenter, mockSupport := newMocks(t)
-		mockHealthChecker := &mockhcs.HealthChecker{}
-		hcf := newDefaultMockHcsClientFactory()
-		chain, err := newChain(
-			mockConsenter,
-			mockSupport,
-			mockHealthChecker,
-			hcf,
-			oldestConsensusTimestamp,
-			lastOriginalOffsetProcessed,
-			lastResubmittedConfigOffset,
-			oldestConsensusTimestamp,
-		)
-
-		assert.NoError(t, err, "Expected newChain to return without errors")
-		select {
-		case <-chain.Errored():
-			logger.Debug("Errored() returned a closed channel as expected")
-		default:
-			t.Fatal("Errored() should have returned a closed channel")
+		var tests = []struct {
+			name         string
+			newMocksFunc func(*testing.T) (*consenterImpl, *mockmultichannel.ConsenterSupport)
+			wantErr      bool
+		}{
+			{
+				name:         "Proper",
+				newMocksFunc: newMocks,
+				wantErr:      false,
+			},
+			{
+				name: "WithCorruptedConsensusMetadata",
+				newMocksFunc: func(t *testing.T) (*consenterImpl, *mockmultichannel.ConsenterSupport) {
+					mockConsenter, mockSupport := newMocks(t)
+					mockOrderer := newMockOrderer(shortTimeout, goodHcsTopicIDStr, []string{testOperatorPublicKey})
+					mockOrderer.ConsensusMetadataReturns([]byte("corrupted data"))
+					mockSupport.SharedConfigVal = mockOrderer
+					return mockConsenter, mockSupport
+				},
+				wantErr: true,
+			},
+			{
+				name: "WithInvalidAESKeyString",
+				newMocksFunc: func(t *testing.T) (*consenterImpl, *mockmultichannel.ConsenterSupport) {
+					mockConsenter, mockSupport := newMocks(t)
+					mockLocalConfigHcs := *mockConsenter.sharedHcsConfigVal
+					mockLocalConfigHcs.EncryptionKey = "not base64 string"
+					mockConsenter.sharedHcsConfigVal = &mockLocalConfigHcs
+					return mockConsenter, mockSupport
+				},
+				wantErr: true,
+			},
+			{
+				name: "WithInvalidSizeAESKey",
+				newMocksFunc: func(t *testing.T) (*consenterImpl, *mockmultichannel.ConsenterSupport) {
+					mockConsenter, mockSupport := newMocks(t)
+					mockLocalConfigHcs := *mockConsenter.sharedHcsConfigVal
+					key := make([]byte, 9)
+					rand.Read(key)
+					mockLocalConfigHcs.EncryptionKey = base64.StdEncoding.EncodeToString(key)
+					mockConsenter.sharedHcsConfigVal = &mockLocalConfigHcs
+					return mockConsenter, mockSupport
+				},
+				wantErr: true,
+			},
 		}
 
-		select {
-		case <-chain.haltChan:
-			t.Fatal("haltChan should have been open")
-		default:
-			logger.Debug("haltChan is open as it should be")
-		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				mockConsenter, mockSupport := tt.newMocksFunc(t)
+				mockHealthChecker := &mockhcs.HealthChecker{}
+				hcf := newDefaultMockHcsClientFactory()
+				chain, err := newChain(
+					mockConsenter,
+					mockSupport,
+					mockHealthChecker,
+					hcf,
+					oldestConsensusTimestamp,
+					lastOriginalOffsetProcessed,
+					lastResubmittedConfigOffset,
+					oldestConsensusTimestamp,
+				)
 
-		select {
-		case <-chain.startChan:
-			t.Fatal("startChan should have been open")
-		default:
-			logger.Debug("startChan is open as it should be")
-		}
+				if tt.wantErr {
+					assert.Nil(t, chain, "Expected newChain return nil value")
+					assert.Error(t, err, "Expected newChain to return error")
+					return
+				}
 
-		assert.Equal(t, 1, mockHealthChecker.RegisterCheckerCallCount())
-		component, _ := mockHealthChecker.RegisterCheckerArgsForCall(0)
-		assert.Equal(t, goodHcsTopicIDStr, component)
-		assert.Equal(t, chain.lastCutBlockNumber, mockSupport.Height()-1)
-		assert.Equal(t, chain.lastConsensusTimestampPersisted, oldestConsensusTimestamp)
-		assert.Equal(t, chain.lastOriginalSequenceProcessed, lastOriginalOffsetProcessed)
-		assert.Equal(t, chain.lastResubmittedConfigSequence, lastResubmittedConfigOffset)
-		assert.Equal(t, chain.lastChunkFreeConsensusTimestamp, oldestConsensusTimestamp)
+				assert.NotNil(t, chain, "Expected newChain return non-nil value")
+				assert.NoError(t, err, "Expected newChain to return without errors")
+				select {
+				case <-chain.Errored():
+					logger.Debug("Errored() returned a closed channel as expected")
+				default:
+					t.Fatal("Errored() should have returned a closed channel")
+				}
+
+				select {
+				case <-chain.haltChan:
+					t.Fatal("haltChan should have been open")
+				default:
+					logger.Debug("haltChan is open as it should be")
+				}
+
+				select {
+				case <-chain.startChan:
+					t.Fatal("startChan should have been open")
+				default:
+					logger.Debug("startChan is open as it should be")
+				}
+
+				assert.Equal(t, 1, mockHealthChecker.RegisterCheckerCallCount())
+				component, _ := mockHealthChecker.RegisterCheckerArgsForCall(0)
+				assert.Equal(t, goodHcsTopicIDStr, component)
+				assert.Equal(t, chain.lastCutBlockNumber, mockSupport.Height()-1)
+				assert.Equal(t, chain.lastConsensusTimestampPersisted, oldestConsensusTimestamp)
+				assert.Equal(t, chain.lastOriginalSequenceProcessed, lastOriginalOffsetProcessed)
+				assert.Equal(t, chain.lastResubmittedConfigSequence, lastResubmittedConfigOffset)
+				assert.Equal(t, chain.lastChunkFreeConsensusTimestamp, oldestConsensusTimestamp)
+			})
+		}
 	})
 
 	t.Run("Start", func(t *testing.T) {
@@ -1254,7 +1313,7 @@ func TestBlockCipher(t *testing.T) {
 		// 256-bit aes key
 		key := make([]byte, 32)
 		rand.Read(key)
-		cipher, err := makeGCMCipher(string(key))
+		cipher, err := makeGCMCipher(key)
 		assert.NoError(t, err, "Expected gcm cipher created successfully")
 		chain.gcmCipher = cipher
 		return chain
@@ -3001,22 +3060,22 @@ func TestTimestampProtoOrPanic(t *testing.T) {
 func TestMakeGCMCipher(t *testing.T) {
 	var tests = []struct {
 		name    string
-		key     string
+		key     []byte
 		wantErr bool
 	}{
 		{
 			name:    "Proper",
-			key:     string(make([]byte, 32)),
+			key:     make([]byte, 32),
 			wantErr: false,
 		},
 		{
 			name:    "WithInvalidKeySize",
-			key:     "short",
+			key:     []byte("short"),
 			wantErr: true,
 		},
 		{
 			name:    "WithEmptyKeyString",
-			key:     "",
+			key:     []byte{},
 			wantErr: true,
 		},
 	}
