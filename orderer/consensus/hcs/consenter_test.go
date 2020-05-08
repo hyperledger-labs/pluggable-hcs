@@ -241,7 +241,10 @@ func newMockLocalConfig(enableTLS bool) *localconfig.TopLevel {
 					Key:  testOperatorPrivateKey,
 				},
 			},
-			EncryptionKey: base64.StdEncoding.EncodeToString(key),
+			BlockCipher: localconfig.HcsBlockCipher{
+				Type: "aes-256-gcm",
+				Key:  base64.StdEncoding.EncodeToString(key),
+			},
 		},
 	}
 }

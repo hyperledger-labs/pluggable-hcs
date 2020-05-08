@@ -57,11 +57,16 @@ message HcsMetadata {
     google.protobuf.Timestamp last_chunk_free_consensus_timestamp_persisted = 4;
 }
 
+message HcsConfigPublicKey {
+    string type = 1;
+    string key = 2;
+}
+
 message HcsConfigMetadata {
     // HCS topic ID in the format of shard.realm.num
     string topic_id = 1;
-    // ed25519 public keys of orderer nodes for signature verification
-    repeated string public_keys = 2;
+    // public keys of orderer nodes for signature verification
+    repeated HcsConfigPublicKey public_keys = 2;
 }
 
 message AccountID {
@@ -96,4 +101,10 @@ message ApplicationMessageChunk {
     int32 chunkIndex = 3; // This message part index
     bytes messageChunk = 4; // The message part
     google.protobuf.Any metadata = 5;
+}
+
+// signature with public key
+message ApplicationSignature {
+    bytes publicKey = 1;
+    bytes signature = 2;
 }

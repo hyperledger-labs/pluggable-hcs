@@ -247,6 +247,8 @@ Orderer: &OrdererDefaults
     Hcs:
         TopicId: SYS_HCS_TOPIC_ID
         PublicKeys:
+            #- Type: ed25519
+            #  Key: 302a300506032b657003210023452d9c2cc4e01deb670780f8e6d4e31badd1f5d2f5464971b490232a601c30
 
     # Policies defines the set of policies at this level of the config tree
     # For Orderer policies, their canonical path is
@@ -327,6 +329,9 @@ Profiles:
                 <<: *OrdererCapabilities
             Hcs:
                 TopicId: APP_HCS_TOPIC_ID
+                PublicKeys:
+                    #- Type: ed25519
+                    #  Key: 302a300506032b657003210023452d9c2cc4e01deb670780f8e6d4e31badd1f5d2f5464971b490232a601c30
 
     SampleMultiNodeEtcdRaft:
         <<: *ChannelDefaults

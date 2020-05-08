@@ -183,7 +183,7 @@ type Hcs struct {
 	Nodes             map[string]string
 	MirrorNodeAddress string
 	Operator          HcsOperator
-	EncryptionKey     string
+	BlockCipher       HcsBlockCipher
 }
 
 // HcsOperator contains HCS operator accountId and key
@@ -194,6 +194,11 @@ type HcsOperator struct {
 
 // HcsPrivateKey contains key type and key data
 type HcsPrivateKey struct {
+	Type string
+	Key  string
+}
+
+type HcsBlockCipher struct {
 	Type string
 	Key  string
 }

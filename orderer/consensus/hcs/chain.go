@@ -89,7 +89,8 @@ func newChain(
 	logger.Infof("[channel: %s] starting chain with last persisted consensus timestamp %d and "+
 		"last recorded block [%d]", support.ChannelID(), lastConsensusTimestampPersisted.UnixNano(), lastCutBlockNumber)
 
-	topicID, publicKeys, network, operatorID, operatorPrivateKey, err := parseConfig(support.SharedConfig().ConsensusMetadata(), consenter.sharedHcsConfig())
+	localHcsConfig := consenter.sharedHcsConfig()
+	topicID, publicKeys, network, operatorID, operatorPrivateKey, err := parseConfig(support.SharedConfig().ConsensusMetadata(), localHcsConfig)
 	if err != nil {
 		logger.Errorf("[channel: %s] err parsing config = %v", support.ChannelID(), err)
 		return nil, err
@@ -111,8 +112,12 @@ func newChain(
 
 	appID := md5.Sum(consenter.identity())
 	var gcmCipher cipher.AEAD
-	if consenter.sharedHcsConfig().EncryptionKey != "" {
-		key, err := base64.StdEncoding.DecodeString(consenter.sharedHcsConfig().EncryptionKey)
+	if localHcsConfig.BlockCipher.Key != "" {
+		if localHcsConfig.BlockCipher.Type != "aes-256-gcm" {
+			logger.Errorf("[channel: %s] unsupported block cipher type - %s", support.ChannelID(), localHcsConfig.BlockCipher.Type)
+			return nil, fmt.Errorf("unsupported block cipher type - %s", localHcsConfig.BlockCipher.Type)
+		}
+		key, err := base64.StdEncoding.DecodeString(localHcsConfig.BlockCipher.Key)
 		if err != nil {
 			logger.Errorf("[channel: %s] EncryptionKey is not a valid base64 string = %v", support.ChannelID(), err)
 			return nil, err
@@ -140,6 +145,7 @@ func newChain(
 		network:                         network,
 		operatorID:                      operatorID,
 		operatorPrivateKey:              operatorPrivateKey,
+		operatorPublicKeyBytes:          operatorPrivateKey.PublicKey().Bytes(),
 		publicKeys:                      publicKeys,
 		topicID:                         &topicID,
 		haltChan:                        make(chan struct{}),
@@ -195,7 +201,8 @@ type chainImpl struct {
 	network                 map[string]hedera.AccountID
 	operatorID              *hedera.AccountID
 	operatorPrivateKey      *hedera.Ed25519PrivateKey
-	publicKeys              []*hedera.Ed25519PublicKey
+	operatorPublicKeyBytes  []byte
+	publicKeys              map[string]*hedera.Ed25519PublicKey
 	topicID                 *hedera.ConsensusTopicID
 	topicProducer           factory.ConsensusClient
 	topicConsumer           factory.MirrorClient
@@ -284,20 +291,21 @@ func (chain *chainImpl) Errored() <-chan struct{} {
 }
 
 // signer interface
-func (chain *chainImpl) Sign(message []byte) ([]byte, error) {
+func (chain *chainImpl) Sign(message []byte) ([]byte, []byte, error) {
 	if message == nil || len(message) == 0 {
-		return nil, fmt.Errorf("invalid data")
+		return nil, nil, fmt.Errorf("invalid data")
 	}
-	return chain.operatorPrivateKey.Sign(message), nil
+	return chain.operatorPublicKeyBytes, chain.operatorPrivateKey.Sign(message), nil
 }
 
-func (chain *chainImpl) Verify(message, signature []byte) bool {
-	for _, publicKey := range chain.publicKeys {
-		if ed25519.Verify(publicKey.Bytes(), message, signature) {
-			return true
-		}
+func (chain *chainImpl) Verify(message, signerPublicKey, signature []byte) bool {
+	if message == nil || signerPublicKey == nil || signature == nil {
+		return false
 	}
-	return false
+	if _, ok := chain.publicKeys[string(signerPublicKey)]; !ok {
+		return false
+	}
+	return ed25519.Verify(signerPublicKey, message, signature)
 }
 
 func (chain *chainImpl) Encrypt(plaintext []byte) (iv []byte, ciphertext []byte, err error) {
@@ -700,13 +708,9 @@ func (chain *chainImpl) processRegularMessage(msg *hb.HcsMessageRegular, ts time
 		if err := proto.Unmarshal(chain.SharedConfig().ConsensusMetadata(), hcsConfigMetadata); err != nil {
 			logger.Panicf("[channel: %s] invalid consensus metadata in new channel configuration - %v", chain.ChannelID(), err)
 		}
-		publicKeys := make([]*hedera.Ed25519PublicKey, len(hcsConfigMetadata.PublicKeys))
-		for index, keyStr := range hcsConfigMetadata.PublicKeys {
-			publicKey, err := hedera.Ed25519PublicKeyFromString(keyStr)
-			if err != nil {
-				logger.Panicf("[channel: %s] public key at %d is invalid in configuration metadata - %v", chain.ChannelID(), index, err)
-			}
-			publicKeys[index] = &publicKey
+		publicKeys, err := getPublicKeys(hcsConfigMetadata.PublicKeys, chain.operatorPrivateKey.PublicKey())
+		if err != nil {
+			logger.Panicf("[channel: %s] failed to parse public keys in consensus metadata - %v", chain.ChannelID(), err)
 		}
 		chain.publicKeys = publicKeys
 		logger.Debug("[channel: %s] channel configuration has changed, publicKeys gets re-parsed", chain.ChannelID())
@@ -914,10 +918,27 @@ func startThread(chain *chainImpl) {
 	chain.processMessages()
 }
 
+func getPublicKeys(publicKeysIn []*hb.HcsConfigPublicKey, extra hedera.Ed25519PublicKey) (map[string]*hedera.Ed25519PublicKey, error) {
+	publicKeys := map[string]*hedera.Ed25519PublicKey{
+		string(extra.Bytes()): &extra,
+	}
+	for _, publicKeyIn := range publicKeysIn {
+		if publicKeyIn.Type != "ed25519" {
+			return nil, fmt.Errorf("unsupported public key type %s", publicKeyIn.Type)
+		}
+		publicKey, err := hedera.Ed25519PublicKeyFromString(publicKeyIn.Key)
+		if err != nil {
+			return nil, err
+		}
+		publicKeys[string(publicKey.Bytes())] = &publicKey
+	}
+	return publicKeys, nil
+}
+
 func parseConfig(
 	configMetaData []byte,
 	config *localconfig.Hcs,
-) (topicID hedera.ConsensusTopicID, publicKeys []*hedera.Ed25519PublicKey, network map[string]hedera.AccountID, operatorID *hedera.AccountID, privateKey *hedera.Ed25519PrivateKey, err error) {
+) (topicID hedera.ConsensusTopicID, publicKeys map[string]*hedera.Ed25519PublicKey, network map[string]hedera.AccountID, operatorID *hedera.AccountID, privateKey *hedera.Ed25519PrivateKey, err error) {
 	hcsConfigMetadata := &hb.HcsConfigMetadata{}
 	if config.Operator.PrivateKey.Type != "ed25519" {
 		err = fmt.Errorf("private key type \"%s\" is not supported", config.Operator.PrivateKey.Type)
@@ -937,18 +958,10 @@ func parseConfig(
 		return
 	}
 
-	publicKey := tmpPrivateKey.PublicKey()
-	tmpPublicKeys := []*hedera.Ed25519PublicKey{&publicKey}
-	for index, keyStr := range hcsConfigMetadata.PublicKeys {
-		if keyStr == tmpPublicKeys[0].String() {
-			continue
-		}
-		publicKey, err = hedera.Ed25519PublicKeyFromString(keyStr)
-		if err != nil {
-			err = fmt.Errorf("public key %d in config metadata is invalid - %v", index, err)
-			return
-		}
-		tmpPublicKeys = append(tmpPublicKeys, &publicKey)
+	tmpPublicKeys, err := getPublicKeys(hcsConfigMetadata.PublicKeys, tmpPrivateKey.PublicKey())
+	if err != nil {
+		err = fmt.Errorf("failed to parse public keys = %v", err)
+		return
 	}
 
 	nodes := config.Nodes

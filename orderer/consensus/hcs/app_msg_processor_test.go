@@ -137,9 +137,9 @@ func TestAppMsgProcessor(t *testing.T) {
 
 	t.Run("TestSplit", func(t *testing.T) {
 		fakeSigner := &mockhcs.Signer{}
-		fakeSigner.SignReturns([]byte("fake signature"), nil)
+		fakeSigner.SignReturns([]byte("fake public key"), []byte("fake signature"), nil)
 		badSigner := &mockhcs.Signer{}
-		badSigner.SignReturns(nil, fmt.Errorf("can't sign message"))
+		badSigner.SignReturns(nil, nil, fmt.Errorf("can't sign message"))
 		fakeBlockCipher := &mockhcs.BlockCipher{}
 		fakeBlockCipher.EncryptStub = func(plaintext []byte) (iv, ciphertext []byte, err error) {
 			iv = []byte("iv")
@@ -249,11 +249,12 @@ func TestAppMsgProcessor(t *testing.T) {
 
 	t.Run("TestReassemble", func(t *testing.T) {
 		fakeSigner := &mockhcs.Signer{}
+		fakePublicKey := []byte("sample public key")
 		fakeSignature := []byte("sample signature")
-		fakeSigner.SignStub = func([]byte) ([]byte, error) {
+		fakeSigner.SignStub = func([]byte) ([]byte, []byte, error) {
 			signatureCopy := make([]byte, len(fakeSignature))
 			copy(signatureCopy, fakeSignature)
-			return signatureCopy, nil
+			return fakePublicKey, signatureCopy, nil
 		}
 		fakeSigner.VerifyReturns(true)
 
@@ -425,6 +426,24 @@ func TestAppMsgProcessor(t *testing.T) {
 				wantErr: true,
 			},
 			{
+				name:                "WithCorruptedSignature",
+				signer:              fakeSigner,
+				blockCipher:         nil,
+				messageSize:         maxConsensusMessageSize - 400,
+				expectedChunksCount: 1,
+				chunksModifyFunc: func(t *testing.T, chunks []*hb.ApplicationMessageChunk) {
+					msg := &hb.ApplicationMessage{}
+					assert.NoError(t, proto.Unmarshal(chunks[0].MessageChunk, msg), "Expected proto unmarshal successful")
+					for i := 0; i < len(msg.BusinessProcessSignatureOnHash); i++ {
+						msg.BusinessProcessSignatureOnHash[i] = ^msg.BusinessProcessSignatureOnHash[i]
+					}
+					var err error
+					chunks[0].MessageChunk, err = proto.Marshal(msg)
+					assert.NoError(t, err, "Expected proto marshal successful")
+				},
+				wantErr: true,
+			},
+			{
 				name:                "WithEncryptedDataAndNoBlockCipher",
 				signer:              fakeSigner,
 				blockCipher:         nil,
@@ -483,8 +502,9 @@ func TestAppMsgProcessor(t *testing.T) {
 
 					assert.Equal(t, 1, tt.signer.VerifyCallCount()-prevVerifyCallCount, "Expected Verify called one time")
 					signData := tt.signer.SignArgsForCall(tt.signer.SignCallCount() - 1)
-					verifyData, verifySignature := tt.signer.VerifyArgsForCall(prevVerifyCallCount)
+					verifyData, verifyPublicKey, verifySignature := tt.signer.VerifyArgsForCall(prevVerifyCallCount)
 					assert.Equal(t, signData, verifyData, "Expected signData and verifyData are the same")
+					assert.Equal(t, fakePublicKey, verifyPublicKey, "Expected public keys match")
 					assert.Equal(t, fakeSignature, verifySignature, "Expected signatures match")
 
 					if tt.blockCipher != nil {
@@ -497,7 +517,7 @@ func TestAppMsgProcessor(t *testing.T) {
 
 	t.Run("TestIsPending", func(t *testing.T) {
 		mockSigner := &mockhcs.Signer{}
-		mockSigner.SignReturns([]byte("signature"), nil)
+		mockSigner.SignReturns([]byte("public key"), []byte("signature"), nil)
 		mockSigner.VerifyReturns(true)
 
 		t.Run("ProperEmpty", func(t *testing.T) {
@@ -532,7 +552,7 @@ func TestAppMsgProcessor(t *testing.T) {
 
 	t.Run("TestExpireByAge", func(t *testing.T) {
 		fakesSigner := &mockhcs.Signer{}
-		fakesSigner.SignReturns([]byte("fake signature"), nil)
+		fakesSigner.SignReturns([]byte("fake public key"), []byte("fake signature"), nil)
 		fakesSigner.VerifyReturns(true)
 
 		amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, fakesSigner, nil)
@@ -558,7 +578,7 @@ func TestAppMsgProcessor(t *testing.T) {
 
 	t.Run("TestExpireByAppID", func(t *testing.T) {
 		fakesSigner := &mockhcs.Signer{}
-		fakesSigner.SignReturns([]byte("fake signature"), nil)
+		fakesSigner.SignReturns([]byte("fake public key"), []byte("fake signature"), nil)
 		fakesSigner.VerifyReturns(true)
 
 		var tests = []struct {
