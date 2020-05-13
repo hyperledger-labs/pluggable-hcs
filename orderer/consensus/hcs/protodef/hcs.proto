@@ -4,9 +4,9 @@ SPDX-License-Identifier: Apache-2.0
 
 syntax = "proto3";
 
-option go_package = "github.com/hyperledger/fabric/orderer/consensus/hcs/proto";
+option go_package = "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef";
 
-package proto;
+package protodef;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/any.proto";

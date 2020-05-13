@@ -12,7 +12,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	mockhcs "github.com/hyperledger/fabric/orderer/consensus/hcs/mock"
-	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 	"github.com/stretchr/testify/assert"
 )
 
