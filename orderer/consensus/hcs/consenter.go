@@ -15,7 +15,7 @@ import (
 	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/consensus"
-	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 )
 
 var logger = flogging.MustGetLogger("orderer.consensus.hcs")

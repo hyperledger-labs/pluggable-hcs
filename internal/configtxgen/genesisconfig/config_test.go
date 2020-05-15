@@ -11,7 +11,7 @@ import (
 
 	"github.com/hyperledger/fabric-protos-go/orderer/etcdraft"
 	"github.com/hyperledger/fabric/core/config/configtest"
-	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 	"github.com/stretchr/testify/assert"
 )
 

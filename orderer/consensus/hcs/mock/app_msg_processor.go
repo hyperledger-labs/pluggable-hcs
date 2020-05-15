@@ -4,7 +4,7 @@ package mock
 import (
 	"sync"
 
-	"github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
+	"github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 )
 
 type AppMsgProcessor struct {
@@ -42,10 +42,10 @@ type AppMsgProcessor struct {
 	isPendingReturnsOnCall map[int]struct {
 		result1 bool
 	}
-	ReassembleStub        func(*proto.ApplicationMessageChunk) ([]byte, error)
+	ReassembleStub        func(*protodef.ApplicationMessageChunk) ([]byte, error)
 	reassembleMutex       sync.RWMutex
 	reassembleArgsForCall []struct {
-		arg1 *proto.ApplicationMessageChunk
+		arg1 *protodef.ApplicationMessageChunk
 	}
 	reassembleReturns struct {
 		result1 []byte
@@ -55,17 +55,17 @@ type AppMsgProcessor struct {
 		result1 []byte
 		result2 error
 	}
-	SplitStub        func([]byte) ([]*proto.ApplicationMessageChunk, error)
+	SplitStub        func([]byte) ([]*protodef.ApplicationMessageChunk, error)
 	splitMutex       sync.RWMutex
 	splitArgsForCall []struct {
 		arg1 []byte
 	}
 	splitReturns struct {
-		result1 []*proto.ApplicationMessageChunk
+		result1 []*protodef.ApplicationMessageChunk
 		result2 error
 	}
 	splitReturnsOnCall map[int]struct {
-		result1 []*proto.ApplicationMessageChunk
+		result1 []*protodef.ApplicationMessageChunk
 		result2 error
 	}
 	invocations      map[string][][]interface{}
@@ -252,11 +252,11 @@ func (fake *AppMsgProcessor) IsPendingReturnsOnCall(i int, result1 bool) {
 	}{result1}
 }
 
-func (fake *AppMsgProcessor) Reassemble(arg1 *proto.ApplicationMessageChunk) ([]byte, error) {
+func (fake *AppMsgProcessor) Reassemble(arg1 *protodef.ApplicationMessageChunk) ([]byte, error) {
 	fake.reassembleMutex.Lock()
 	ret, specificReturn := fake.reassembleReturnsOnCall[len(fake.reassembleArgsForCall)]
 	fake.reassembleArgsForCall = append(fake.reassembleArgsForCall, struct {
-		arg1 *proto.ApplicationMessageChunk
+		arg1 *protodef.ApplicationMessageChunk
 	}{arg1})
 	fake.recordInvocation("Reassemble", []interface{}{arg1})
 	fake.reassembleMutex.Unlock()
@@ -276,13 +276,13 @@ func (fake *AppMsgProcessor) ReassembleCallCount() int {
 	return len(fake.reassembleArgsForCall)
 }
 
-func (fake *AppMsgProcessor) ReassembleCalls(stub func(*proto.ApplicationMessageChunk) ([]byte, error)) {
+func (fake *AppMsgProcessor) ReassembleCalls(stub func(*protodef.ApplicationMessageChunk) ([]byte, error)) {
 	fake.reassembleMutex.Lock()
 	defer fake.reassembleMutex.Unlock()
 	fake.ReassembleStub = stub
 }
 
-func (fake *AppMsgProcessor) ReassembleArgsForCall(i int) *proto.ApplicationMessageChunk {
+func (fake *AppMsgProcessor) ReassembleArgsForCall(i int) *protodef.ApplicationMessageChunk {
 	fake.reassembleMutex.RLock()
 	defer fake.reassembleMutex.RUnlock()
 	argsForCall := fake.reassembleArgsForCall[i]
@@ -315,7 +315,7 @@ func (fake *AppMsgProcessor) ReassembleReturnsOnCall(i int, result1 []byte, resu
 	}{result1, result2}
 }
 
-func (fake *AppMsgProcessor) Split(arg1 []byte) ([]*proto.ApplicationMessageChunk, error) {
+func (fake *AppMsgProcessor) Split(arg1 []byte) ([]*protodef.ApplicationMessageChunk, error) {
 	var arg1Copy []byte
 	if arg1 != nil {
 		arg1Copy = make([]byte, len(arg1))
@@ -344,7 +344,7 @@ func (fake *AppMsgProcessor) SplitCallCount() int {
 	return len(fake.splitArgsForCall)
 }
 
-func (fake *AppMsgProcessor) SplitCalls(stub func([]byte) ([]*proto.ApplicationMessageChunk, error)) {
+func (fake *AppMsgProcessor) SplitCalls(stub func([]byte) ([]*protodef.ApplicationMessageChunk, error)) {
 	fake.splitMutex.Lock()
 	defer fake.splitMutex.Unlock()
 	fake.SplitStub = stub
@@ -357,28 +357,28 @@ func (fake *AppMsgProcessor) SplitArgsForCall(i int) []byte {
 	return argsForCall.arg1
 }
 
-func (fake *AppMsgProcessor) SplitReturns(result1 []*proto.ApplicationMessageChunk, result2 error) {
+func (fake *AppMsgProcessor) SplitReturns(result1 []*protodef.ApplicationMessageChunk, result2 error) {
 	fake.splitMutex.Lock()
 	defer fake.splitMutex.Unlock()
 	fake.SplitStub = nil
 	fake.splitReturns = struct {
-		result1 []*proto.ApplicationMessageChunk
+		result1 []*protodef.ApplicationMessageChunk
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *AppMsgProcessor) SplitReturnsOnCall(i int, result1 []*proto.ApplicationMessageChunk, result2 error) {
+func (fake *AppMsgProcessor) SplitReturnsOnCall(i int, result1 []*protodef.ApplicationMessageChunk, result2 error) {
 	fake.splitMutex.Lock()
 	defer fake.splitMutex.Unlock()
 	fake.SplitStub = nil
 	if fake.splitReturnsOnCall == nil {
 		fake.splitReturnsOnCall = make(map[int]struct {
-			result1 []*proto.ApplicationMessageChunk
+			result1 []*protodef.ApplicationMessageChunk
 			result2 error
 		})
 	}
 	fake.splitReturnsOnCall[i] = struct {
-		result1 []*proto.ApplicationMessageChunk
+		result1 []*protodef.ApplicationMessageChunk
 		result2 error
 	}{result1, result2}
 }
