@@ -48,7 +48,7 @@ const (
 	subscriptionRetryMax       = 8
 )
 
-func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, uint64, uint64, time.Time) {
+func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, uint64, uint64, time.Time, uint64) {
 	if metadataValue != nil {
 		hcsMetadata := &hb.HcsMetadata{}
 		if err := proto.Unmarshal(metadataValue, hcsMetadata); err != nil {
@@ -68,11 +68,12 @@ func getStateFromMetadata(metadataValue []byte, channelID string) (time.Time, ui
 		return consensusTimestamp,
 			hcsMetadata.GetLastOriginalSequenceProcessed(),
 			hcsMetadata.GetLastResubmittedConfigSequence(),
-			lastChunkFreeTimestamp
+			lastChunkFreeTimestamp,
+			hcsMetadata.GetLastChunkFreeSequenceProcessed()
 	}
 
 	// defaults
-	return unixEpoch, 0, 0, unixEpoch
+	return unixEpoch, 0, 0, unixEpoch, 0
 }
 
 func newChain(
@@ -84,6 +85,7 @@ func newChain(
 	lastOriginalSequenceProcessed uint64,
 	lastResubmittedConfigSequence uint64,
 	lastChunkFreeConsensusTimestamp time.Time,
+	lastChunkFreeSequenceProcessed uint64,
 ) (*chainImpl, error) {
 	lastCutBlockNumber := support.Height() - 1
 	logger.Infof("[channel: %s] starting chain with last persisted consensus timestamp %d and "+
@@ -141,6 +143,8 @@ func newChain(
 		lastOriginalSequenceProcessed:   lastOriginalSequenceProcessed,
 		lastResubmittedConfigSequence:   lastResubmittedConfigSequence,
 		lastChunkFreeConsensusTimestamp: lastChunkFreeConsensusTimestamp,
+		lastChunkFreeSequenceProcessed:  lastChunkFreeSequenceProcessed,
+		lastSequenceProcessed:           lastChunkFreeSequenceProcessed,
 		lastCutBlockNumber:              lastCutBlockNumber,
 		network:                         network,
 		operatorID:                      operatorID,
@@ -181,6 +185,8 @@ type chainImpl struct {
 	lastOriginalSequenceProcessed   uint64
 	lastResubmittedConfigSequence   uint64
 	lastChunkFreeConsensusTimestamp time.Time
+	lastChunkFreeSequenceProcessed  uint64
+	lastSequenceProcessed           uint64
 	lastCutBlockNumber              uint64
 
 	// mutex used when changing the doneReprocessingMsgInFlight
@@ -364,7 +370,6 @@ func (chain *chainImpl) processMessages() error {
 		logger.Debugf("[channel: %s] going into the normal message processing loop", chain.ChannelID())
 	}
 	subscriptionRetryCount := 0
-	msg := new(hb.HcsMessage)
 	for {
 		select {
 		case <-chain.haltChan:
@@ -410,6 +415,10 @@ func (chain *chainImpl) processMessages() error {
 			default:
 			}
 
+			if resp.SequenceNumber != chain.lastSequenceProcessed + 1 {
+				logger.Panicf("[channel: %s] incorrect sequence number (%d), expect (%d), exiting...", chain.ChannelID(), resp.SequenceNumber, chain.lastSequenceProcessed + 1)
+			}
+			chain.lastSequenceProcessed += 1
 			chunk := new(hb.ApplicationMessageChunk)
 			if err := proto.Unmarshal(resp.Message, chunk); err != nil {
 				logger.Errorf("[channel: %s] failed to unmarshal ordered message into ApplicationMessageChunk = %v", chain.ChannelID(), err)
@@ -427,6 +436,7 @@ func (chain *chainImpl) processMessages() error {
 				continue
 			}
 			logger.Debugf("[channel: %s] reassembled a message of %d bytes", chain.ChannelID(), len(payload))
+			msg := new(hb.HcsMessage)
 			if err := proto.Unmarshal(payload, msg); err != nil {
 				logger.Criticalf("[channel: %s] unable to unmarshal ordered message", chain.ChannelID())
 				continue
@@ -475,12 +485,14 @@ func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTime
 	chain.lastCutBlockNumber++
 	if !chain.appMsgProcessor.IsPending() {
 		chain.lastChunkFreeConsensusTimestamp = consensusTimestamp
+		chain.lastChunkFreeSequenceProcessed = chain.lastSequenceProcessed
 	}
 	metadata := newHcsMetadata(
 		timestampProtoOrPanic(consensusTimestamp),
 		chain.lastOriginalSequenceProcessed,
 		chain.lastResubmittedConfigSequence,
-		timestampProtoOrPanic(chain.lastChunkFreeConsensusTimestamp))
+		timestampProtoOrPanic(chain.lastChunkFreeConsensusTimestamp),
+		chain.lastChunkFreeSequenceProcessed)
 	marshaledMetadata := protoutil.MarshalOrPanic(metadata)
 	if !isConfig {
 		chain.ConsenterSupport.WriteBlock(block, marshaledMetadata)
@@ -1069,12 +1081,14 @@ func newHcsMetadata(
 	lastOriginalSequenceProcessed uint64,
 	lastResubmittedConfigSequence uint64,
 	lastChunkFreeConsensusTimestampPersisted *timestamp.Timestamp,
+	lastChunkFreeSequenceProcessed uint64,
 ) *hb.HcsMetadata {
 	return &hb.HcsMetadata{
 		LastConsensusTimestampPersisted:          lastConsensusTimestampPersisted,
 		LastOriginalSequenceProcessed:            lastOriginalSequenceProcessed,
 		LastResubmittedConfigSequence:            lastResubmittedConfigSequence,
 		LastChunkFreeConsensusTimestampPersisted: lastChunkFreeConsensusTimestampPersisted,
+		LastChunkFreeSequenceProcessed: lastChunkFreeSequenceProcessed,
 	}
 }
 
