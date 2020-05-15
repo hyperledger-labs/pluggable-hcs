@@ -246,6 +246,8 @@ Orderer: &OrdererDefaults
 
     Hcs:
         TopicId: SYS_HCS_TOPIC_ID
+        # a list of public keys with type for orderers in the channel. the public keys are for HCS message
+        # signature verification
         PublicKeys:
             #- Type: ed25519
             #  Key: 302a300506032b657003210023452d9c2cc4e01deb670780f8e6d4e31badd1f5d2f5464971b490232a601c30

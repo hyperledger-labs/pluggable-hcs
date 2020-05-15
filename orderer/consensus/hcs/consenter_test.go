@@ -236,12 +236,12 @@ func newMockLocalConfig(enableTLS bool) *localconfig.TopLevel {
 			MirrorNodeAddress: "35.204.38.119:5600",
 			Operator: localconfig.HcsOperator{
 				Id: "0.0.19651",
-				PrivateKey: localconfig.HcsPrivateKey{
+				PrivateKey: localconfig.HcsTypeKey{
 					Type: "ed25519",
 					Key:  testOperatorPrivateKey,
 				},
 			},
-			BlockCipher: localconfig.HcsBlockCipher{
+			BlockCipher: localconfig.HcsTypeKey{
 				Type: "aes-256-gcm",
 				Key:  base64.StdEncoding.EncodeToString(key),
 			},
