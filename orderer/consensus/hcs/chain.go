@@ -432,9 +432,9 @@ func (chain *chainImpl) processMessages() error {
 				continue
 			}
 			logger.Debugf("[channel %s] successfully unmarshaled ordered message, consensus timestamp %d",
-				chain.ChannelID(), resp.ConsensusTimeStamp.Nanosecond())
+				chain.ChannelID(), resp.ConsensusTimeStamp.UnixNano())
 			if !recollectPendingChunks {
-				// use ConseusTimestamp and SequenceNumber of the last received chunk for that of a message
+				// use ConsensusTimeStamp and SequenceNumber of the last received chunk for that of a message
 				switch msg.Type.(type) {
 				case *hb.HcsMessage_Regular:
 					if err := chain.processRegularMessage(msg.GetRegular(), resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
@@ -502,7 +502,7 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTi
 	case chain.timer == nil && pending:
 		// Timer is not already running and there are messages pending, so start it
 		chain.timer = time.After(chain.SharedConfig().BatchTimeout())
-		logger.Debugf("[channel: %s] Just began %s batch timer", chain.ChannelID(), chain.SharedConfig().BatchTimeout().String())
+		logger.Debugf("[channel: %s] Just began %s batch timer with pending messages", chain.ChannelID(), chain.SharedConfig().BatchTimeout().String())
 	default:
 		// Do nothing when:
 		// 1. Timer is already running and there are messages pending
@@ -739,8 +739,9 @@ func (chain *chainImpl) processTimeToCutMessage(msg *hb.HcsMessageTimeToCut, ts 
 	} else if blockNumber > chain.lastCutBlockNumber+1 {
 		return fmt.Errorf("discard larger time-to-cut message (%d) than expected (%d)",
 			blockNumber, chain.lastCutBlockNumber+1)
+	} else {
+		logger.Debugf("[channel: %s] ignore stale/late time-to-cut (block %d)", chain.ChannelID(), blockNumber)
 	}
-	logger.Debugf("[channel: %s] ignore stale/late time-to-cut (block %d)", chain.ChannelID(), blockNumber)
 	return nil
 }
 
@@ -755,7 +756,6 @@ func (chain *chainImpl) processOrdererStartedMessage(msg *hb.HcsMessageOrdererSt
 }
 
 func (chain *chainImpl) sendTimeToCut() error {
-	chain.timer = nil
 	msg := newTimeToCutMessage(chain.lastCutBlockNumber + 1)
 	if !chain.enqueue(msg, false) {
 		return errors.Errorf("[channel: %s] failed to send time-to-cut with block number %d",
@@ -773,6 +773,11 @@ func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset
 	}
 	if !chain.enqueue(newNormalMessage(marshaledEnv, configSeq, originalOffset), originalOffset != 0) {
 		return errors.Errorf("cannot enqueue")
+	}
+	if chain.timer == nil {
+		// a non-config message is enqueued and the timer is not already running, start it
+		chain.timer = time.After(chain.SharedConfig().BatchTimeout())
+		logger.Debugf("[channel: %s] just began %s batch timer after enqueue", chain.ChannelID(), chain.SharedConfig().BatchTimeout().String())
 	}
 	return nil
 }
