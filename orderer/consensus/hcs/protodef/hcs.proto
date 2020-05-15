@@ -48,13 +48,15 @@ message HcsMessageOrdererStarted {
 message HcsMetadata {
     // lastTimestampPersisted is the used to keep track of the timestamp of
     // the last ordered message in the last block so when an HCS-based orderer
-    // boots up, it knows from when to retrieve ordererd messages
+    // boots up, it knows from when to retrieve ordered messages
     google.protobuf.Timestamp last_consensus_timestamp_persisted = 1;
     uint64 last_original_sequence_processed = 2;
     uint64 last_resubmitted_config_sequence = 3;
     // last chunk free consensus timestamp is the consensus timestamp of the last
     // chunk free block
     google.protobuf.Timestamp last_chunk_free_consensus_timestamp_persisted = 4;
+    // the sequence number of the last message in the last chunk free block
+    uint64 last_chunk_free_sequence_processed = 5;
 }
 
 message HcsConfigPublicKey {
