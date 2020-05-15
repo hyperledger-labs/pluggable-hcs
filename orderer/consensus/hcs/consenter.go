@@ -78,7 +78,7 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 		return nil, fmt.Errorf("HCS Topic ID %s is already used for channel %s", configMetadata.TopicId, channelID)
 	}
 
-	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastChunkFreeConsensusTimestamp := getStateFromMetadata(metadata.Value, support.ChannelID())
+	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastChunkFreeConsensusTimestamp, lastChunkFreeSequenceProcessed := getStateFromMetadata(metadata.Value, support.ChannelID())
 	return newChain(
 		consenter,
 		support,
@@ -88,6 +88,7 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 		lastOriginalSequenceProcessed,
 		lastResubmittedConfigSequence,
 		lastChunkFreeConsensusTimestamp,
+		lastChunkFreeSequenceProcessed,
 	)
 }
 
