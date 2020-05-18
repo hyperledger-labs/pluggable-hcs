@@ -452,9 +452,9 @@ func (chain *chainImpl) processMessages() error {
 				continue
 			}
 			logger.Debugf("[channel %s] successfully unmarshaled ordered message, consensus timestamp %d",
-				chain.ChannelID(), resp.ConsensusTimeStamp.Nanosecond())
+				chain.ChannelID(), resp.ConsensusTimeStamp.UnixNano())
 			if !recollectPendingChunks {
-				// use ConseusTimestamp and SequenceNumber of the last received chunk for that of a message
+				// use ConsenusTimestamp and SequenceNumber of the last received chunk for that of a message
 				switch msg.Type.(type) {
 				case *hb.HcsMessage_Regular:
 					if err := chain.processRegularMessage(msg.GetRegular(), resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
@@ -758,8 +758,9 @@ func (chain *chainImpl) processTimeToCutMessage(msg *hb.HcsMessageTimeToCut, tim
 	} else if blockNumber > chain.lastCutBlockNumber+1 {
 		return fmt.Errorf("discard larger time-to-cut message (%d) than expected (%d)",
 			blockNumber, chain.lastCutBlockNumber+1)
+	} else {
+		logger.Debugf("[channel: %s] ignore stale/late time-to-cut (block %d)", chain.ChannelID(), blockNumber)
 	}
-	logger.Debugf("[channel: %s] ignore stale/late time-to-cut (block %d)", chain.ChannelID(), blockNumber)
 	return nil
 }
 
@@ -774,7 +775,6 @@ func (chain *chainImpl) processOrdererStartedMessage(msg *hb.HcsMessageOrdererSt
 }
 
 func (chain *chainImpl) sendTimeToCut() error {
-	chain.timer = nil
 	msg := newTimeToCutMessage(chain.lastCutBlockNumber + 1)
 	if !chain.enqueue(msg, false) {
 		return errors.Errorf("[channel: %s] failed to send time-to-cut with block number %d",
