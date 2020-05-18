@@ -385,7 +385,7 @@ func TestChain(t *testing.T) {
 		assert.Nil(t, end, "Expected endTime passed to SubscribeTopic to be unixEpoch")
 	})
 
-	t.Run("StartWithUnexpectedSequenceNumber", func (t *testing.T) {
+	t.Run("StartWithUnexpectedSequenceNumber", func(t *testing.T) {
 		mockConsenter, mockSupport := newMocks(t)
 		hcf := newDefaultMockHcsClientFactory()
 		chain, _ := newChain(
@@ -401,7 +401,7 @@ func TestChain(t *testing.T) {
 		)
 		hcf.withInitTopicState(*chain.topicID, topicState{
 			consensusTimestamp: newestConsensusTimestamp.Add(time.Nanosecond),
-			sequenceNumber: lastChunkFreeSequenceProcessed + 2,
+			sequenceNumber:     lastChunkFreeSequenceProcessed + 2,
 		})
 
 		assert.Panics(t, func() { startThread(chain) }, "Expect startThread to panic with unexpected response.sequenceNumber")
@@ -1002,7 +1002,7 @@ func TestChain(t *testing.T) {
 			mockSupport.BlockCutterVal = mockblockcutter.NewReceiver()
 			mockSupport.BlockCutterVal.CutNext = true
 			hcf := newDefaultMockHcsClientFactory()
-			chain, _ := newChain(mockConsenter, mockSupport, &mockhcs.HealthChecker{}, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp,lastChunkFreeSequenceProcessed)
+			chain, _ := newChain(mockConsenter, mockSupport, &mockhcs.HealthChecker{}, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp, lastChunkFreeSequenceProcessed)
 			savedLastCubBlockNumber := chain.lastCutBlockNumber
 			close(mockSupport.BlockCutterVal.Block)
 
@@ -1292,6 +1292,9 @@ func TestChain(t *testing.T) {
 
 				// sync
 				<-mockSupport.Blocks
+				close(getRespSyncChan(chain.topicSubscriptionHandle))
+				// based on the fact the mock implementation always advances timestamp by 1ns
+				expectedSubscriptionStartTimestamp := getNextConsensusTimestamp(chain.topicSubscriptionHandle)
 
 				select {
 				case <-chain.Errored():
@@ -1299,7 +1302,23 @@ func TestChain(t *testing.T) {
 				default:
 				}
 
-				assert.Equal(t, 2, mockMirrorClient.SubscribeTopicCallCount(), "Expected SubscribeTopic called twice")
+				// send another error to the subscription handle
+				sendError(chain.topicSubscriptionHandle, status.Error(code, "Topic does not exist"))
+
+				// let the subscription retry succeed
+				subscribeTopicSyncChan <- struct{}{}
+
+				// send another message to unlock WaitReady
+				chunks, _ = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
+				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID)
+
+				// sync
+				<-mockSupport.Blocks
+				close(getRespSyncChan(chain.topicSubscriptionHandle))
+
+				assert.Equal(t, 3, mockMirrorClient.SubscribeTopicCallCount(), "Expected SubscribeTopic called twice")
+				_, thirdSubscriptionStartTimestamp, _ := mockMirrorClient.SubscribeTopicArgsForCall(2)
+				assert.Equal(t, expectedSubscriptionStartTimestamp, *thirdSubscriptionStartTimestamp, "Expected correct subscription start timestamp")
 				chain.Halt()
 			})
 		}
@@ -3237,9 +3256,9 @@ func TestMakeGCMCipher(t *testing.T) {
 // Test helper functions
 
 type messageWithMetadata struct {
-	message []byte
+	message            []byte
 	consensusTimestamp *time.Time
-	sequenceNumber *uint64
+	sequenceNumber     *uint64
 }
 
 type mockHcsTransport struct {
@@ -3270,7 +3289,7 @@ func (t *mockHcsTransport) getTransport(topicID *hedera.ConsensusTopicID) (chan 
 	if !ok {
 		state = &topicState{
 			consensusTimestamp: time.Now(),
-			sequenceNumber: uint64(1),
+			sequenceNumber:     uint64(1),
 		}
 		t.states[*topicID] = state
 	}
@@ -3280,7 +3299,7 @@ func (t *mockHcsTransport) getTransport(topicID *hedera.ConsensusTopicID) (chan 
 func newMockHcsTransport() *mockHcsTransport {
 	return &mockHcsTransport{
 		channels: make(map[hedera.ConsensusTopicID]chan messageWithMetadata),
-		states: make(map[hedera.ConsensusTopicID]*topicState),
+		states:   make(map[hedera.ConsensusTopicID]*topicState),
 	}
 }
 
@@ -3308,9 +3327,9 @@ func (f *hcsClientFactoryWithRecord) InjectMessageWithMetadata(message []byte, c
 	}
 	ch := f.transport.getTransportW(topicID)
 	ch <- messageWithMetadata{
-		message: message,
+		message:            message,
 		consensusTimestamp: consensusTimestamp,
-		sequenceNumber: sequenceNumber,
+		sequenceNumber:     sequenceNumber,
 	}
 	return nil
 }
@@ -3422,14 +3441,14 @@ func newMockHcsClientFactory(
 }
 
 type mockMirrorSubscriptionHandle struct {
-	transport              <-chan messageWithMetadata
-	respChan               chan *hedera.MirrorConsensusTopicResponse
-	errChan                chan error
-	errChanIn              chan error
-	done                   chan struct{}
-	l                      sync.Mutex
-	state                  *topicState
-	respSyncChan           chan struct{}
+	transport    <-chan messageWithMetadata
+	respChan     chan *hedera.MirrorConsensusTopicResponse
+	errChan      chan error
+	errChanIn    chan error
+	done         chan struct{}
+	l            sync.Mutex
+	state        *topicState
+	respSyncChan chan struct{}
 }
 
 func (h *mockMirrorSubscriptionHandle) start() {
@@ -3529,13 +3548,13 @@ func (h *mockMirrorSubscriptionHandle) Errors() <-chan error {
 
 func newMockMirrorSubscriptionHandle(transport <-chan messageWithMetadata, state *topicState) *mockMirrorSubscriptionHandle {
 	return &mockMirrorSubscriptionHandle{
-		transport:              transport,
-		respChan:               make(chan *hedera.MirrorConsensusTopicResponse),
-		errChan:                make(chan error),
-		errChanIn:              make(chan error),
-		done:                   make(chan struct{}),
-		respSyncChan:           make(chan struct{}),
-		state: state,
+		transport:    transport,
+		respChan:     make(chan *hedera.MirrorConsensusTopicResponse),
+		errChan:      make(chan error),
+		errChanIn:    make(chan error),
+		done:         make(chan struct{}),
+		respSyncChan: make(chan struct{}),
+		state:        state,
 	}
 }
 
