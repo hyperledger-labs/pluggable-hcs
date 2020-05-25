@@ -13,17 +13,11 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"github.com/hyperledger/fabric/orderer/common/localconfig"
-	"golang.org/x/crypto/ed25519"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"io"
 	"math"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/hyperledger/fabric/orderer/consensus/hcs/factory"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
@@ -31,10 +25,16 @@ import (
 	"github.com/hashgraph/hedera-sdk-go"
 	"github.com/hyperledger/fabric-protos-go/common"
 	cb "github.com/hyperledger/fabric-protos-go/common"
+	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/consensus"
+	"github.com/hyperledger/fabric/orderer/consensus/hcs/factory"
 	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
+	"golang.org/x/crypto/ed25519"
+	"golang.org/x/crypto/sha3"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -155,6 +155,8 @@ func newChain(
 		haltChan:                        make(chan struct{}),
 		startChan:                       make(chan struct{}),
 		doneReprocessingMsgInFlight:     doneReprocessingMsgInFlight,
+		timeToCutRequestChan:            make(chan timeToCutRequest),
+		messageHashes:                   make(map[string]struct{}),
 		maxChunkAge:                     calcMaxChunkAge(200, len(support.ChannelConfig().OrdererAddresses())),
 		gcmCipher:                       gcmCipher,
 		nonceReader:                     crand.Reader,
@@ -191,7 +193,7 @@ type chainImpl struct {
 	lastChunkFreeConsensusTimestamp time.Time
 	// similar as above, while tracking the sequence number
 	lastChunkFreeSequenceProcessed uint64
-	// track the sequence number of the nast received MirrorConsensusTopicResponse
+	// track the sequence number of the last received MirrorConsensusTopicResponse
 	lastSequenceProcessed uint64
 	lastCutBlockNumber    uint64
 
@@ -207,8 +209,10 @@ type chainImpl struct {
 	haltChan               chan struct{}
 	doneProcessingMessages chan struct{}
 	startChan              chan struct{}
-	// timer control the batch timeout of cutting pending messages into a block
-	timer <-chan time.Time
+
+	timeToCutRequestChan chan timeToCutRequest
+	messageHashes        map[string]struct{}
+	senderWaitGroup      sync.WaitGroup
 
 	network                 map[string]hedera.AccountID
 	operatorID              *hedera.AccountID
@@ -227,6 +231,12 @@ type chainImpl struct {
 
 	gcmCipher   cipher.AEAD
 	nonceReader io.Reader
+}
+
+type timeToCutRequest struct {
+	start           bool   // start or stop the receiving side timer
+	nextBlockNumber uint64 // nextBlockNumber, from receiving side
+	messageHash     []byte // hash of the message, from sending side, when set, start and nextBlockNumber are ignored
 }
 
 func (chain *chainImpl) Order(env *common.Envelope, configSeq uint64) error {
@@ -349,14 +359,107 @@ func (chain *chainImpl) Decrypt(iv []byte, ciphertext []byte) (plaintext []byte,
 	return
 }
 
+func (chain *chainImpl) processTimeToCutRequests() {
+	createStoppedTimer := func() *time.Timer {
+		t := time.NewTimer(time.Second)
+		if !t.Stop() {
+			<-t.C
+		}
+		return t
+	}
+
+	startTimer := func(timer *time.Timer, running *bool, d time.Duration) {
+		if !*running {
+			timer.Reset(d)
+			*running = true
+		}
+	}
+
+	stopTimer := func(timer *time.Timer, running *bool) {
+		if *running && !timer.Stop() {
+			<-timer.C
+		}
+		*running = false
+	}
+
+	sendTimerRunning := false
+	sendTimer := createStoppedTimer()
+
+	recvTimerRunning := false
+	recvTimer := createStoppedTimer()
+
+	defer func() {
+		go func() {
+			chain.senderWaitGroup.Wait()
+			close(chain.timeToCutRequestChan)
+		}()
+
+		stopTimer(sendTimer, &sendTimerRunning)
+		stopTimer(recvTimer, &recvTimerRunning)
+
+		for {
+			// drain pending requests
+			_, ok := <-chain.timeToCutRequestChan
+			if !ok {
+				break
+			}
+		}
+
+		if err := chain.topicProducer.Close(); err != nil {
+			logger.Errorf("[channel: %s] error when closing topicProducer = %v", chain.ChannelID(), err)
+		}
+	}()
+
+	var messageHash []byte
+	var blockNumber uint64
+	for {
+		select {
+		case <-chain.doneProcessingMessages:
+			return
+		case request := <-chain.timeToCutRequestChan:
+			if request.messageHash != nil {
+				// from sender
+				if !sendTimerRunning {
+					startTimer(sendTimer, &sendTimerRunning, chain.SharedConfig().BatchTimeout())
+					messageHash = request.messageHash
+				}
+			} else {
+				// triggered by receive side
+				switch {
+				case recvTimerRunning && !request.start:
+					// timer is running and request to stop
+					stopTimer(recvTimer, &recvTimerRunning)
+				case !recvTimerRunning && request.start:
+					// timer is not already running and request to start
+					startTimer(recvTimer, &recvTimerRunning, chain.SharedConfig().BatchTimeout())
+					blockNumber = request.nextBlockNumber
+				default:
+					// do nothing for other cases
+				}
+			}
+		case <-sendTimer.C:
+			sendTimerRunning = false
+			if err := chain.sendTimeToCut(newTimeToCutMessageWithMessageHash(messageHash)); err != nil {
+				logger.Errorf("[channel: %s] cannot send time-to-cut message with messageHash: %s", chain.ChannelID(), err)
+			} else {
+				logger.Debugf("[channel: %s] time-to-cut with messageHash sent", chain.ChannelID())
+			}
+		case <-recvTimer.C:
+			recvTimerRunning = false
+			if err := chain.sendTimeToCut(newTimeToCutMessageWithBlockNumber(blockNumber)); err != nil {
+				logger.Errorf("[channel: %s] failed with block number %d: %s", chain.ChannelID(), blockNumber, err)
+			} else {
+				logger.Debugf("[channel: %s] time-to-cut with block number %d sent", chain.ChannelID(), blockNumber)
+			}
+		}
+	}
+}
+
 func (chain *chainImpl) processMessages() error {
 	defer func() {
 		chain.topicSubscriptionHandle.Unsubscribe()
 		if err := chain.topicConsumer.Close(); err != nil {
 			logger.Errorf("[channel: %s] error when closing topicConsumer = %v", chain.ChannelID(), err)
-		}
-		if err := chain.topicProducer.Close(); err != nil {
-			logger.Errorf("[channel: %s] error when closing topicProducer = %v", chain.ChannelID(), err)
 		}
 		close(chain.doneProcessingMessages)
 
@@ -425,7 +528,7 @@ func (chain *chainImpl) processMessages() error {
 				logger.Panicf("[channel: %s] incorrect sequence number (%d), expect (%d), exiting...", chain.ChannelID(), resp.SequenceNumber, chain.lastSequenceProcessed+1)
 			}
 			if !resp.ConsensusTimeStamp.After(chain.lastConsensusTimestamp) {
-				logger.Panic("[channel: %s] resp.ConsensusTimestamp(%d) not after lastConsensusTimestamp(%d)", chain.ChannelID(), resp.ConsensusTimeStamp, chain.lastConsensusTimestamp)
+				logger.Panicf("[channel: %s] resp.ConsensusTimestamp(%d) not after lastConsensusTimestamp(%d)", chain.ChannelID(), resp.ConsensusTimeStamp.UnixNano(), chain.lastConsensusTimestamp.UnixNano())
 			}
 			chain.lastSequenceProcessed += 1
 			chain.lastConsensusTimestamp = resp.ConsensusTimeStamp
@@ -483,15 +586,18 @@ func (chain *chainImpl) processMessages() error {
 						chain.lastConsensusTimestampPersisted.UnixNano())
 				}
 			}
-		case <-chain.timer:
-			if err := chain.sendTimeToCut(); err != nil {
-				logger.Errorf("[channel: %s] cannot send time-to-cut message, %s", chain.ChannelID(), err)
-			}
 		}
 	}
 }
 
 func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTimestamp time.Time) {
+	if !isConfig {
+		// clear the map when writing a non-config block
+		chain.messageHashes = make(map[string]struct{})
+	}
+	chain.timeToCutRequestChan <- timeToCutRequest{start: false}
+	logger.Debugf("[channel: %s] request to stop the batch timer since a block is cut", chain.ChannelID())
+
 	chain.lastCutBlockNumber++
 	if !chain.appMsgProcessor.IsPending() {
 		chain.lastChunkFreeConsensusTimestamp = consensusTimestamp
@@ -513,23 +619,25 @@ func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTime
 	chain.consenter.Metrics().LastConsensusTimestampPersisted.With("channel", chain.ChannelID()).Set(float64(consensusTimestamp.UnixNano()))
 }
 
-func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTimestamp time.Time, newOriginalSequenceProcessed uint64) {
+func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, rawMessage []byte, curConsensusTimestamp time.Time, newOriginalSequenceProcessed uint64) {
+	var pending bool
+	defer func() {
+		if pending {
+			// if pending, request to send time-to-cut message
+			chain.timeToCutRequestChan <- timeToCutRequest{
+				start:           true,
+				nextBlockNumber: chain.lastCutBlockNumber + 1,
+			}
+			logger.Debugf("[channel: %s] request to send time-to-cut with block number %d", chain.ChannelID(), chain.lastCutBlockNumber+1)
+
+			// record hash as the message is pending in blockcutter
+			messageHash := sha3.Sum224(rawMessage)
+			chain.messageHashes[string(messageHash[:])] = struct{}{}
+		}
+	}()
+
 	batches, pending := chain.BlockCutter().Ordered(message)
 	logger.Debugf("[channel: %s] Ordering results: items in batch = %d, pending = %v", chain.ChannelID(), len(batches), pending)
-
-	switch {
-	case chain.timer != nil && !pending:
-		// Timer is already running but there are no messages pending, stop the timer
-		chain.timer = nil
-	case chain.timer == nil && pending:
-		// Timer is not already running and there are messages pending, so start it
-		chain.timer = time.After(chain.SharedConfig().BatchTimeout())
-		logger.Debugf("[channel: %s] Just began %s batch timer", chain.ChannelID(), chain.SharedConfig().BatchTimeout().String())
-	default:
-		// Do nothing when:
-		// 1. Timer is already running and there are messages pending
-		// 2. Timer is not set and there are no messages pending
-	}
 
 	if len(batches) == 0 {
 		// If no block is cut, we update the `lastOriginalSequenceProcessed`, start the timer if necessary and return
@@ -584,7 +692,6 @@ func (chain *chainImpl) commitConfigMessage(message *cb.Envelope, curConsensusTi
 	chain.lastOriginalSequenceProcessed = newOriginalSequenceProcessed
 	block := chain.CreateNextBlock([]*cb.Envelope{message})
 	chain.WriteBlock(block, true, curConsensusTimestamp)
-	chain.timer = nil
 }
 
 func (chain *chainImpl) processRegularMessage(msg *hb.HcsMessageRegular, timestamp time.Time, receivedSequence uint64) error {
@@ -651,7 +758,7 @@ func (chain *chainImpl) processRegularMessage(msg *hb.HcsMessageRegular, timesta
 			newSeq = chain.lastOriginalSequenceProcessed
 		}
 
-		chain.commitNormalMessage(env, timestamp, newSeq)
+		chain.commitNormalMessage(env, msg.Payload, timestamp, newSeq)
 
 	case hb.HcsMessageRegular_CONFIG:
 		// This is a message that is re-validated and re-ordered
@@ -742,24 +849,39 @@ func (chain *chainImpl) processRegularMessage(msg *hb.HcsMessageRegular, timesta
 }
 
 func (chain *chainImpl) processTimeToCutMessage(msg *hb.HcsMessageTimeToCut, timestamp time.Time, sequence uint64) error {
-	blockNumber := msg.GetBlockNumber()
-	if blockNumber == chain.lastCutBlockNumber+1 {
-		chain.timer = nil
+	var createBlock bool
+	var trigger string
+
+	switch msg.Request.(type) {
+	case *hb.HcsMessageTimeToCut_BlockNumber:
+		blockNumber := msg.GetBlockNumber()
+		if blockNumber == chain.lastCutBlockNumber+1 {
+			createBlock = true
+			trigger = fmt.Sprintf("blocknumber %d", blockNumber)
+		} else if blockNumber > chain.lastCutBlockNumber+1 {
+			return fmt.Errorf("discard larger time-to-cut message (%d) than expected (%d)", blockNumber, chain.lastCutBlockNumber+1)
+		} else {
+			logger.Debugf("[channel: %s] ignore stale/late time-to-cut (block %d)", chain.ChannelID(), blockNumber)
+		}
+	case *hb.HcsMessageTimeToCut_MessageHash:
+		if _, ok := chain.messageHashes[string(msg.GetMessageHash())]; ok {
+			createBlock = true
+			trigger = "messagehash"
+		} else {
+			logger.Debugf("[channel: %s] ignore stale/late time-to-cut with messagehash", chain.ChannelID())
+		}
+	}
+
+	if createBlock {
+		logger.Debugf("[channel: %s] received correct time-to-cut-message with %s, try to cut a block", chain.ChannelID(), trigger)
 		batch := chain.BlockCutter().Cut()
 		if len(batch) == 0 {
-			return fmt.Errorf("bug, got correct time-to-cut message (block %d), "+
-				"but no pending transactions", blockNumber)
+			return fmt.Errorf("bug, got correct time-to-cut message, but no pending transactions")
 		}
 		block := chain.CreateNextBlock(batch)
 		chain.lastOriginalSequenceProcessed = sequence
 		chain.WriteBlock(block, false, timestamp)
-		logger.Debugf("[channel: %s] successfully cut block %d, triggered by time-to-cut",
-			chain.ChannelID(), blockNumber)
-	} else if blockNumber > chain.lastCutBlockNumber+1 {
-		return fmt.Errorf("discard larger time-to-cut message (%d) than expected (%d)",
-			blockNumber, chain.lastCutBlockNumber+1)
-	} else {
-		logger.Debugf("[channel: %s] ignore stale/late time-to-cut (block %d)", chain.ChannelID(), blockNumber)
+		logger.Debugf("[channel: %s] successfully cut block, triggered by time-to-cut with %s", chain.ChannelID(), trigger)
 	}
 	return nil
 }
@@ -774,25 +896,33 @@ func (chain *chainImpl) processOrdererStartedMessage(msg *hb.HcsMessageOrdererSt
 	}
 }
 
-func (chain *chainImpl) sendTimeToCut() error {
-	msg := newTimeToCutMessage(chain.lastCutBlockNumber + 1)
+func (chain *chainImpl) sendTimeToCut(msg *hb.HcsMessage) error {
 	if !chain.enqueue(msg, false) {
-		return errors.Errorf("[channel: %s] failed to send time-to-cut with block number %d",
-			chain.ChannelID(), chain.lastCutBlockNumber+1)
+		return errors.Errorf("[channel: %s] failed to send time-to-cut message", chain.ChannelID())
 	}
-	logger.Infof("[channel: %s] time to cut with block number %d sent to topic %v",
-		chain.ChannelID(), chain.lastCutBlockNumber+1, chain.topicID)
 	return nil
 }
 
-func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset uint64) error {
+func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset uint64) (err error) {
+	var messageHash [28]byte
+	defer func() {
+		if err == nil {
+			// request to start the batch timeout timer when a non-config message is successfully sent
+			chain.timeToCutRequestChan <- timeToCutRequest{messageHash: messageHash[:]}
+			logger.Debugf("[channel: %s] request to start the batch timer with non-config message successfully sent", chain.ChannelID())
+		}
+		chain.senderWaitGroup.Done()
+	}()
+
+	chain.senderWaitGroup.Add(1)
 	marshaledEnv, err := protoutil.Marshal(env)
 	if err != nil {
 		return errors.Errorf("cannot enqueue, unable to marshal envelope: %s", err)
 	}
 	if !chain.enqueue(newNormalMessage(marshaledEnv, configSeq, originalOffset), originalOffset != 0) {
-		return errors.Errorf("cannot enqueue")
+		return errors.Errorf("[channel: %s] cannot enqueue", chain.ChannelID())
 	}
+	messageHash = sha3.Sum224(marshaledEnv)
 	return nil
 }
 
@@ -814,6 +944,9 @@ func makeGCMCipher(key []byte) (cipher.AEAD, error) {
 }
 
 func (chain *chainImpl) configure(config *cb.Envelope, configSeq uint64, originalOffset uint64) error {
+	defer chain.senderWaitGroup.Done()
+	chain.senderWaitGroup.Add(1)
+
 	marshaledConfig, err := protoutil.Marshal(config)
 	if err != nil {
 		return errors.Errorf("unable to marshal config because %s", err)
@@ -934,8 +1067,10 @@ func startThread(chain *chainImpl) {
 	close(chain.startChan)
 	logger.Infof("[channel: %s] Start phase completed successfully", chain.ChannelID())
 
+	go chain.processTimeToCutRequests()
+
 	if err = chain.processMessages(); err != nil {
-		logger.Error("[channel: %s] processMessages exited with error: %s", err)
+		logger.Errorf("[channel: %s] processMessages exited with error: %s", chain.ChannelID(), err)
 	}
 }
 
@@ -1060,11 +1195,25 @@ func newNormalMessage(payload []byte, configSeq uint64, originalSeq uint64) *hb.
 	}
 }
 
-func newTimeToCutMessage(blockNumber uint64) *hb.HcsMessage {
+func newTimeToCutMessageWithBlockNumber(blockNumber uint64) *hb.HcsMessage {
 	return &hb.HcsMessage{
 		Type: &hb.HcsMessage_TimeToCut{
 			TimeToCut: &hb.HcsMessageTimeToCut{
-				BlockNumber: blockNumber,
+				Request: &hb.HcsMessageTimeToCut_BlockNumber{
+					BlockNumber: blockNumber,
+				},
+			},
+		},
+	}
+}
+
+func newTimeToCutMessageWithMessageHash(messageHash []byte) *hb.HcsMessage {
+	return &hb.HcsMessage{
+		Type: &hb.HcsMessage_TimeToCut{
+			TimeToCut: &hb.HcsMessageTimeToCut{
+				Request: &hb.HcsMessageTimeToCut_MessageHash{
+					MessageHash: messageHash,
+				},
 			},
 		},
 	}
