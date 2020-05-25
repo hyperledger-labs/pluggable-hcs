@@ -771,6 +771,39 @@ func TestChain(t *testing.T) {
 		case <-time.After(shortTimeout):
 			t.Fatal("startChan should have been closed by now")
 		}
+		close(getRespSyncChan(chain.topicSubscriptionHandle))
+
+		closeCallChan := make(chan string)
+		mockConsensusClient := chain.topicProducer.(*mockhcs.ConsensusClient)
+		mockConsensusClient.CloseCalls(func() error {
+			closeCallChan <- "ConsensusClient"
+			return nil
+		})
+		mockMirrorClient := chain.topicConsumer.(*mockhcs.MirrorClient)
+		mockMirrorClient.CloseCalls(func() error {
+			closeCallChan <- "MirrorClient"
+			return nil
+		})
+
+		done := make(chan struct{})
+		closeCallInfo := map[string]int{}
+		go func() {
+			timer := time.After(shortTimeout)
+			for {
+				var expired bool
+				select {
+				case cname := <-closeCallChan:
+					closeCallInfo[cname] = closeCallInfo[cname] + 1
+				case <-timer:
+					expired = true
+				}
+
+				if expired {
+					break
+				}
+			}
+			done <- struct{}{}
+		}()
 
 		// Wait till the start phase has completed, then:
 		chain.Halt()
@@ -789,23 +822,10 @@ func TestChain(t *testing.T) {
 			t.Fatal("errorChan should have been closed")
 		}
 
-		// verify Close() is called once
-		returnValues := hcf.GetReturnValues()
-		for funcName, retVals := range returnValues {
-			for _, ret := range retVals {
-				numCalls := 0
-				v := reflect.ValueOf(ret).Index(0)
-				switch funcName {
-				case getConsensusClientFuncName:
-					client := v.Interface().(*mockhcs.ConsensusClient)
-					numCalls = client.CloseCallCount()
-				case getMirrorClientFuncName:
-					client := v.Interface().(*mockhcs.MirrorClient)
-					numCalls = client.CloseCallCount()
-				}
-				assert.Equal(t, 1, numCalls, "Expect Close called once")
-			}
-		}
+		<-done
+		assert.Equal(t, 1, closeCallInfo["ConsensusClient"], "Expected Closed() called once on ConsensusClient")
+		assert.Equal(t, 1, closeCallInfo["MirrorClient"], "Expected Closed() called once on MirrorClient")
+
 	})
 
 	t.Run("DoubleHalt", func(t *testing.T) {
@@ -1162,7 +1182,7 @@ func TestChain(t *testing.T) {
 			hcf := newMockHcsClientFactory(mockGetConsensusClient, nil)
 			chain, _ := newChain(mockConsenter, mockSupport, &mockhcs.HealthChecker{}, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp, lastChunkFreeSequenceProcessed)
 
-			assert.Error(t, chain.sendTimeToCut(), "Expect error from sendTimeToCut")
+			assert.Error(t, chain.sendTimeToCut(newTimeToCutMessageWithBlockNumber(5)), "Expect error from sendTimeToCut")
 		})
 	})
 
@@ -1346,20 +1366,22 @@ func TestChain(t *testing.T) {
 				close(getRespSyncChan(chain.topicSubscriptionHandle))
 				mockMirrorClient := chain.topicConsumer.(*mockhcs.MirrorClient)
 				oldSubscribeTopicStub := mockMirrorClient.SubscribeTopicStub
-				subscribeTopicSyncChan := make(chan struct{})
-				mockMirrorClient.SubscribeTopicCalls(func(topicID *hedera.ConsensusTopicID, start *time.Time, end *time.Time) (factory.MirrorSubscriptionHandle, error) {
+				subscribeTopicSyncChan := make(chan factory.MirrorSubscriptionHandle)
+				mockMirrorClient.SubscribeTopicCalls(func(topicID *hedera.ConsensusTopicID, start *time.Time, end *time.Time) (handle factory.MirrorSubscriptionHandle, err error) {
 					defer func() {
-						<-subscribeTopicSyncChan
+						subscribeTopicSyncChan <- handle
 					}()
-					return oldSubscribeTopicStub(topicID, start, end)
+					handle, err = oldSubscribeTopicStub(topicID, start, end)
+					return handle, err
 				})
 
+				handle := chain.topicSubscriptionHandle
 				for i := 0; i < subscriptionRetryMax; i++ {
-					sendError(chain.topicSubscriptionHandle, status.Error(code, "Topic does not exist"))
-					subscribeTopicSyncChan <- struct{}{}
+					sendError(handle, status.Error(code, "Topic does not exist"))
+					handle = <-subscribeTopicSyncChan
 				}
 				// this last error should cause retry count exceed the max, thus errChan will be closed
-				sendError(chain.topicSubscriptionHandle, status.Error(code, "Topic does not exist"))
+				sendError(handle, status.Error(code, "Topic does not exist"))
 
 				select {
 				case <-chain.Errored():
@@ -1599,6 +1621,256 @@ func TestSigner(t *testing.T) {
 	}
 }
 
+func TestProcessTimeToCutRequests(t *testing.T) {
+	newBareMinimumChain := func(
+		t *testing.T,
+		mockSupport consensus.ConsenterSupport,
+		topicProducer factory.ConsensusClient,
+	) *chainImpl {
+		startChan := make(chan struct{})
+		close(startChan)
+		errorChan := make(chan struct{})
+		close(errorChan)
+		haltChan := make(chan struct{})
+
+		mockConsenter := &consenterImpl{
+			sharedHcsConfigVal: &mockLocalConfig.Hcs,
+			identityVal:        make([]byte, 16),
+			metrics:            newFakeMetrics(newFakeMetricsFields()),
+		}
+
+		topicID := &hedera.ConsensusTopicID{
+			Shard: 0,
+			Realm: 0,
+			Topic: 16381,
+		}
+
+		privateKey, err := hedera.Ed25519PrivateKeyFromString(testOperatorPrivateKey)
+		assert.NoError(t, err, "Expected valid ed25519 private key")
+		publicKey := privateKey.PublicKey()
+
+		chain := &chainImpl{
+			consenter:        mockConsenter,
+			ConsenterSupport: mockSupport,
+
+			topicID:                topicID,
+			topicProducer:          topicProducer,
+			operatorPrivateKey:     &privateKey,
+			operatorPublicKeyBytes: publicKey.Bytes(),
+			publicKeys: map[string]*hedera.Ed25519PublicKey{
+				string(publicKey.Bytes()): &publicKey,
+			},
+
+			startChan:              startChan,
+			errorChan:              errorChan,
+			haltChan:               haltChan,
+			doneProcessingMessages: make(chan struct{}),
+			timeToCutRequestChan:   make(chan timeToCutRequest),
+
+			appID: []byte("bare-minimum appID"),
+		}
+		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, chain, nil)
+		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
+
+		return chain
+	}
+
+	mockSupport := &mockmultichannel.ConsenterSupport{
+		ChannelIDVal:     channelNameForTest(t),
+		SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, nil),
+		ChannelConfigVal: newMockChannel(),
+	}
+
+	t.Run("Proper", func(t *testing.T) {
+		topicProducer := &mockhcs.ConsensusClient{}
+		chain := newBareMinimumChain(t, mockSupport, topicProducer)
+
+		done := make(chan struct{})
+		go func() {
+			chain.processTimeToCutRequests()
+			done <- struct{}{}
+		}()
+
+		// closing doneProcessingMessages will cause processTimeToCutRequests() to exit
+		close(chain.doneProcessingMessages)
+		select {
+		case <-done:
+		case <-time.After(shortTimeout):
+			t.Fatal("expected processTimeToCutRequests returned")
+		}
+
+		select {
+		case _, ok := <-chain.timeToCutRequestChan:
+			assert.False(t, ok, "expected timeToCutRequestChan closed")
+		default:
+			t.Fatal("expected receive from timeToCutRequestChan succeeded")
+		}
+
+		assert.Equal(t, 1, topicProducer.CloseCallCount(), "expected topicProducer closed")
+	})
+
+	t.Run("ProperWithMessageSent", func(t *testing.T) {
+		syncCh := make(chan struct{})
+		topicProducer := &mockhcs.ConsensusClient{}
+		topicProducer.SubmitConsensusMessageCalls(func([]byte, *hedera.ConsensusTopicID) (*hedera.TransactionID, error) {
+			syncCh <- struct{}{}
+			return &hedera.TransactionID{}, nil
+		})
+		chain := newBareMinimumChain(t, mockSupport, topicProducer)
+
+		done := make(chan struct{})
+		go func() {
+			chain.processTimeToCutRequests()
+			done <- struct{}{}
+		}()
+
+		dummyHash := []byte("dummy hash")
+		chain.timeToCutRequestChan <- timeToCutRequest{
+			messageHash: dummyHash,
+		}
+
+		select {
+		case <-syncCh:
+		case <-time.After(shortTimeout):
+			t.Fatal("expected SubmitConsensusMessage called")
+		}
+
+		data, _ := topicProducer.SubmitConsensusMessageArgsForCall(0)
+		chunk := &hb.ApplicationMessageChunk{}
+		assert.NoError(t, proto.Unmarshal(data, chunk), "expected data successfully unmarshalled to ApplicationMessageChunk")
+		rawHcsMsg, err := chain.appMsgProcessor.Reassemble(chunk)
+		assert.NoError(t, err, "expected reassemble successfully")
+		hcsMsg := &hb.HcsMessage{}
+		assert.NoError(t, proto.Unmarshal(rawHcsMsg, hcsMsg), "expected rawHcsMsg unmarshalled successfully")
+		assert.IsType(t, &hb.HcsMessage_TimeToCut{}, hcsMsg.Type, "expected hcsMsg type is time-to-cut")
+		assert.IsType(t, &hb.HcsMessageTimeToCut_MessageHash{}, hcsMsg.GetTimeToCut().Request, "expected time-to-cut type is MessageHash")
+		assert.Equal(t, dummyHash, hcsMsg.GetTimeToCut().GetMessageHash(), "expected message hash equal")
+
+		// closing doneProcessingMessages will cause processTimeToCutRequests() to exit
+		close(chain.doneProcessingMessages)
+		select {
+		case <-done:
+		case <-time.After(shortTimeout):
+			t.Fatal("expected processTimeToCutRequests returned")
+		}
+
+		select {
+		case _, ok := <-chain.timeToCutRequestChan:
+			assert.False(t, ok, "expected timeToCutRequestChan closed")
+		default:
+			t.Fatal("expected receive from timeToCutRequestChan succeeded")
+		}
+
+		assert.Equal(t, 1, topicProducer.CloseCallCount(), "expected topicProducer closed")
+	})
+
+	t.Run("ProperWithMessageReceived", func(t *testing.T) {
+		syncCh := make(chan struct{})
+		topicProducer := &mockhcs.ConsensusClient{}
+		topicProducer.SubmitConsensusMessageCalls(func([]byte, *hedera.ConsensusTopicID) (*hedera.TransactionID, error) {
+			syncCh <- struct{}{}
+			return &hedera.TransactionID{}, nil
+		})
+		chain := newBareMinimumChain(t, mockSupport, topicProducer)
+
+		done := make(chan struct{})
+		go func() {
+			chain.processTimeToCutRequests()
+			done <- struct{}{}
+		}()
+
+		nextBlockNumber := uint64(5)
+		chain.timeToCutRequestChan <- timeToCutRequest{
+			start:           true,
+			nextBlockNumber: nextBlockNumber,
+		}
+
+		select {
+		case <-syncCh:
+		case <-time.After(shortTimeout):
+			t.Fatal("expected SubmitConsensusMessage called")
+		}
+
+		data, _ := topicProducer.SubmitConsensusMessageArgsForCall(0)
+		chunk := &hb.ApplicationMessageChunk{}
+		assert.NoError(t, proto.Unmarshal(data, chunk), "expected data successfully unmarshalled to ApplicationMessageChunk")
+		rawHcsMsg, err := chain.appMsgProcessor.Reassemble(chunk)
+		assert.NoError(t, err, "expected reassemble successfully")
+		hcsMsg := &hb.HcsMessage{}
+		assert.NoError(t, proto.Unmarshal(rawHcsMsg, hcsMsg), "expected rawHcsMsg unmarshalled successfully")
+		assert.IsType(t, &hb.HcsMessage_TimeToCut{}, hcsMsg.Type, "expected hcsMsg type is time-to-cut")
+		assert.IsType(t, &hb.HcsMessageTimeToCut_BlockNumber{}, hcsMsg.GetTimeToCut().Request, "expected time-to-cut type is BlockNumber")
+		assert.Equal(t, nextBlockNumber, hcsMsg.GetTimeToCut().GetBlockNumber(), "expected blockNumber equal")
+
+		// closing doneProcessingMessages will cause processTimeToCutRequests() to exit
+		close(chain.doneProcessingMessages)
+		select {
+		case <-done:
+		case <-time.After(shortTimeout):
+			t.Fatal("expected processTimeToCutRequests returned")
+		}
+
+		select {
+		case _, ok := <-chain.timeToCutRequestChan:
+			assert.False(t, ok, "expected timeToCutRequestChan closed")
+		default:
+			t.Fatal("expected receive from timeToCutRequestChan succeeded")
+		}
+
+		assert.Equal(t, 1, topicProducer.CloseCallCount(), "expected topicProducer closed")
+	})
+
+	t.Run("ProperWithStopRequested", func(t *testing.T) {
+		syncCh := make(chan struct{})
+		topicProducer := &mockhcs.ConsensusClient{}
+		topicProducer.SubmitConsensusMessageCalls(func([]byte, *hedera.ConsensusTopicID) (*hedera.TransactionID, error) {
+			syncCh <- struct{}{}
+			return &hedera.TransactionID{}, nil
+		})
+
+		chain := newBareMinimumChain(t, mockSupport, topicProducer)
+
+		done := make(chan struct{})
+		go func() {
+			chain.processTimeToCutRequests()
+			done <- struct{}{}
+		}()
+
+		nextBlockNumber := uint64(5)
+		chain.timeToCutRequestChan <- timeToCutRequest{
+			start:           true,
+			nextBlockNumber: nextBlockNumber,
+		}
+
+		<-time.After(shortTimeout / 4)
+		chain.timeToCutRequestChan <- timeToCutRequest{start: false}
+
+		select {
+		case <-syncCh:
+			t.Fatal("expected no time-to-cut message sent")
+		case <-time.After(shortTimeout / 2):
+			// nothing
+		}
+
+		// closing doneProcessingMessages will cause processTimeToCutRequests() to exit
+		close(chain.doneProcessingMessages)
+		select {
+		case <-done:
+		case <-time.After(shortTimeout):
+			t.Fatal("expected processTimeToCutRequests returned")
+		}
+
+		select {
+		case _, ok := <-chain.timeToCutRequestChan:
+			assert.False(t, ok, "expected timeToCutRequestChan closed")
+		default:
+			t.Fatal("expected receive from timeToCutRequestChan succeeded")
+		}
+
+		assert.Equal(t, 1, topicProducer.CloseCallCount(), "expected topicProducer closed")
+	})
+}
+
 func TestProcessMessages(t *testing.T) {
 	newBareMinimumChain := func(
 		t *testing.T,
@@ -1653,6 +1925,8 @@ func TestProcessMessages(t *testing.T) {
 			errorChan:              errorChan,
 			haltChan:               haltChan,
 			doneProcessingMessages: make(chan struct{}),
+			timeToCutRequestChan:   make(chan timeToCutRequest),
+			messageHashes:          make(map[string]struct{}),
 
 			appID:       []byte("bare-minimum appID"),
 			maxChunkAge: calcMaxChunkAge(200, len(mockSupport.ChannelConfig().OrdererAddresses())),
@@ -1685,6 +1959,7 @@ func TestProcessMessages(t *testing.T) {
 			chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 
 			done := make(chan struct{})
+			go chain.processTimeToCutRequests()
 			go func() {
 				err = chain.processMessages()
 				done <- struct{}{}
@@ -1716,16 +1991,8 @@ func TestProcessMessages(t *testing.T) {
 			logger.Debug("haltChan closed")
 			<-done
 
-			if chain.timer != nil {
-				go func() {
-					// fire the timer for garbage collection
-					<-chain.timer
-				}()
-			}
-
 			assert.NoError(t, err, "Expected processMessages to exit without errors")
 			assert.NotEmpty(t, mockSupport.BlockCutterVal.CurBatch(), "Expected the blockcutter to be non-empty")
-			assert.NotNil(t, chain.timer, "Expected the cutTimer to be non-nil when there are pending envelopes")
 		})
 
 		t.Run("ReceiveTimeToCutProper", func(t *testing.T) {
@@ -1742,6 +2009,7 @@ func TestProcessMessages(t *testing.T) {
 			chain := newBareMinimumChain(t, lastCutBlockNumber, mockSupport, hcf, nil, nil)
 			done := make(chan struct{})
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				err = chain.processMessages()
 				done <- struct{}{}
@@ -1752,7 +2020,7 @@ func TestProcessMessages(t *testing.T) {
 			// plant a message directly to the mock blockcutter
 			mockSupport.BlockCutterVal.Ordered(newMockEnvelope("foo message"))
 
-			msg := newTimeToCutMessage(lastCutBlockNumber + 1)
+			msg := newTimeToCutMessageWithBlockNumber(lastCutBlockNumber + 1)
 			chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err1, "Expected Split returns no error")
@@ -1791,12 +2059,13 @@ func TestProcessMessages(t *testing.T) {
 			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 			defer close(respSyncChan)
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				err = chain.processMessages()
 				done <- struct{}{}
 			}()
 
-			msg := newTimeToCutMessage(lastCutBlockNumber + 1)
+			msg := newTimeToCutMessageWithBlockNumber(lastCutBlockNumber + 1)
 			chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err1, "Expected Split returns no error")
@@ -1829,13 +2098,14 @@ func TestProcessMessages(t *testing.T) {
 			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 			defer close(respSyncChan)
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				err = chain.processMessages()
 				done <- struct{}{}
 			}()
 
 			// larger than expected block number,
-			msg := newTimeToCutMessage(lastCutBlockNumber + 2)
+			msg := newTimeToCutMessageWithBlockNumber(lastCutBlockNumber + 2)
 			chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err1, "Expected Split returns no error")
@@ -1867,6 +2137,7 @@ func TestProcessMessages(t *testing.T) {
 			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 			defer close(respSyncChan)
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				err = chain.processMessages()
 				done <- struct{}{}
@@ -1874,7 +2145,7 @@ func TestProcessMessages(t *testing.T) {
 			close(mockSupport.BlockCutterVal.Block)
 
 			// larger than expected block number,
-			msg := newTimeToCutMessage(lastCutBlockNumber)
+			msg := newTimeToCutMessageWithBlockNumber(lastCutBlockNumber)
 			chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.NoError(t, err1, "Expected Split returns no error")
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
@@ -1908,6 +2179,7 @@ func TestProcessMessages(t *testing.T) {
 			respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 			defer close(respSyncChan)
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				err = chain.processMessages()
 				done <- struct{}{}
@@ -1948,6 +2220,7 @@ func TestProcessMessages(t *testing.T) {
 				respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 				defer close(respSyncChan)
 
+				go chain.processTimeToCutRequests()
 				go func() {
 					err = chain.processMessages()
 					done <- struct{}{}
@@ -2015,6 +2288,7 @@ func TestProcessMessages(t *testing.T) {
 				close(mockSupport.BlockCutterVal.Block)
 				close(getRespSyncChan(chain.topicSubscriptionHandle))
 
+				go chain.processTimeToCutRequests()
 				go func() {
 					err = chain.processMessages()
 					done <- struct{}{}
@@ -2057,6 +2331,7 @@ func TestProcessMessages(t *testing.T) {
 				respSyncChan := getRespSyncChan(chain.topicSubscriptionHandle)
 				defer close(respSyncChan)
 
+				go chain.processTimeToCutRequests()
 				go func() {
 					err = chain.processMessages()
 					done <- struct{}{}
@@ -2123,6 +2398,7 @@ func TestProcessMessages(t *testing.T) {
 				close(mockSupport.BlockCutterVal.Block)
 				close(getRespSyncChan(chain.topicSubscriptionHandle))
 
+				go chain.processTimeToCutRequests()
 				go func() {
 					err = chain.processMessages()
 					done <- struct{}{}
@@ -2273,6 +2549,8 @@ func TestResubmission(t *testing.T) {
 			errorChan:                   errorChan,
 			haltChan:                    haltChan,
 			doneProcessingMessages:      make(chan struct{}),
+			timeToCutRequestChan:        make(chan timeToCutRequest),
+			messageHashes:               make(map[string]struct{}),
 			doneReprocessingMsgInFlight: doneReprocessingMsgInFlight,
 
 			appID:       []byte("bare-minimum appID"),
@@ -2305,6 +2583,7 @@ func TestResubmission(t *testing.T) {
 			defer close(respSyncChan)
 			done := make(chan struct{})
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				processErr = chain.processMessages()
 				done <- struct{}{}
@@ -2362,6 +2641,7 @@ func TestResubmission(t *testing.T) {
 			defer close(respSyncChan)
 			done := make(chan struct{})
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				processErr = chain.processMessages()
 				done <- struct{}{}
@@ -2432,6 +2712,7 @@ func TestResubmission(t *testing.T) {
 			defer close(respSyncChan)
 			done := make(chan struct{})
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				processErr = chain.processMessages()
 				done <- struct{}{}
@@ -2482,6 +2763,7 @@ func TestResubmission(t *testing.T) {
 			defer close(respSyncChan)
 			done := make(chan struct{})
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				processErr = chain.processMessages()
 				done <- struct{}{}
@@ -2565,6 +2847,7 @@ func TestResubmission(t *testing.T) {
 			defer close(respSyncChan)
 			done := make(chan struct{})
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				processErr = chain.processMessages()
 				done <- struct{}{}
@@ -2616,6 +2899,7 @@ func TestResubmission(t *testing.T) {
 			defer close(respSyncChan)
 			done := make(chan struct{})
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				processErr = chain.processMessages()
 				done <- struct{}{}
@@ -2699,6 +2983,7 @@ func TestResubmission(t *testing.T) {
 			defer close(respSyncChan)
 			done := make(chan struct{})
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				processErr = chain.processMessages()
 				done <- struct{}{}
@@ -2763,6 +3048,7 @@ func TestResubmission(t *testing.T) {
 			defer close(respSyncChan)
 			done := make(chan struct{})
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				processErr = chain.processMessages()
 				done <- struct{}{}
@@ -2823,6 +3109,7 @@ func TestResubmission(t *testing.T) {
 			consensusClient.SubmitConsensusMessageCalls(nil)
 			consensusClient.SubmitConsensusMessageReturns(&hedera.TransactionID{}, nil)
 
+			go chain.processTimeToCutRequests()
 			go func() {
 				processErr = chain.processMessages()
 				done <- struct{}{}
@@ -3165,14 +3452,26 @@ func TestNewNormalMessage(t *testing.T) {
 	assert.Equal(t, originalSeq, config.OriginalSeq, "Expected OriginalSeq to match")
 }
 
-func TestNewTimeToCutMessage(t *testing.T) {
+func TestNewTimeToCutMessageWithBlockNumber(t *testing.T) {
 	blockNumber := uint64(9)
-	msg := newTimeToCutMessage(blockNumber)
+	msg := newTimeToCutMessageWithBlockNumber(blockNumber)
 	assert.IsType(t, &hb.HcsMessage_TimeToCut{}, msg.Type, "Expected message type to be HcsMessage_TimeToCut")
 	regular := msg.Type.(*hb.HcsMessage_TimeToCut)
 	assert.IsType(t, &hb.HcsMessageTimeToCut{}, regular.TimeToCut, "Expected message type to be HcsMessageTimeToCut")
 	ttc := regular.TimeToCut
-	assert.Equal(t, blockNumber, ttc.BlockNumber, "Expected blockNumber to match")
+	assert.IsType(t, &hb.HcsMessageTimeToCut_BlockNumber{}, ttc.Request, "Expected message type to be HcsMessageTimeToCut_BlockNumber")
+	assert.Equal(t, blockNumber, ttc.GetBlockNumber(), "Expected blockNumber to match")
+}
+
+func TestNewTimeToCutMessageWithMessageHash(t *testing.T) {
+	messageHash := []byte("dummy hash")
+	msg := newTimeToCutMessageWithMessageHash(messageHash)
+	assert.IsType(t, &hb.HcsMessage_TimeToCut{}, msg.Type, "Expected message type to be HcsMessage_TimeToCut")
+	regular := msg.Type.(*hb.HcsMessage_TimeToCut)
+	assert.IsType(t, &hb.HcsMessageTimeToCut{}, regular.TimeToCut, "Expected message type to be HcsMessageTimeToCut")
+	ttc := regular.TimeToCut
+	assert.IsType(t, &hb.HcsMessageTimeToCut_MessageHash{}, ttc.Request, "Expected message type to be HcsMessageTimeToCut_BlockNumber")
+	assert.Equal(t, messageHash, ttc.GetMessageHash(), "Expected messageHash to match")
 }
 
 func TestNewOrdererStartedMessage(t *testing.T) {

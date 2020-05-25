@@ -21,7 +21,7 @@ import (
 	"github.com/hyperledger/fabric/internal/configtxgen/encoder/fakes"
 	"github.com/hyperledger/fabric/internal/configtxgen/genesisconfig"
 	"github.com/hyperledger/fabric/internal/pkg/identity"
-	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 	"github.com/hyperledger/fabric/protoutil"
 )
 

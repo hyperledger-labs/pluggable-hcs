@@ -34,9 +34,13 @@ message HcsMessageRegular {
 }
 
 // HcsMessageTimeToCut is used to signal to the orderers that it is time to
-// cut block <block_number>.
+// cut a new block. The value can be 1) the next block number to cut, or 2)
+// the hash of the sent message which triggers the request.
 message HcsMessageTimeToCut {
-    uint64 block_number = 1;
+    oneof request {
+        uint64 block_number = 1;
+        bytes message_hash = 2;
+    }
 }
 
 message HcsMessageOrdererStarted {
