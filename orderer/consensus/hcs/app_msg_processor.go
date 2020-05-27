@@ -13,15 +13,15 @@ import (
 	"github.com/golang/protobuf/proto"
 	any "github.com/golang/protobuf/ptypes/any"
 	"github.com/hashgraph/hedera-sdk-go"
-	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 	"github.com/hyperledger/fabric/protoutil"
 	"reflect"
 	"time"
 )
 
 type signer interface {
-	Sign(message []byte) ([]byte, error)
-	Verify(message, signature []byte) bool
+	Sign(message []byte) (publicKey []byte, signature []byte, err error)
+	Verify(message, signerPublicKey, signature []byte) bool
 }
 
 type blockCipher interface {
@@ -101,11 +101,15 @@ func (processor *appMsgProcessorImpl) Split(message []byte) ([]*hb.ApplicationMe
 	}
 	msgHash := sha256.Sum256(message)
 	appMsg.UnencryptedBusinessProcessMessageHash = msgHash[:]
-	signature, err := processor.signer.Sign(appMsg.UnencryptedBusinessProcessMessageHash)
+	publicKey, signature, err := processor.signer.Sign(appMsg.UnencryptedBusinessProcessMessageHash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign the unencrypted business process message hash - %v", err)
 	}
-	appMsg.BusinessProcessSignatureOnHash = signature
+	appSig := &hb.ApplicationSignature{
+		PublicKey: publicKey,
+		Signature: signature,
+	}
+	appMsg.BusinessProcessSignatureOnHash = protoutil.MarshalOrPanic(appSig)
 	if !processor.noBlockCipher {
 		iv, ciphertext, err := processor.blockCipher.Encrypt(message)
 		if err != nil {
@@ -222,7 +226,11 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 	if !bytes.Equal(msgHash[:], appMsg.UnencryptedBusinessProcessMessageHash) {
 		return nil, fmt.Errorf("hash on unecnrypted business process message does not match, corrupted or malicious data")
 	}
-	if !processor.signer.Verify(appMsg.UnencryptedBusinessProcessMessageHash, appMsg.BusinessProcessSignatureOnHash) {
+	appSig := &hb.ApplicationSignature{}
+	if err := proto.Unmarshal(appMsg.BusinessProcessSignatureOnHash, appSig); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal BusinessProcessSignatureOnHash, corrupted data = %v", err)
+	}
+	if !processor.signer.Verify(appMsg.UnencryptedBusinessProcessMessageHash, appSig.PublicKey, appSig.Signature) {
 		return nil, fmt.Errorf("failed to verify unencrypted business process message signature")
 	}
 	return plaintext, nil

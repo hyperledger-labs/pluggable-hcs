@@ -6,24 +6,27 @@ import (
 )
 
 type Signer struct {
-	SignStub        func([]byte) ([]byte, error)
+	SignStub        func([]byte) ([]byte, []byte, error)
 	signMutex       sync.RWMutex
 	signArgsForCall []struct {
 		arg1 []byte
 	}
 	signReturns struct {
 		result1 []byte
-		result2 error
+		result2 []byte
+		result3 error
 	}
 	signReturnsOnCall map[int]struct {
 		result1 []byte
-		result2 error
+		result2 []byte
+		result3 error
 	}
-	VerifyStub        func([]byte, []byte) bool
+	VerifyStub        func([]byte, []byte, []byte) bool
 	verifyMutex       sync.RWMutex
 	verifyArgsForCall []struct {
 		arg1 []byte
 		arg2 []byte
+		arg3 []byte
 	}
 	verifyReturns struct {
 		result1 bool
@@ -35,7 +38,7 @@ type Signer struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *Signer) Sign(arg1 []byte) ([]byte, error) {
+func (fake *Signer) Sign(arg1 []byte) ([]byte, []byte, error) {
 	var arg1Copy []byte
 	if arg1 != nil {
 		arg1Copy = make([]byte, len(arg1))
@@ -52,10 +55,10 @@ func (fake *Signer) Sign(arg1 []byte) ([]byte, error) {
 		return fake.SignStub(arg1)
 	}
 	if specificReturn {
-		return ret.result1, ret.result2
+		return ret.result1, ret.result2, ret.result3
 	}
 	fakeReturns := fake.signReturns
-	return fakeReturns.result1, fakeReturns.result2
+	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3
 }
 
 func (fake *Signer) SignCallCount() int {
@@ -64,7 +67,7 @@ func (fake *Signer) SignCallCount() int {
 	return len(fake.signArgsForCall)
 }
 
-func (fake *Signer) SignCalls(stub func([]byte) ([]byte, error)) {
+func (fake *Signer) SignCalls(stub func([]byte) ([]byte, []byte, error)) {
 	fake.signMutex.Lock()
 	defer fake.signMutex.Unlock()
 	fake.SignStub = stub
@@ -77,33 +80,36 @@ func (fake *Signer) SignArgsForCall(i int) []byte {
 	return argsForCall.arg1
 }
 
-func (fake *Signer) SignReturns(result1 []byte, result2 error) {
+func (fake *Signer) SignReturns(result1 []byte, result2 []byte, result3 error) {
 	fake.signMutex.Lock()
 	defer fake.signMutex.Unlock()
 	fake.SignStub = nil
 	fake.signReturns = struct {
 		result1 []byte
-		result2 error
-	}{result1, result2}
+		result2 []byte
+		result3 error
+	}{result1, result2, result3}
 }
 
-func (fake *Signer) SignReturnsOnCall(i int, result1 []byte, result2 error) {
+func (fake *Signer) SignReturnsOnCall(i int, result1 []byte, result2 []byte, result3 error) {
 	fake.signMutex.Lock()
 	defer fake.signMutex.Unlock()
 	fake.SignStub = nil
 	if fake.signReturnsOnCall == nil {
 		fake.signReturnsOnCall = make(map[int]struct {
 			result1 []byte
-			result2 error
+			result2 []byte
+			result3 error
 		})
 	}
 	fake.signReturnsOnCall[i] = struct {
 		result1 []byte
-		result2 error
-	}{result1, result2}
+		result2 []byte
+		result3 error
+	}{result1, result2, result3}
 }
 
-func (fake *Signer) Verify(arg1 []byte, arg2 []byte) bool {
+func (fake *Signer) Verify(arg1 []byte, arg2 []byte, arg3 []byte) bool {
 	var arg1Copy []byte
 	if arg1 != nil {
 		arg1Copy = make([]byte, len(arg1))
@@ -114,16 +120,22 @@ func (fake *Signer) Verify(arg1 []byte, arg2 []byte) bool {
 		arg2Copy = make([]byte, len(arg2))
 		copy(arg2Copy, arg2)
 	}
+	var arg3Copy []byte
+	if arg3 != nil {
+		arg3Copy = make([]byte, len(arg3))
+		copy(arg3Copy, arg3)
+	}
 	fake.verifyMutex.Lock()
 	ret, specificReturn := fake.verifyReturnsOnCall[len(fake.verifyArgsForCall)]
 	fake.verifyArgsForCall = append(fake.verifyArgsForCall, struct {
 		arg1 []byte
 		arg2 []byte
-	}{arg1Copy, arg2Copy})
-	fake.recordInvocation("Verify", []interface{}{arg1Copy, arg2Copy})
+		arg3 []byte
+	}{arg1Copy, arg2Copy, arg3Copy})
+	fake.recordInvocation("Verify", []interface{}{arg1Copy, arg2Copy, arg3Copy})
 	fake.verifyMutex.Unlock()
 	if fake.VerifyStub != nil {
-		return fake.VerifyStub(arg1, arg2)
+		return fake.VerifyStub(arg1, arg2, arg3)
 	}
 	if specificReturn {
 		return ret.result1
@@ -138,17 +150,17 @@ func (fake *Signer) VerifyCallCount() int {
 	return len(fake.verifyArgsForCall)
 }
 
-func (fake *Signer) VerifyCalls(stub func([]byte, []byte) bool) {
+func (fake *Signer) VerifyCalls(stub func([]byte, []byte, []byte) bool) {
 	fake.verifyMutex.Lock()
 	defer fake.verifyMutex.Unlock()
 	fake.VerifyStub = stub
 }
 
-func (fake *Signer) VerifyArgsForCall(i int) ([]byte, []byte) {
+func (fake *Signer) VerifyArgsForCall(i int) ([]byte, []byte, []byte) {
 	fake.verifyMutex.RLock()
 	defer fake.verifyMutex.RUnlock()
 	argsForCall := fake.verifyArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
 }
 
 func (fake *Signer) VerifyReturns(result1 bool) {

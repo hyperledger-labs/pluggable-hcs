@@ -21,7 +21,7 @@ import (
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/orderer/consensus/hcs/mock"
-	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 	mockmultichannel "github.com/hyperledger/fabric/orderer/mocks/common/multichannel"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/stretchr/testify/assert"
@@ -236,12 +236,15 @@ func newMockLocalConfig(enableTLS bool) *localconfig.TopLevel {
 			MirrorNodeAddress: "35.204.38.119:5600",
 			Operator: localconfig.HcsOperator{
 				Id: "0.0.19651",
-				PrivateKey: localconfig.HcsPrivateKey{
+				PrivateKey: localconfig.HcsTypeKey{
 					Type: "ed25519",
 					Key:  testOperatorPrivateKey,
 				},
 			},
-			EncryptionKey: base64.StdEncoding.EncodeToString(key),
+			BlockCipher: localconfig.HcsTypeKey{
+				Type: "aes-256-gcm",
+				Key:  base64.StdEncoding.EncodeToString(key),
+			},
 		},
 	}
 }
