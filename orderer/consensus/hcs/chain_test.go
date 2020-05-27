@@ -29,7 +29,7 @@ import (
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/orderer/consensus/hcs/factory"
 	mockhcs "github.com/hyperledger/fabric/orderer/consensus/hcs/mock"
-	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 	mockblockcutter "github.com/hyperledger/fabric/orderer/mocks/common/blockcutter"
 	mockmultichannel "github.com/hyperledger/fabric/orderer/mocks/common/multichannel"
 	"github.com/hyperledger/fabric/protoutil"
@@ -78,7 +78,7 @@ const (
 	goodHcsTopicIDStr          = "0.0.19610"
 )
 
-func newMockOrderer(batchTimeout time.Duration, topicID string, publicKeys []string) *mockhcs.OrdererConfig {
+func newMockOrderer(batchTimeout time.Duration, topicID string, publicKeys []*hb.HcsConfigPublicKey) *mockhcs.OrdererConfig {
 	mockCapabilities := &mockhcs.OrdererCapabilities{}
 	mockCapabilities.ResubmissionReturns(false)
 	mockOrderer := &mockhcs.OrdererConfig{}
@@ -118,12 +118,13 @@ func TestChain(t *testing.T) {
 			metrics:            newFakeMetrics(newFakeMetricsFields()),
 		}
 
+		publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 		mockSupport = &mockmultichannel.ConsenterSupport{
 			BlockCutterVal:   mockblockcutter.NewReceiver(),
 			Blocks:           make(chan *cb.Block),
 			ChannelIDVal:     channelNameForTest(t),
 			HeightVal:        uint64(3),
-			SharedConfigVal:  newMockOrderer(shortTimeout, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+			SharedConfigVal:  newMockOrderer(shortTimeout, goodHcsTopicIDStr, publicKeys),
 			ChannelConfigVal: newMockChannel(),
 		}
 		return mockConsenter, mockSupport
@@ -165,9 +166,21 @@ func TestChain(t *testing.T) {
 				name: "WithCorruptedConsensusMetadata",
 				newMocksFunc: func(t *testing.T) (*consenterImpl, *mockmultichannel.ConsenterSupport) {
 					mockConsenter, mockSupport := newMocks(t)
-					mockOrderer := newMockOrderer(shortTimeout, goodHcsTopicIDStr, []string{testOperatorPublicKey})
+					publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
+					mockOrderer := newMockOrderer(shortTimeout, goodHcsTopicIDStr, publicKeys)
 					mockOrderer.ConsensusMetadataReturns([]byte("corrupted data"))
 					mockSupport.SharedConfigVal = mockOrderer
+					return mockConsenter, mockSupport
+				},
+				wantErr: true,
+			},
+			{
+				name: "WithInvalidBlockCipherType",
+				newMocksFunc: func(t *testing.T) (*consenterImpl, *mockmultichannel.ConsenterSupport) {
+					mockConsenter, mockSupport := newMocks(t)
+					mockLocalConfigHcs := *mockConsenter.sharedHcsConfigVal
+					mockLocalConfigHcs.BlockCipher.Type = "unknown"
+					mockConsenter.sharedHcsConfigVal = &mockLocalConfigHcs
 					return mockConsenter, mockSupport
 				},
 				wantErr: true,
@@ -177,7 +190,7 @@ func TestChain(t *testing.T) {
 				newMocksFunc: func(t *testing.T) (*consenterImpl, *mockmultichannel.ConsenterSupport) {
 					mockConsenter, mockSupport := newMocks(t)
 					mockLocalConfigHcs := *mockConsenter.sharedHcsConfigVal
-					mockLocalConfigHcs.EncryptionKey = "not base64 string"
+					mockLocalConfigHcs.BlockCipher.Key = "not base64 string"
 					mockConsenter.sharedHcsConfigVal = &mockLocalConfigHcs
 					return mockConsenter, mockSupport
 				},
@@ -190,7 +203,7 @@ func TestChain(t *testing.T) {
 					mockLocalConfigHcs := *mockConsenter.sharedHcsConfigVal
 					key := make([]byte, 9)
 					rand.Read(key)
-					mockLocalConfigHcs.EncryptionKey = base64.StdEncoding.EncodeToString(key)
+					mockLocalConfigHcs.BlockCipher.Key = base64.StdEncoding.EncodeToString(key)
 					mockConsenter.sharedHcsConfigVal = &mockLocalConfigHcs
 					return mockConsenter, mockSupport
 				},
@@ -283,7 +296,11 @@ func TestChain(t *testing.T) {
 		fakeAppMsgProcessor.ExpireByAgeCalls(func(maxAge uint64) int {
 			return origAppMsgProcessor.ExpireByAge(maxAge)
 		})
+		expireByAppIDSyncChan := make(chan struct{})
 		fakeAppMsgProcessor.ExpireByAppIDCalls(func(appID []byte) (int, error) {
+			defer func() {
+				expireByAppIDSyncChan <- struct{}{}
+			}()
 			return origAppMsgProcessor.ExpireByAppID(appID)
 		})
 		chain.appMsgProcessor = &fakeAppMsgProcessor
@@ -296,6 +313,12 @@ func TestChain(t *testing.T) {
 			t.Fatal("startChan should have been closed by now")
 		}
 		close(getRespSyncChan(chain.topicSubscriptionHandle))
+
+		select {
+		case <-expireByAppIDSyncChan:
+		case <-time.After(shortTimeout):
+			t.Fatal("ExipreByAppIDSyncChan should have been called")
+		}
 
 		chain.Halt()
 		returnValues := hcf.GetReturnValues()
@@ -1369,20 +1392,21 @@ func TestSigner(t *testing.T) {
 		privateKey, err := hedera.Ed25519PrivateKeyFromString(privateKeyStr)
 		assert.NoError(t, err, "Expected valid ed25519 private key string")
 
-		publicKeys := make([]*hedera.Ed25519PublicKey, 0)
+		publicKeys := map[string]*hedera.Ed25519PublicKey{}
 		if publicKeyStrs != nil {
 			for _, keyStr := range publicKeyStrs {
 				publicKey, err := hedera.Ed25519PublicKeyFromString(keyStr)
 				assert.NoError(t, err, "Expected valid ed25519 public key string")
-				publicKeys = append(publicKeys, &publicKey)
+				publicKeys[string(publicKey.Bytes())] = &publicKey
 			}
 		}
 		return &chainImpl{
 			ConsenterSupport: &mockmultichannel.ConsenterSupport{
 				ChannelIDVal: channelNameForTest(t),
 			},
-			operatorPrivateKey: &privateKey,
-			publicKeys:         publicKeys,
+			operatorPrivateKey:     &privateKey,
+			operatorPublicKeyBytes: privateKey.PublicKey().Bytes(),
+			publicKeys:             publicKeys,
 		}
 	}
 
@@ -1391,19 +1415,14 @@ func TestSigner(t *testing.T) {
 		privateKey        string
 		publicKeys        []string
 		createMessageFunc func() []byte
-		dataModifyFunc    func(msgIn, sigIn []byte) (msgOut, sigOut []byte)
+		dataModifyFunc    func(pubKeyIn, msgIn, sigIn []byte) (pubKeyOut, msgOut, sigOut []byte)
 		wantErrOnSign     bool
 		wantVerifyPass    bool
 	}{
 		{
-			name:       "Proper",
-			privateKey: testOperatorPrivateKey,
-			publicKeys: []string{testOperatorPublicKey},
-			createMessageFunc: func() []byte {
-				message := make([]byte, 128)
-				rand.Read(message)
-				return message
-			},
+			name:           "Proper",
+			privateKey:     testOperatorPrivateKey,
+			publicKeys:     []string{testOperatorPublicKey},
 			wantErrOnSign:  false,
 			wantVerifyPass: true,
 		},
@@ -1425,14 +1444,9 @@ func TestSigner(t *testing.T) {
 			name:       "WithCorruptedMessage",
 			privateKey: testOperatorPrivateKey,
 			publicKeys: []string{testOperatorPublicKey},
-			createMessageFunc: func() []byte {
-				message := make([]byte, 128)
-				rand.Read(message)
-				return message
-			},
-			dataModifyFunc: func(msgIn, sigIn []byte) (msgOut, sigOut []byte) {
+			dataModifyFunc: func(pubKeyIn, msgIn, sigIn []byte) (pubKeyOut, msgOut, sigOut []byte) {
 				msgIn[0] = ^msgIn[0]
-				return msgIn, sigIn
+				return pubKeyIn, msgIn, sigIn
 			},
 			wantErrOnSign:  false,
 			wantVerifyPass: false,
@@ -1441,14 +1455,9 @@ func TestSigner(t *testing.T) {
 			name:       "WithCorruptedSignature",
 			privateKey: testOperatorPrivateKey,
 			publicKeys: []string{testOperatorPublicKey},
-			createMessageFunc: func() []byte {
-				message := make([]byte, 128)
-				rand.Read(message)
-				return message
-			},
-			dataModifyFunc: func(msgIn, sigIn []byte) (msgOut, sigOut []byte) {
+			dataModifyFunc: func(pubKeyIn, msgIn, sigIn []byte) (pubKeyOut, msgOut, sigOut []byte) {
 				sigIn[0] = ^sigIn[0]
-				return msgIn, sigIn
+				return pubKeyIn, msgIn, sigIn
 			},
 			wantErrOnSign:  false,
 			wantVerifyPass: false,
@@ -1456,22 +1465,46 @@ func TestSigner(t *testing.T) {
 		{
 			name:       "WithNoMatchingPublicKey",
 			privateKey: testOperatorPrivateKey,
-			publicKeys: []string{"302a300506032b6570032100708e6eef139eaeba32f91c1a36230bd2d9c10b43a7a48308bc9e056107ac312a"},
-			createMessageFunc: func() []byte {
-				message := make([]byte, 128)
-				rand.Read(message)
-				return message
+			publicKeys: []string{testOperatorPublicKey},
+			dataModifyFunc: func(pubKeyIn, msgIn, sigIn []byte) (pubKeyOut, msgOut, sigOut []byte) {
+				pubKeyIn[0] = ^pubKeyIn[0]
+				return pubKeyIn, msgIn, sigIn
 			},
 			wantErrOnSign:  false,
 			wantVerifyPass: false,
 		},
 		{
-			name:       "WithNoPublicKey",
+			name:           "WithNoPublicKey",
+			privateKey:     testOperatorPrivateKey,
+			wantErrOnSign:  false,
+			wantVerifyPass: false,
+		},
+		{
+			name:       "WithNilVerifyPublicKey",
 			privateKey: testOperatorPrivateKey,
-			createMessageFunc: func() []byte {
-				message := make([]byte, 128)
-				rand.Read(message)
-				return message
+			publicKeys: []string{testOperatorPublicKey},
+			dataModifyFunc: func(pubKeyIn, msgIn, sigIn []byte) (pubKeyOut, msgOut, sigOut []byte) {
+				return nil, msgIn, sigIn
+			},
+			wantErrOnSign:  false,
+			wantVerifyPass: false,
+		},
+		{
+			name:       "WithNilVerifyMessage",
+			privateKey: testOperatorPrivateKey,
+			publicKeys: []string{testOperatorPublicKey},
+			dataModifyFunc: func(pubKeyIn, msgIn, sigIn []byte) (pubKeyOut, msgOut, sigOut []byte) {
+				return pubKeyIn, nil, sigIn
+			},
+			wantErrOnSign:  false,
+			wantVerifyPass: false,
+		},
+		{
+			name:       "WithNilVerifySignature",
+			privateKey: testOperatorPrivateKey,
+			publicKeys: []string{testOperatorPublicKey},
+			dataModifyFunc: func(pubKeyIn, msgIn, sigIn []byte) (pubKeyOut, msgOut, sigOut []byte) {
+				return pubKeyIn, msgIn, nil
 			},
 			wantErrOnSign:  false,
 			wantVerifyPass: false,
@@ -1482,8 +1515,14 @@ func TestSigner(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			chain := newBareMinimumChainForSigner(tt.privateKey, tt.publicKeys)
 
-			message := tt.createMessageFunc()
-			signature, err := chain.Sign(message)
+			var message []byte
+			if tt.createMessageFunc != nil {
+				message = tt.createMessageFunc()
+			} else {
+				message = make([]byte, 128)
+				rand.Read(message)
+			}
+			publicKey, signature, err := chain.Sign(message)
 			if tt.wantErrOnSign {
 				assert.Error(t, err, "Expected Sign return error")
 				return
@@ -1491,13 +1530,13 @@ func TestSigner(t *testing.T) {
 			assert.NoError(t, err, "Expected Sign return no error")
 
 			if tt.dataModifyFunc != nil {
-				message, signature = tt.dataModifyFunc(message, signature)
+				publicKey, message, signature = tt.dataModifyFunc(publicKey, message, signature)
 			}
 
 			if tt.wantVerifyPass {
-				assert.True(t, chain.Verify(message, signature), "Expected Verify pass")
+				assert.True(t, chain.Verify(message, publicKey, signature), "Expected Verify pass")
 			} else {
-				assert.False(t, chain.Verify(message, signature), "Expected Verify fail")
+				assert.False(t, chain.Verify(message, publicKey, signature), "Expected Verify fail")
 			}
 		})
 	}
@@ -1549,7 +1588,10 @@ func TestProcessMessages(t *testing.T) {
 			topicConsumer:           topicConsumer,
 			topicSubscriptionHandle: topicSubscriptionHandle,
 			operatorPrivateKey:      &privateKey,
-			publicKeys:              []*hedera.Ed25519PublicKey{&publicKey},
+			operatorPublicKeyBytes:  publicKey.Bytes(),
+			publicKeys: map[string]*hedera.Ed25519PublicKey{
+				string(publicKey.Bytes()): &publicKey,
+			},
 
 			errorChan:              errorChan,
 			haltChan:               haltChan,
@@ -1574,11 +1616,12 @@ func TestProcessMessages(t *testing.T) {
 	t.Run("TimeToCut", func(t *testing.T) {
 		t.Run("PendingMsgToCutProper", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1630,11 +1673,12 @@ func TestProcessMessages(t *testing.T) {
 
 		t.Run("ReceiveTimeToCutProper", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1675,11 +1719,12 @@ func TestProcessMessages(t *testing.T) {
 
 		t.Run("ReceiveTimeToCutZeroBatch", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 				ChannelConfigVal: newMockChannel(),
 			}
 			defer close(mockSupport.BlockCutterVal.Block)
@@ -1712,11 +1757,12 @@ func TestProcessMessages(t *testing.T) {
 
 		t.Run("ReceiveTimeToCutLargerThanExpected", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 				ChannelConfigVal: newMockChannel(),
 			}
 			defer close(mockSupport.BlockCutterVal.Block)
@@ -1749,11 +1795,12 @@ func TestProcessMessages(t *testing.T) {
 		})
 
 		t.Run("ReceiveTimeToCutStale", func(t *testing.T) {
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 				ChannelConfigVal: newMockChannel(),
 			}
 			lastCutBlockNumber := uint64(3)
@@ -1790,11 +1837,12 @@ func TestProcessMessages(t *testing.T) {
 	t.Run("Regular", func(t *testing.T) {
 		t.Run("Error", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -1828,11 +1876,12 @@ func TestProcessMessages(t *testing.T) {
 		t.Run("Normal", func(t *testing.T) {
 			t.Run("ReceiveTwoRegularAndCutTwoBlocks", func(t *testing.T) {
 				lastCutBlockNumber := uint64(3)
+				publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 				mockSupport := &mockmultichannel.ConsenterSupport{
 					BlockCutterVal:   mockblockcutter.NewReceiver(),
 					Blocks:           make(chan *cb.Block),
 					ChannelIDVal:     channelNameForTest(t),
-					SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+					SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
@@ -1895,11 +1944,12 @@ func TestProcessMessages(t *testing.T) {
 
 			t.Run("ReceiveRegularAndQueue", func(t *testing.T) {
 				lastCutBlockNumber := uint64(3)
+				publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 				mockSupport := &mockmultichannel.ConsenterSupport{
 					BlockCutterVal:   mockblockcutter.NewReceiver(),
 					Blocks:           make(chan *cb.Block),
 					ChannelIDVal:     channelNameForTest(t),
-					SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+					SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
@@ -1935,11 +1985,12 @@ func TestProcessMessages(t *testing.T) {
 			// a normal tx followed by a config tx, should yield two blocks
 			t.Run("ReceiveConfigEnvelopeAndCut", func(t *testing.T) {
 				lastCutBlockNumber := uint64(3)
+				publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 				mockSupport := &mockmultichannel.ConsenterSupport{
 					BlockCutterVal:   mockblockcutter.NewReceiver(),
 					Blocks:           make(chan *cb.Block),
 					ChannelIDVal:     channelNameForTest(t),
-					SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+					SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 					ChannelConfigVal: newMockChannel(),
 				}
 				hcf := newDefaultMockHcsClientFactory()
@@ -1997,13 +2048,14 @@ func TestProcessMessages(t *testing.T) {
 
 			t.Run("RevalidateConfigEnvInvalid", func(t *testing.T) {
 				lastCutBlockNumber := uint64(3)
+				publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 				mockSupport := &mockmultichannel.ConsenterSupport{
 					BlockCutterVal:      mockblockcutter.NewReceiver(),
 					Blocks:              make(chan *cb.Block),
 					ChannelIDVal:        channelNameForTest(t),
 					HeightVal:           lastCutBlockNumber,
 					ClassifyMsgVal:      msgprocessor.ConfigMsg,
-					SharedConfigVal:     newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+					SharedConfigVal:     newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 					SequenceVal:         uint64(1), // config sequence 1
 					ProcessConfigMsgErr: fmt.Errorf("invalid config message"),
 					ChannelConfigVal:    newMockChannel(),
@@ -2044,11 +2096,12 @@ func TestProcessMessages(t *testing.T) {
 	t.Run("RecollectPendingChunks", func(t *testing.T) {
 		t.Run("ReceiveMessageWithFutureConsensusTimestamp", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -2154,7 +2207,10 @@ func TestResubmission(t *testing.T) {
 			topicConsumer:           topicConsumer,
 			topicSubscriptionHandle: topicSubscriptionHandle,
 			operatorPrivateKey:      &privateKey,
-			publicKeys:              []*hedera.Ed25519PublicKey{&publicKey},
+			operatorPublicKeyBytes:  publicKey.Bytes(),
+			publicKeys: map[string]*hedera.Ed25519PublicKey{
+				string(publicKey.Bytes()): &publicKey,
+			},
 
 			startChan:                   startChan,
 			errorChan:                   errorChan,
@@ -2177,11 +2233,12 @@ func TestResubmission(t *testing.T) {
 		t.Run("AlreadyProcessedDiscard", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(5)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
-				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:  newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 				ChannelConfigVal: newMockChannel(),
 			}
 			hcf := newDefaultMockHcsClientFactory()
@@ -2231,12 +2288,13 @@ func TestResubmission(t *testing.T) {
 		t.Run("ResubmittedMsgEnqueue", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(5)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
 				HeightVal:        lastCutBlockNumber,
-				SharedConfigVal:  newMockOrderer(longTimeout, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:  newMockOrderer(longTimeout, goodHcsTopicIDStr, publicKeys),
 				SequenceVal:      uint64(0),
 				ChannelConfigVal: newMockChannel(),
 			}
@@ -2299,12 +2357,13 @@ func TestResubmission(t *testing.T) {
 		t.Run("InvalidDiscard", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(5)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:      mockblockcutter.NewReceiver(),
 				Blocks:              make(chan *cb.Block),
 				ChannelIDVal:        channelNameForTest(t),
 				HeightVal:           lastCutBlockNumber,
-				SharedConfigVal:     newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:     newMockOrderer(shortTimeout/2, goodHcsTopicIDStr, publicKeys),
 				SequenceVal:         uint64(1),
 				ProcessNormalMsgErr: fmt.Errorf("invalid normal message"),
 				ChannelConfigVal:    newMockChannel(),
@@ -2348,12 +2407,13 @@ func TestResubmission(t *testing.T) {
 		t.Run("ValidResubmit", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(0)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
 				HeightVal:        lastCutBlockNumber,
-				SharedConfigVal:  newMockOrderer(longTimeout, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:  newMockOrderer(longTimeout, goodHcsTopicIDStr, publicKeys),
 				SequenceVal:      uint64(1),
 				ConfigSeqVal:     uint64(1),
 				ChannelConfigVal: newMockChannel(),
@@ -2430,12 +2490,13 @@ func TestResubmission(t *testing.T) {
 		t.Run("AlreadyProcessedDiscard", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(5)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:   mockblockcutter.NewReceiver(),
 				Blocks:           make(chan *cb.Block),
 				ChannelIDVal:     channelNameForTest(t),
 				HeightVal:        lastCutBlockNumber,
-				SharedConfigVal:  newMockOrderer(longTimeout, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:  newMockOrderer(longTimeout, goodHcsTopicIDStr, publicKeys),
 				SequenceVal:      uint64(1),
 				ConfigSeqVal:     uint64(1),
 				ChannelConfigVal: newMockChannel(),
@@ -2479,12 +2540,13 @@ func TestResubmission(t *testing.T) {
 		t.Run("Non-determinism", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(4)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:      mockblockcutter.NewReceiver(),
 				Blocks:              make(chan *cb.Block),
 				ChannelIDVal:        channelNameForTest(t),
 				HeightVal:           lastCutBlockNumber,
-				SharedConfigVal:     newMockOrderer(longTimeout, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:     newMockOrderer(longTimeout, goodHcsTopicIDStr, publicKeys),
 				SequenceVal:         uint64(1),
 				ConfigSeqVal:        uint64(1),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
@@ -2557,12 +2619,13 @@ func TestResubmission(t *testing.T) {
 		t.Run("ResubmittedMsgStillBehind", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(4)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:      mockblockcutter.NewReceiver(),
 				Blocks:              make(chan *cb.Block),
 				ChannelIDVal:        channelNameForTest(t),
 				HeightVal:           lastCutBlockNumber,
-				SharedConfigVal:     newMockOrderer(longTimeout, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:     newMockOrderer(longTimeout, goodHcsTopicIDStr, publicKeys),
 				SequenceVal:         uint64(2),
 				ConfigSeqVal:        uint64(2),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
@@ -2621,12 +2684,13 @@ func TestResubmission(t *testing.T) {
 		t.Run("InvalidDiscard", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(4)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:            mockblockcutter.NewReceiver(),
 				Blocks:                    make(chan *cb.Block),
 				ChannelIDVal:              channelNameForTest(t),
 				HeightVal:                 lastCutBlockNumber,
-				SharedConfigVal:           newMockOrderer(longTimeout, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:           newMockOrderer(longTimeout, goodHcsTopicIDStr, publicKeys),
 				SequenceVal:               uint64(1),
 				ConfigSeqVal:              uint64(1),
 				ProcessConfigUpdateMsgErr: fmt.Errorf("invalid config message"),
@@ -2671,12 +2735,13 @@ func TestResubmission(t *testing.T) {
 		t.Run("ValidResubmit", func(t *testing.T) {
 			lastCutBlockNumber := uint64(3)
 			lastOriginalSequenceProcessed := uint64(4)
+			publicKeys := []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: testOperatorPublicKey}}
 			mockSupport := &mockmultichannel.ConsenterSupport{
 				BlockCutterVal:      mockblockcutter.NewReceiver(),
 				Blocks:              make(chan *cb.Block),
 				ChannelIDVal:        channelNameForTest(t),
 				HeightVal:           lastCutBlockNumber,
-				SharedConfigVal:     newMockOrderer(longTimeout, goodHcsTopicIDStr, []string{testOperatorPublicKey}),
+				SharedConfigVal:     newMockOrderer(longTimeout, goodHcsTopicIDStr, publicKeys),
 				SequenceVal:         uint64(1),
 				ConfigSeqVal:        uint64(1),
 				ProcessConfigMsgVal: newMockConfigEnvelope(),
@@ -2834,9 +2899,15 @@ func TestParseConfig(t *testing.T) {
 	mockHcsConfig := mockLocalConfig.Hcs
 	mockHcsConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{
 		TopicId: goodHcsTopicIDStr,
-		PublicKeys: []string{
-			"302a300506032b657003210023452d9c2cc4e01deb670780f8e6d4e31badd1f5d2f5464971b490232a601c30",
-			"302a300506032b6570032100708e6eef139eaeba32f91c1a36230bd2d9c10b43a7a48308bc9e056107ac312a",
+		PublicKeys: []*hb.HcsConfigPublicKey{
+			{
+				Type: "ed25519",
+				Key:  "302a300506032b657003210023452d9c2cc4e01deb670780f8e6d4e31badd1f5d2f5464971b490232a601c30",
+			},
+			{
+				Type: "ed25519",
+				Key:  "302a300506032b6570032100708e6eef139eaeba32f91c1a36230bd2d9c10b43a7a48308bc9e056107ac312a",
+			},
 		},
 	})
 
@@ -2907,9 +2978,15 @@ func TestParseConfig(t *testing.T) {
 	t.Run("WithInvalidHCSTopicID", func(t *testing.T) {
 		invalidHcsConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{
 			TopicId: "0.0.abcd",
-			PublicKeys: []string{
-				"302a300506032b657003210023452d9c2cc4e01deb670780f8e6d4e31badd1f5d2f5464971b490232a601c30",
-				"302a300506032b6570032100708e6eef139eaeba32f91c1a36230bd2d9c10b43a7a48308bc9e056107ac312a",
+			PublicKeys: []*hb.HcsConfigPublicKey{
+				{
+					Type: "ed25519",
+					Key:  "302a300506032b657003210023452d9c2cc4e01deb670780f8e6d4e31badd1f5d2f5464971b490232a601c30",
+				},
+				{
+					Type: "ed25519",
+					Key:  "302a300506032b6570032100708e6eef139eaeba32f91c1a36230bd2d9c10b43a7a48308bc9e056107ac312a",
+				},
 			},
 		})
 		_, _, _, _, _, err := parseConfig(invalidHcsConfigMetadata, &mockHcsConfig)
@@ -2918,9 +2995,21 @@ func TestParseConfig(t *testing.T) {
 
 	t.Run("WithInvalidPublicKey", func(t *testing.T) {
 		invalidHcsConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{
+			TopicId:    goodHcsTopicIDStr,
+			PublicKeys: []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: "invalid key"}},
+		})
+		_, _, _, _, _, err := parseConfig(invalidHcsConfigMetadata, &mockHcsConfig)
+		assert.Error(t, err, "Expected parseConfig returns error when public key is invalid")
+	})
+
+	t.Run("WithUnsupportedPublicKeyType", func(t *testing.T) {
+		invalidHcsConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{
 			TopicId: goodHcsTopicIDStr,
-			PublicKeys: []string{
-				"invalid key",
+			PublicKeys: []*hb.HcsConfigPublicKey{
+				{
+					Type: "unknown",
+					Key:  "302a300506032b6570032100708e6eef139eaeba32f91c1a36230bd2d9c10b43a7a48308bc9e056107ac312a",
+				},
 			},
 		})
 		_, _, _, _, _, err := parseConfig(invalidHcsConfigMetadata, &mockHcsConfig)

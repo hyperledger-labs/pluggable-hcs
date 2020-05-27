@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package genesisconfig
 
 import (
-	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/proto"
 	"path/filepath"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/hyperledger/fabric/common/viperutil"
 	cf "github.com/hyperledger/fabric/core/config"
 	"github.com/hyperledger/fabric/msp"
+	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 	"github.com/spf13/viper"
 )
 

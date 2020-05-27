@@ -300,8 +300,12 @@ Hcs:
                 # As an alternative, uncomment the following "File" key and specify the PEM
                 # file name from which to load the key
                 #File: path/to/file
-        # base64 encoded 256-bit AES block cipher key or path to the key file
-        EncryptionKey:
+    # block cipher used to en/decrypt data between orderer and HCS
+    BlockCipher:
+        # type of the block cipher
+        Type: aes-256-gcm
+        # base64 encoded block cipher key or path to the key file
+        Key:
 
 ################################################################################
 #
