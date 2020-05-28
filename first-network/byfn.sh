@@ -154,7 +154,7 @@ function generateAESKey() {
   echo "##########################################################"
 
   set -e
-  dd bs=32 count=1 if=/dev/urandom 2>/dev/null | base64 -o ./aes.key
+  dd bs=32 count=1 if=/dev/urandom 2>/dev/null | base64 > ./aes.key
   set +e
 }
 
