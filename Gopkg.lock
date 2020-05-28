@@ -349,7 +349,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:dcd664303b9e4cb8812a6fecfcb98100d7a3bc0e08631ee51dafc2d105d0138e"
+  digest = "1:43725ca493852bb83e601349ecd599e6f0a23a00f47095026b29c23662e604ad"
   name = "github.com/hashgraph/hedera-sdk-go"
   packages = [
     ".",
@@ -357,7 +357,7 @@
     "proto/mirror",
   ]
   pruneopts = "NUT"
-  revision = "6afa6de55aafdd36558cf9fa9138731316883910"
+  revision = "8da8f5a2655fc283034d0b90ccb95ebff975ac44"
 
 [[projects]]
   digest = "1:53a4ebb0e1eb24a4644a3eec9457ba6ead5476a9ea5af43bf2c8b8b1a8ce47f2"
