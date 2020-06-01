@@ -133,6 +133,9 @@ func newChain(
 	consenter.Metrics().CommittedBlockNumber.With("channel", support.ChannelID()).Set(float64(lastCutBlockNumber))
 	consenter.Metrics().LastConsensusTimestampPersisted.With("channel", support.ChannelID()).Set(float64(lastConsensusTimestampPersisted.UnixNano()))
 
+	errorChan := make(chan struct{})
+	close(errorChan)
+
 	chain := &chainImpl{
 		consenter:                       consenter,
 		ConsenterSupport:                support,
@@ -151,6 +154,7 @@ func newChain(
 		operatorPublicKeyBytes:          operatorPrivateKey.PublicKey().Bytes(),
 		publicKeys:                      publicKeys,
 		topicID:                         &topicID,
+		errorChan:                       errorChan,
 		haltChan:                        make(chan struct{}),
 		startChan:                       make(chan struct{}),
 		doneReprocessingMsgInFlight:     doneReprocessingMsgInFlight,
@@ -203,7 +207,8 @@ type chainImpl struct {
 
 	// when the topic consumer errors, close the channel. Otherwise, make this
 	// an open, unbuffered channel
-	errorChan chan struct{}
+	errorChan   chan struct{}
+	errorCMutex sync.RWMutex
 	// when a Halt() request comes, close the channel.
 	haltChan               chan struct{}
 	doneProcessingMessages chan struct{}
@@ -225,7 +230,7 @@ type chainImpl struct {
 	topicProducer           factory.ConsensusClient
 	topicConsumer           factory.MirrorClient
 	topicSubscriptionHandle factory.MirrorSubscriptionHandle
-	subscriptionRetryTimer  <-chan time.Time
+	subscriptionRetryTimer  *time.Timer
 
 	appMsgProcessor appMsgProcessor
 	appID           []byte
@@ -304,14 +309,9 @@ func (chain *chainImpl) Halt() {
 }
 
 func (chain *chainImpl) Errored() <-chan struct{} {
-	select {
-	case <-chain.startChan:
-		return chain.errorChan
-	default:
-		dummyError := make(chan struct{})
-		close(dummyError)
-		return dummyError
-	}
+	chain.errorCMutex.RLock()
+	defer chain.errorCMutex.RUnlock()
+	return chain.errorChan
 }
 
 // signer interface
@@ -444,14 +444,14 @@ func (chain *chainImpl) processTimeToCutRequests() {
 			if err := chain.sendTimeToCut(newTimeToCutMessageWithMessageHash(messageHash)); err != nil {
 				logger.Errorf("[channel: %s] cannot send time-to-cut message with messageHash: %s", chain.ChannelID(), err)
 			} else {
-				logger.Debugf("[channel: %s] time-to-cut with messageHash sent", chain.ChannelID())
+				logger.Infof("[channel: %s] time-to-cut with messageHash sent", chain.ChannelID())
 			}
 		case <-recvTimer.C:
 			recvTimerRunning = false
 			if err := chain.sendTimeToCut(newTimeToCutMessageWithBlockNumber(blockNumber)); err != nil {
 				logger.Errorf("[channel: %s] failed with block number %d: %s", chain.ChannelID(), blockNumber, err)
 			} else {
-				logger.Debugf("[channel: %s] time-to-cut with block number %d sent", chain.ChannelID(), blockNumber)
+				logger.Infof("[channel: %s] time-to-cut with block number %d sent", chain.ChannelID(), blockNumber)
 			}
 		}
 	}
@@ -470,24 +470,37 @@ func (chain *chainImpl) processMessages() error {
 		default:
 			close(chain.errorChan)
 		}
+
+		if !chain.subscriptionRetryTimer.Stop() {
+			select {
+			case <-chain.subscriptionRetryTimer.C:
+			default:
+				// do nothing if already stopped
+			}
+		}
 	}()
 
 	recollectPendingChunks := !chain.lastConsensusTimestampPersisted.Equal(chain.lastChunkFreeConsensusTimestamp)
 	if recollectPendingChunks {
 		// recollect chunks pending reassembly at the time of last shutdown / crash, handle it by adding all messages
 		// in the range (lastChunkFreeBlock.LastConsensusTimestampPersisted, chain.LastConsensusTimestampPersisted] to appMsgProcessor
-		logger.Debugf("[channel: %s] going to collect chunks pending reassembly at the time of last shutdown / crash", chain.ChannelID())
+		logger.Infof("[channel: %s] going to collect chunks pending reassembly at the time of last shutdown / crash", chain.ChannelID())
 	} else {
-		logger.Debugf("[channel: %s] going into the normal message processing loop", chain.ChannelID())
+		logger.Infof("[channel: %s] going into the normal message processing loop", chain.ChannelID())
 	}
 	subscriptionRetryCount := 0
+	scheduleSubscriptionRetry := func() {
+		delay := time.Duration(float64(subscriptionRetryBaseDelay) * math.Pow(2, float64(subscriptionRetryCount)))
+		chain.subscriptionRetryTimer.Reset(delay)
+		logger.Infof("[channel: %s] retry topic subscription in %dms", chain.ChannelID(), delay.Milliseconds())
+	}
 	for {
 		select {
 		case <-chain.haltChan:
 			logger.Warningf("[channel: %s] consenter for channel exiting", chain.ChannelID())
 			return nil
 		case hcsErr := <-chain.topicSubscriptionHandle.Errors():
-			logger.Errorf("[channel: %s] error received during subscription streaming, %v", chain.ChannelID(), hcsErr)
+			logger.Errorf("[channel: %s] error received during subscription streaming: %s", chain.ChannelID(), hcsErr)
 			select {
 			case <-chain.errorChan: // don't do anything if already closed
 			default:
@@ -496,22 +509,32 @@ func (chain *chainImpl) processMessages() error {
 			}
 			st, ok := status.FromError(hcsErr)
 			if ok && isSubscriptionErrorRecoverable(st.Code()) && subscriptionRetryCount < subscriptionRetryMax {
-				// the new topic may have not propagated to the mirror node yet, retry subscription
-				delay := time.Duration(float64(subscriptionRetryBaseDelay) * math.Pow(2, float64(subscriptionRetryCount)))
-				logger.Infof("[channel: %s] the topic may be not ready yet, retry in %dms", chain.ChannelID(), delay.Milliseconds())
-				chain.subscriptionRetryTimer = time.After(delay)
+				// the error is recoverable and the max retry isn't reached yet
+				scheduleSubscriptionRetry()
 			} else {
 				logger.Errorf("[channel: %s] closing haltChan due to subscription streaming error", chain.ChannelID())
 				close(chain.haltChan)
 			}
-		case <-chain.subscriptionRetryTimer:
-			logger.Debugf("[channel: %s] retry topic subscription", chain.ChannelID())
-			chain.topicSubscriptionHandle.Unsubscribe()
-			chain.subscriptionRetryTimer = nil
+		case <-chain.subscriptionRetryTimer.C:
+			logger.Infof("[channel: %s] retry topic (%s) subscription", chain.ChannelID(), chain.topicID)
 			subscriptionRetryCount++
+			failedSubscriptionHandle := chain.topicSubscriptionHandle
 			if err := startSubscription(chain, chain.lastConsensusTimestamp); err != nil {
-				logger.Errorf("[channel: %s] closing haltChan due to failed subscription retry = %v", chain.ChannelID(), err)
-				close(chain.haltChan)
+				logger.Errorf("[channel: %s] startSubscription failed, retry count %d: %v", chain.ChannelID(), subscriptionRetryCount, err)
+				if subscriptionRetryCount < subscriptionRetryMax {
+					scheduleSubscriptionRetry()
+				} else {
+					logger.Errorf("[channel: %s] closing haltChan due to subscription streaming error", chain.ChannelID())
+					close(chain.haltChan)
+				}
+			} else {
+				// only unsubscribe when new subscription handle is created successfully
+				failedSubscriptionHandle.Unsubscribe()
+				logger.Infof("[channel: %s] new subscription created, send a stale time-to-cut message to trigger response just in case none is pending", chain.ChannelID())
+				// send a stale ttc to resume response handling, in case of no other pending responses
+				if err := chain.sendTimeToCut(newTimeToCutMessageWithBlockNumber(chain.lastCutBlockNumber)); err != nil {
+					logger.Errorf("[channel: %s] failed to send a stale time-to-cut message with block number %d: %s", chain.ChannelID(), chain.lastCutBlockNumber, err)
+				}
 			}
 		case resp, ok := <-chain.topicSubscriptionHandle.Responses():
 			if !ok {
@@ -521,7 +544,9 @@ func (chain *chainImpl) processMessages() error {
 			subscriptionRetryCount = 0
 			select {
 			case <-chain.errorChan:
+				chain.errorCMutex.Lock()
 				chain.errorChan = make(chan struct{}) // make a new one, make the chain available again
+				chain.errorCMutex.Unlock()
 				logger.Infof("[channel: %s] marked chain as available again", chain.ChannelID())
 			default:
 			}
@@ -598,7 +623,7 @@ func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTime
 		chain.messageHashes = make(map[string]struct{})
 	}
 	chain.timeToCutRequestChan <- timeToCutRequest{start: false}
-	logger.Debugf("[channel: %s] request to stop the batch timer since a block is cut", chain.ChannelID())
+	logger.Infof("[channel: %s] request to stop the batch timer since a block is cut", chain.ChannelID())
 
 	chain.lastCutBlockNumber++
 	if !chain.appMsgProcessor.IsPending() {
@@ -665,7 +690,7 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, rawMessage []b
 	// Commit the first block
 	block := chain.CreateNextBlock(batches[0])
 	chain.WriteBlock(block, false, chain.lastOrdereredConsensusTimestamp)
-	logger.Debugf("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus timestamp"+
+	logger.Infof("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus timestamp"+
 		" is now %d", chain.ChannelID(), chain.lastCutBlockNumber, chain.lastConsensusTimestamp.UnixNano())
 
 	// Commit the second block if exists
@@ -674,7 +699,7 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, rawMessage []b
 		chain.lastOrdereredConsensusTimestamp = curConsensusTimestamp
 		block := chain.CreateNextBlock(batches[1])
 		chain.WriteBlock(block, false, chain.lastOrdereredConsensusTimestamp)
-		logger.Debugf("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus "+
+		logger.Infof("[channel: %s] Batch filled, just cut block [%d] - last persisted consensus "+
 			"timestamp is now %d", chain.ChannelID(), chain.lastCutBlockNumber, chain.lastOrdereredConsensusTimestamp.UnixNano())
 	}
 }
@@ -841,7 +866,7 @@ func (chain *chainImpl) processRegularMessage(msg *hb.HcsMessageRegular, timesta
 			logger.Panicf("[channel: %s] failed to parse public keys in consensus metadata - %v", chain.ChannelID(), err)
 		}
 		chain.publicKeys = publicKeys
-		logger.Debug("[channel: %s] channel configuration has changed, publicKeys gets re-parsed", chain.ChannelID())
+		logger.Debugf("[channel: %s] channel configuration has changed, publicKeys gets re-parsed", chain.ChannelID())
 	default:
 		return errors.Errorf("unsupported regular HCS message type: %v", msg.Class.String())
 	}
@@ -874,7 +899,7 @@ func (chain *chainImpl) processTimeToCutMessage(msg *hb.HcsMessageTimeToCut, tim
 	}
 
 	if createBlock {
-		logger.Debugf("[channel: %s] received correct time-to-cut-message with %s, try to cut a block", chain.ChannelID(), trigger)
+		logger.Infof("[channel: %s] received correct time-to-cut-message with %s, try to cut a block", chain.ChannelID(), trigger)
 		batch := chain.BlockCutter().Cut()
 		if len(batch) == 0 {
 			return fmt.Errorf("bug, got correct time-to-cut message, but no pending transactions")
@@ -882,15 +907,15 @@ func (chain *chainImpl) processTimeToCutMessage(msg *hb.HcsMessageTimeToCut, tim
 		block := chain.CreateNextBlock(batch)
 		chain.lastOriginalSequenceProcessed = sequence
 		chain.WriteBlock(block, false, timestamp)
-		logger.Debugf("[channel: %s] successfully cut block, triggered by time-to-cut with %s", chain.ChannelID(), trigger)
+		logger.Infof("[channel: %s] successfully cut block, triggered by time-to-cut with %s", chain.ChannelID(), trigger)
 	}
 	return nil
 }
 
 func (chain *chainImpl) processOrdererStartedMessage(msg *hb.HcsMessageOrdererStarted) {
-	logger.Debugf("[channel: %s] orderer %s just started", chain.ChannelID(), hex.EncodeToString(msg.OrdererIdentity))
+	logger.Infof("[channel: %s] orderer %s just started", chain.ChannelID(), hex.EncodeToString(msg.OrdererIdentity))
 	if count, err := chain.appMsgProcessor.ExpireByAppID(msg.OrdererIdentity); err == nil {
-		logger.Debugf("[channel: %s] %d pending messages from orderer %s dropped", chain.ChannelID(), count, hex.EncodeToString(msg.OrdererIdentity))
+		logger.Infof("[channel: %s] %d pending messages from orderer %s dropped", chain.ChannelID(), count, hex.EncodeToString(msg.OrdererIdentity))
 		chain.consenter.Metrics().NumberMessagesDropped.With("channel", chain.ChannelID()).Add(float64(count))
 	} else {
 		logger.Errorf("[channel: %s] ExpireByAppID returns error = %v", chain.ChannelID(), err)
@@ -1088,14 +1113,21 @@ func startThread(chain *chainImpl) {
 	}
 
 	chain.doneProcessingMessages = make(chan struct{})
-	chain.errorChan = make(chan struct{})
 
 	if ok, _ := chain.enqueueChecked(newOrdererStartedMessage(chain.appID), false); !ok {
 		logger.Panicf("[channel: %s] failed to send orderer started message", chain.ChannelID())
 	}
 
+	chain.errorCMutex.Lock()
 	close(chain.startChan)
+	chain.errorChan = make(chan struct{})
+	chain.errorCMutex.Unlock()
 	logger.Infof("[channel: %s] Start phase completed successfully", chain.ChannelID())
+
+	chain.subscriptionRetryTimer = time.NewTimer(time.Millisecond)
+	if !chain.subscriptionRetryTimer.Stop() {
+		<-chain.subscriptionRetryTimer.C
+	}
 
 	go chain.processTimeToCutRequests()
 

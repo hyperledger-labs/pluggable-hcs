@@ -1343,7 +1343,6 @@ func TestChain(t *testing.T) {
 				hcf := newDefaultMockHcsClientFactory()
 				chain, _ := newChain(mockConsenter, mockSupport, &mockhcs.HealthChecker{}, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp, lastChunkFreeSequenceProcessed)
 				close(mockSupport.BlockCutterVal.Block)
-				mockSupport.BlockCutterVal.CutNext = true
 
 				chain.Start()
 				select {
@@ -1357,60 +1356,46 @@ func TestChain(t *testing.T) {
 				mockMirrorClient := chain.topicConsumer.(*mockhcs.MirrorClient)
 				oldSubscribeTopicStub := mockMirrorClient.SubscribeTopicStub
 				subscribeTopicSyncChan := make(chan struct{})
-				mockMirrorClient.SubscribeTopicCalls(func(topicID *hedera.ConsensusTopicID, start *time.Time, end *time.Time) (factory.MirrorSubscriptionHandle, error) {
+				topicSubscriptionHandle := chain.topicSubscriptionHandle
+				mockMirrorClient.SubscribeTopicCalls(func(topicID *hedera.ConsensusTopicID, start *time.Time, end *time.Time) (handle factory.MirrorSubscriptionHandle, err error) {
 					defer func() {
+						topicSubscriptionHandle = handle
 						<-subscribeTopicSyncChan
 					}()
-					return oldSubscribeTopicStub(topicID, start, end)
+					handle, err = oldSubscribeTopicStub(topicID, start, end)
+					return handle, err
 				})
 
 				// send an error to the subscription handle
-				errorChan := chain.Errored()
-				sendError(chain.topicSubscriptionHandle, status.Error(code, "Topic does not exist"))
+				sendError(topicSubscriptionHandle, status.Error(code, "Topic does not exist"))
 
 				// let the subscription retry succeed
 				subscribeTopicSyncChan <- struct{}{}
-
-				select {
-				case <-errorChan:
-				case <-time.After(shortTimeout):
-					t.Fatal("Expected errChan is closed")
-				}
-
-				// send a message to unblock WaitReady
-				hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("foo message 2")), uint64(0), uint64(0))
-				chunks, _, _ := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage), time.Now())
-				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
-
-				// sync
-				<-mockSupport.Blocks
-				close(getRespSyncChan(chain.topicSubscriptionHandle))
-				// based on the fact the mock implementation always advances timestamp by 1ns
-				expectedSubscriptionStartTimestamp := getNextConsensusTimestamp(chain.topicSubscriptionHandle)
 
 				select {
 				case <-chain.Errored():
-					t.Fatal("Expected errChan blocks")
-				default:
+				case <-time.After(shortTimeout):
+					t.Fatal("Expected errorChan is closed")
 				}
 
-				// send another error to the subscription handle
-				sendError(chain.topicSubscriptionHandle, status.Error(code, "Topic does not exist"))
+				// based on the fact the mock implementation always advances timestamp by 1ns
+				expectedSubscriptionStartTimestamp := getNextConsensusTimestamp(topicSubscriptionHandle)
+				close(getRespSyncChan(topicSubscriptionHandle))
 
-				// let the subscription retry succeed
-				subscribeTopicSyncChan <- struct{}{}
-
-				// send another message to unlock WaitReady
-				chunks, _, _ = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage), time.Now())
-				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
-
-				// sync
-				<-mockSupport.Blocks
-				close(getRespSyncChan(chain.topicSubscriptionHandle))
-
-				assert.Equal(t, 3, mockMirrorClient.SubscribeTopicCallCount(), "Expected SubscribeTopic called twice")
-				_, thirdSubscriptionStartTimestamp, _ := mockMirrorClient.SubscribeTopicArgsForCall(2)
-				assert.Equal(t, expectedSubscriptionStartTimestamp, *thirdSubscriptionStartTimestamp, "Expected correct subscription start timestamp")
+				blocked := false
+				for i := 0; i < 5; i++ {
+					time.Sleep(shortTimeout / 10)
+					select {
+					case <-chain.Errored():
+					default:
+						blocked = true
+						break
+					}
+				}
+				assert.True(t, blocked, "Expected errorChan blocks")
+				assert.Equal(t, 2, mockMirrorClient.SubscribeTopicCallCount(), "Expected SubscribeTopic called twice")
+				_, lastSubscriptionStartTimestamp, _ := mockMirrorClient.SubscribeTopicArgsForCall(1)
+				assert.Equal(t, expectedSubscriptionStartTimestamp, *lastSubscriptionStartTimestamp, "Expected correct subscription start timestamp")
 				chain.Halt()
 			})
 		}
@@ -1436,6 +1421,13 @@ func TestChain(t *testing.T) {
 					t.Fatal("startChan should have been closed by now")
 				}
 				close(getRespSyncChan(chain.topicSubscriptionHandle))
+				mockConsensusClient := chain.topicProducer.(*mockhcs.ConsensusClient)
+				mockConsensusClient.SubmitConsensusMessageCalls(func(_ []byte, _ *hedera.ConsensusTopicID, txID *hedera.TransactionID) (*hedera.TransactionID, error) {
+					if txID == nil {
+						txID = &hedera.TransactionID{}
+					}
+					return txID, nil
+				})
 				mockMirrorClient := chain.topicConsumer.(*mockhcs.MirrorClient)
 				oldSubscribeTopicStub := mockMirrorClient.SubscribeTopicStub
 				subscribeTopicSyncChan := make(chan factory.MirrorSubscriptionHandle)
@@ -1992,6 +1984,10 @@ func TestProcessMessages(t *testing.T) {
 		assert.NoError(t, err, "Expected valid ed25519 private key")
 		publicKey := privateKey.PublicKey()
 
+		subscriptionRetryTimer := time.NewTimer(time.Millisecond)
+		if !subscriptionRetryTimer.Stop() {
+			<-subscriptionRetryTimer.C
+		}
 		chain := &chainImpl{
 			consenter:        mockConsenter,
 			ConsenterSupport: mockSupport,
@@ -2008,6 +2004,7 @@ func TestProcessMessages(t *testing.T) {
 				string(publicKey.Bytes()): &publicKey,
 			},
 
+			subscriptionRetryTimer: subscriptionRetryTimer,
 			errorChan:              errorChan,
 			haltChan:               haltChan,
 			doneProcessingMessages: make(chan struct{}),
@@ -2614,6 +2611,11 @@ func TestResubmission(t *testing.T) {
 		assert.NoError(t, err, "Expected valid ed25519 private key")
 		publicKey := privateKey.PublicKey()
 
+		subscriptionRetryTimer := time.NewTimer(time.Millisecond)
+		if !subscriptionRetryTimer.Stop() {
+			<-subscriptionRetryTimer.C
+		}
+
 		chain := &chainImpl{
 			consenter:        mockConsenter,
 			ConsenterSupport: mockSupport,
@@ -2636,6 +2638,7 @@ func TestResubmission(t *testing.T) {
 				string(publicKey.Bytes()): &publicKey,
 			},
 
+			subscriptionRetryTimer:      subscriptionRetryTimer,
 			startChan:                   startChan,
 			errorChan:                   errorChan,
 			haltChan:                    haltChan,
