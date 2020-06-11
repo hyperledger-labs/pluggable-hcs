@@ -40,15 +40,18 @@ func (c *consensusClientImpl) Close() error {
 	return c.client.Close()
 }
 
-func (c *consensusClientImpl) SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID) (*hedera.TransactionID, error) {
-	txID, err := hedera.NewConsensusMessageSubmitTransaction().
+func (c *consensusClientImpl) SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID, txID *hedera.TransactionID) (*hedera.TransactionID, error) {
+	tx := hedera.NewConsensusMessageSubmitTransaction().
 		SetTopicID(*topicID).
-		SetMessage(message).
-		Execute(c.client)
+		SetMessage(message)
+	if txID != nil {
+		tx.SetTransactionID(*txID)
+	}
+	retTxID, err := tx.Execute(c.client)
 	if err != nil {
 		return nil, err
 	}
-	return &txID, nil
+	return &retTxID, nil
 }
 
 func (c *consensusClientImpl) GetConsensusTopicInfo(topicID *hedera.ConsensusTopicID) (*hedera.ConsensusTopicInfo, error) {

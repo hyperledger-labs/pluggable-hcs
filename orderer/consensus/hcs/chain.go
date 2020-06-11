@@ -210,6 +210,9 @@ type chainImpl struct {
 	doneProcessingMessages chan struct{}
 	startChan              chan struct{}
 
+	validStartMutex sync.Mutex
+	nextValidStart  time.Time
+
 	timeToCutRequestChan chan timeToCutRequest
 	messageHashes        map[string]struct{}
 	senderWaitGroup      sync.WaitGroup
@@ -988,8 +991,26 @@ func (chain *chainImpl) enqueueChecked(message *hb.HcsMessage, isResubmission bo
 	logger.Debugf("[channel: %s] the payload of %d bytes is cut into %d chunks, resubmission ? %v",
 		chain.ChannelID(), len(payload), len(chunks), isResubmission)
 	for _, chunk := range chunks {
-		if _, err := chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunk), chain.topicID); err != nil {
-			logger.Errorf("[channel: %s] cannot enqueue envelope because = %s", chain.ChannelID(), err)
+		for attempt := 0; attempt < 3; attempt++ {
+			txID := hedera.TransactionID{
+				AccountID:  *chain.operatorID,
+				ValidStart: chain.getUniqueValidStart(time.Now().Add(-10 * time.Second)),
+			}
+			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunk), chain.topicID, &txID)
+			if err != nil {
+				if preCheckErr, ok := err.(hedera.ErrHederaPreCheckStatus); ok {
+					switch preCheckErr.Status {
+					case hedera.StatusDuplicateTransaction, hedera.StatusBusy:
+						logger.Warnf("[channel: %s] received PreCheckStatus %s for tx %s, will retry", chain.ChannelID(), preCheckErr.Status, txID)
+						continue
+					default:
+					}
+				}
+			}
+			break
+		}
+		if err != nil {
+			logger.Errorf("[channel: %s] failed to send chunk %d, abort the whole message: %s", chain.ChannelID(), chunk.ChunkIndex, err)
 			return false
 		}
 		logger.Debugf("[channel: %s] chunk %d of message sent successfully", chain.ChannelID(), chunk.ChunkIndex)
@@ -1027,6 +1048,17 @@ func (chain *chainImpl) HealthCheck(ctx context.Context) error {
 		return fmt.Errorf("cannot connect to: %s", strings.Join(failed, ", "))
 	}
 	return nil
+}
+
+func (chain *chainImpl) getUniqueValidStart(wanted time.Time) time.Time {
+	chain.validStartMutex.Lock()
+	defer chain.validStartMutex.Unlock()
+	if wanted.After(chain.nextValidStart) {
+		chain.nextValidStart = wanted.Add(time.Microsecond * 10)
+	}
+	validStart := chain.nextValidStart
+	chain.nextValidStart = chain.nextValidStart.Add(time.Microsecond * 10)
+	return validStart
 }
 
 func startThread(chain *chainImpl) {

@@ -13,7 +13,7 @@ type HcsClientFactory interface {
 
 type ConsensusClient interface {
 	Close() error
-	SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID) (*hedera.TransactionID, error)
+	SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID, txID *hedera.TransactionID) (*hedera.TransactionID, error)
 	GetConsensusTopicInfo(topicID *hedera.ConsensusTopicID) (*hedera.ConsensusTopicInfo, error)
 	GetTransactionReceipt(txID *hedera.TransactionID) (*hedera.TransactionReceipt, error)
 	Ping(nodeID *hedera.AccountID) error
