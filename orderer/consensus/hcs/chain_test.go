@@ -287,10 +287,10 @@ func TestChain(t *testing.T) {
 
 		origAppMsgProcessor := chain.appMsgProcessor
 		fakeAppMsgProcessor := mockhcs.AppMsgProcessor{}
-		fakeAppMsgProcessor.SplitCalls(func(message []byte) ([]*hb.ApplicationMessageChunk, error) {
+		fakeAppMsgProcessor.SplitCalls(func(message []byte) ([]*hb.ApplicationMessageChunk, []byte, error) {
 			return origAppMsgProcessor.Split(message)
 		})
-		fakeAppMsgProcessor.ReassembleCalls(func(chunk *hb.ApplicationMessageChunk) ([]byte, error) {
+		fakeAppMsgProcessor.ReassembleCalls(func(chunk *hb.ApplicationMessageChunk) ([]byte, []byte, error) {
 			return origAppMsgProcessor.Reassemble(chunk)
 		})
 		fakeAppMsgProcessor.IsPendingCalls(func() bool {
@@ -599,12 +599,12 @@ func TestChain(t *testing.T) {
 			setNextConsensusTimestamp(chain.topicSubscriptionHandle, lastChunkFreeBlockConsensusTimestamp.Add(time.Nanosecond))
 			data := make([]byte, maxConsensusMessageSize*5+10)
 			hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
-			chunksOfMsg1, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
+			chunksOfMsg1, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
 			assert.True(t, len(chunksOfMsg1) > 1, "Expected more than one chunks created for message 1")
 			assert.NoError(t, err, "Expected Split returns no error")
 
 			hcsMessage = newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("short test message")), uint64(0), uint64(0))
-			chunksOfMsg2, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
+			chunksOfMsg2, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
 			assert.Equal(t, 1, len(chunksOfMsg2), "Expected one chunk created for message 2")
 			assert.NoError(t, err, "Expected Split returns no error")
 
@@ -679,19 +679,19 @@ func TestChain(t *testing.T) {
 
 			data := make([]byte, maxConsensusMessageSize*2+10)
 			hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
-			chunksOfMsg1, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
+			chunksOfMsg1, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
 			assert.True(t, len(chunksOfMsg1) > 1, "Expected more than one chunks created for message 1")
 			assert.NoError(t, err, "Expected Split returns no error")
 
 			data = make([]byte, maxConsensusMessageSize*3+10)
 			hcsMessage = newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
-			chunksOfMsg2, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
+			chunksOfMsg2, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
 			assert.True(t, len(chunksOfMsg2) > 1, "Expected more than one chunks created for message 2")
 			assert.NoError(t, err, "Expected Split returns no error")
 
 			data = make([]byte, maxConsensusMessageSize*2+10)
 			hcsMessage = newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelopeWithRawData(data)), uint64(0), uint64(0))
-			chunksOfMsg3, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
+			chunksOfMsg3, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
 			assert.True(t, len(chunksOfMsg3) > 1, "Expected more than one chunks created for message 3")
 			assert.NoError(t, err, "Expected Split returns no error")
 
@@ -933,7 +933,8 @@ func TestChain(t *testing.T) {
 				t.Fatal("startChan should have been closed by now")
 			}
 
-			assert.True(t, chain.enqueue(newNormalMessage([]byte("testMessage"), uint64(0), uint64(0)), false), "Expect enqueue call to return true")
+			ok, _ := chain.enqueue(newNormalMessage([]byte("testMessage"), uint64(0), uint64(0)), false)
+			assert.True(t, ok, "Expect enqueue call to return true")
 			chain.Halt()
 		})
 
@@ -943,7 +944,8 @@ func TestChain(t *testing.T) {
 			chain, _ := newChain(mockConsenter, mockSupport, &mockhcs.HealthChecker{}, hcf, oldestConsensusTimestamp, lastOriginalOffsetProcessed, lastResubmittedConfigOffset, oldestConsensusTimestamp, lastChunkFreeSequenceProcessed)
 
 			// We don't need to create a legit envelope here as it's not inspected during this test
-			assert.False(t, chain.enqueue(newNormalMessage([]byte("testMessage"), uint64(1), uint64(0)), false), "Expected enqueue call to return false")
+			ok, _ := chain.enqueue(newNormalMessage([]byte("testMessage"), uint64(1), uint64(0)), false)
+			assert.False(t, ok, "Expected enqueue call to return false")
 		})
 
 		t.Run("WithChainHalted", func(t *testing.T) {
@@ -962,7 +964,8 @@ func TestChain(t *testing.T) {
 
 			// haltChan should close access to the post path.
 			// We don't need to create a legit envelope here as it's not inspected during this test
-			assert.False(t, chain.enqueue(newNormalMessage([]byte("testMessage"), uint64(0), uint64(0)), false), "Expected enqueue call to return false")
+			ok, _ := chain.enqueue(newNormalMessage([]byte("testMessage"), uint64(0), uint64(0)), false)
+			assert.False(t, ok, "Expected enqueue call to return false")
 		})
 
 		t.Run("WithError", func(t *testing.T) {
@@ -1041,7 +1044,7 @@ func TestChain(t *testing.T) {
 					})
 					callCount := cc.SubmitConsensusMessageCallCount()
 
-					ret := chain.enqueue(newNormalMessage([]byte("testMessage"), uint64(0), uint64(0)), false)
+					ret, _ := chain.enqueue(newNormalMessage([]byte("testMessage"), uint64(0), uint64(0)), false)
 					if tt.expectFailure {
 						assert.False(t, ret, "Expected enqueue to return false")
 					} else {
@@ -1376,7 +1379,7 @@ func TestChain(t *testing.T) {
 
 				// send a message to unblock WaitReady
 				hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("foo message 2")), uint64(0), uint64(0))
-				chunks, _ := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
+				chunks, _, _ := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
 				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
 
 				// sync
@@ -1398,7 +1401,7 @@ func TestChain(t *testing.T) {
 				subscribeTopicSyncChan <- struct{}{}
 
 				// send another message to unlock WaitReady
-				chunks, _ = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
+				chunks, _, _ = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
 				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
 
 				// sync
@@ -1815,7 +1818,7 @@ func TestProcessTimeToCutRequests(t *testing.T) {
 		data, _, _ := topicProducer.SubmitConsensusMessageArgsForCall(0)
 		chunk := &hb.ApplicationMessageChunk{}
 		assert.NoError(t, proto.Unmarshal(data, chunk), "expected data successfully unmarshalled to ApplicationMessageChunk")
-		rawHcsMsg, err := chain.appMsgProcessor.Reassemble(chunk)
+		rawHcsMsg, _, err := chain.appMsgProcessor.Reassemble(chunk)
 		assert.NoError(t, err, "expected reassemble successfully")
 		hcsMsg := &hb.HcsMessage{}
 		assert.NoError(t, proto.Unmarshal(rawHcsMsg, hcsMsg), "expected rawHcsMsg unmarshalled successfully")
@@ -1874,7 +1877,7 @@ func TestProcessTimeToCutRequests(t *testing.T) {
 		data, _, _ := topicProducer.SubmitConsensusMessageArgsForCall(0)
 		chunk := &hb.ApplicationMessageChunk{}
 		assert.NoError(t, proto.Unmarshal(data, chunk), "expected data successfully unmarshalled to ApplicationMessageChunk")
-		rawHcsMsg, err := chain.appMsgProcessor.Reassemble(chunk)
+		rawHcsMsg, _, err := chain.appMsgProcessor.Reassemble(chunk)
 		assert.NoError(t, err, "expected reassemble successfully")
 		hcsMsg := &hb.HcsMessage{}
 		assert.NoError(t, proto.Unmarshal(rawHcsMsg, hcsMsg), "expected rawHcsMsg unmarshalled successfully")
@@ -2057,7 +2060,7 @@ func TestProcessMessages(t *testing.T) {
 			mockSupport.BlockCutterVal.CutAncestors = true
 
 			hcsMessage := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("foo message 2")), uint64(0), uint64(0))
-			chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
+			chunks, _, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(hcsMessage))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err1, "Expected Split returns no error")
 			chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2104,7 +2107,7 @@ func TestProcessMessages(t *testing.T) {
 			mockSupport.BlockCutterVal.Ordered(newMockEnvelope("foo message"))
 
 			msg := newTimeToCutMessageWithBlockNumber(lastCutBlockNumber + 1)
-			chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err1, "Expected Split returns no error")
 			chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2149,7 +2152,7 @@ func TestProcessMessages(t *testing.T) {
 			}()
 
 			msg := newTimeToCutMessageWithBlockNumber(lastCutBlockNumber + 1)
-			chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err1, "Expected Split returns no error")
 			chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2189,7 +2192,7 @@ func TestProcessMessages(t *testing.T) {
 
 			// larger than expected block number,
 			msg := newTimeToCutMessageWithBlockNumber(lastCutBlockNumber + 2)
-			chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err1, "Expected Split returns no error")
 			chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2229,7 +2232,7 @@ func TestProcessMessages(t *testing.T) {
 
 			// larger than expected block number,
 			msg := newTimeToCutMessageWithBlockNumber(lastCutBlockNumber)
-			chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.NoError(t, err1, "Expected Split returns no error")
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2270,7 +2273,7 @@ func TestProcessMessages(t *testing.T) {
 			close(mockSupport.BlockCutterVal.Block)
 
 			msg := newNormalMessage([]byte("bytes won't unmarshal to envelope"), uint64(0), uint64(0))
-			chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err1, "Expected Split returns no error")
 			chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2311,7 +2314,7 @@ func TestProcessMessages(t *testing.T) {
 
 				// first message
 				msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message 1")), uint64(0), uint64(0))
-				chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+				chunks, _, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 				assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 				assert.NoError(t, err1, "Expected Split returns no error")
 				block1ProtoTimestamp := timestampProtoOrPanic(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
@@ -2323,7 +2326,7 @@ func TestProcessMessages(t *testing.T) {
 
 				// second message
 				msg = newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message 2")), uint64(0), uint64(0))
-				chunks, err1 = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+				chunks, _, err1 = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 				assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 				assert.NoError(t, err1, "Expected Split returns no error")
 				block2ProtoTimestamp := timestampProtoOrPanic(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
@@ -2380,7 +2383,7 @@ func TestProcessMessages(t *testing.T) {
 				mockSupport.BlockCutterVal.CutNext = true
 
 				msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-				chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+				chunks, _, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 				assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 				assert.NoError(t, err1, "Expected Split returns no error")
 				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2422,7 +2425,7 @@ func TestProcessMessages(t *testing.T) {
 
 				// normal message
 				msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-				chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+				chunks, _, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 				assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 				assert.NoError(t, err1, "Expected Split returns no error")
 				normalBlockTimestamp := timestampProtoOrPanic(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
@@ -2431,7 +2434,7 @@ func TestProcessMessages(t *testing.T) {
 
 				// config message
 				msg = newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), uint64(0), uint64(0))
-				chunks, err1 = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+				chunks, _, err1 = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 				assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 				assert.NoError(t, err1, "Expected Split returns no error")
 				configBlockTimestamp := timestampProtoOrPanic(getNextConsensusTimestamp(chain.topicSubscriptionHandle))
@@ -2489,7 +2492,7 @@ func TestProcessMessages(t *testing.T) {
 
 				// config message with configseq 0
 				msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), uint64(0), uint64(0))
-				chunks, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+				chunks, _, err1 := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 				assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 				assert.NoError(t, err1, "Expected Split returns no error")
 				chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2537,7 +2540,7 @@ func TestProcessMessages(t *testing.T) {
 			setNextConsensusTimestamp(chain.topicSubscriptionHandle, lastConsensusTimestampPersisted.Add(time.Nanosecond))
 			msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
 			var chunks []*hb.ApplicationMessageChunk
-			chunks, err = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expected Split returns no error")
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2681,7 +2684,7 @@ func TestResubmission(t *testing.T) {
 
 			// normal message
 			msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), lastOriginalSequenceProcessed-1)
-			chunks, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expect Split returns no error")
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2737,7 +2740,7 @@ func TestResubmission(t *testing.T) {
 
 			// normal message which advances lastOriginalSequenceProcessed
 			msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), lastOriginalSequenceProcessed+1)
-			chunks, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expect Split returns no error")
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2753,7 +2756,7 @@ func TestResubmission(t *testing.T) {
 
 			mockSupport.BlockCutterVal.CutNext = true
 			msg = newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-			chunks, err = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expect Split returns no error")
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2808,7 +2811,7 @@ func TestResubmission(t *testing.T) {
 
 			// config message which old configSeq, should try resubmit and receive error as message is invalidated
 			msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-			chunks, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expect Split returns no error")
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2863,7 +2866,7 @@ func TestResubmission(t *testing.T) {
 			// config message with old configSeq, should try resubmit
 			sequence := getNextSequenceNumber(chain.topicSubscriptionHandle)
 			msg := newNormalMessage(protoutil.MarshalOrPanic(newMockEnvelope("test message")), uint64(0), uint64(0))
-			chunks, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expect Split returns no error")
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -2943,7 +2946,7 @@ func TestResubmission(t *testing.T) {
 
 			// config message with configseq 0
 			msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), uint64(0), lastOriginalSequenceProcessed-1)
-			chunks, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expect Split returns no error")
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -3000,7 +3003,7 @@ func TestResubmission(t *testing.T) {
 
 			// emits a config message with lagged config sequence
 			msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), uint64(0), uint64(0))
-			chunks, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expect Split returns no error")
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -3018,7 +3021,7 @@ func TestResubmission(t *testing.T) {
 			// some other orderer resubmitted the message
 			// emits a config message with lagged config sequence
 			msg = newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), mockSupport.SequenceVal, lastOriginalSequenceProcessed+1)
-			chunks, err = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err = chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expect Split returns no error")
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -3082,7 +3085,7 @@ func TestResubmission(t *testing.T) {
 
 			// emits a resubmitted config message with lagged config sequence
 			msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), mockSupport.SequenceVal-1, lastOriginalSequenceProcessed+1)
-			chunks, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expect Split returns no error")
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -3147,7 +3150,7 @@ func TestResubmission(t *testing.T) {
 
 			// emits a config message with lagged configSeq, later it'll be invalidated
 			msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), mockSupport.SequenceVal-1, uint64(0))
-			chunks, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expect Split returns no error")
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)
@@ -3208,7 +3211,7 @@ func TestResubmission(t *testing.T) {
 
 			// emits a config message with lagged sequence
 			msg := newConfigMessage(protoutil.MarshalOrPanic(newMockConfigEnvelope()), mockSupport.SequenceVal-1, uint64(0))
-			chunks, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
+			chunks, _, err := chain.appMsgProcessor.Split(protoutil.MarshalOrPanic(msg))
 			assert.Equal(t, 1, len(chunks), "Expect one chunk created from test message")
 			assert.NoError(t, err, "Expect Split returns no error")
 			_, err = oldStub(protoutil.MarshalOrPanic(chunks[0]), chain.topicID, nil)

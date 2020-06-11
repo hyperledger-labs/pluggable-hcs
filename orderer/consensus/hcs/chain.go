@@ -32,7 +32,6 @@ import (
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ed25519"
-	"golang.org/x/crypto/sha3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -540,7 +539,7 @@ func (chain *chainImpl) processMessages() error {
 				logger.Errorf("[channel: %s] failed to unmarshal ordered message into ApplicationMessageChunk = %v", chain.ChannelID(), err)
 				continue
 			}
-			payload, err := chain.appMsgProcessor.Reassemble(chunk)
+			payload, msgHash, err := chain.appMsgProcessor.Reassemble(chunk)
 			count := chain.appMsgProcessor.ExpireByAge(chain.maxChunkAge)
 			chain.consenter.Metrics().NumberMessagesDropped.With("channel", chain.ChannelID()).Add(float64(count))
 			if err != nil {
@@ -563,7 +562,7 @@ func (chain *chainImpl) processMessages() error {
 				// use ConsenusTimestamp and SequenceNumber of the last received chunk for that of a message
 				switch msg.Type.(type) {
 				case *hb.HcsMessage_Regular:
-					if err := chain.processRegularMessage(msg.GetRegular(), resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
+					if err := chain.processRegularMessage(msg.GetRegular(), resp.ConsensusTimeStamp, resp.SequenceNumber, msgHash); err != nil {
 						logger.Warningf("[channel: %s] error when processing incoming message of type REGULAR = %s", chain.ChannelID(), err)
 					}
 				case *hb.HcsMessage_TimeToCut:
@@ -622,7 +621,7 @@ func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTime
 	chain.consenter.Metrics().LastConsensusTimestampPersisted.With("channel", chain.ChannelID()).Set(float64(consensusTimestamp.UnixNano()))
 }
 
-func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, rawMessage []byte, curConsensusTimestamp time.Time, newOriginalSequenceProcessed uint64) {
+func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, rawMessage []byte, curConsensusTimestamp time.Time, newOriginalSequenceProcessed uint64, messageHash []byte) {
 	var pending bool
 	defer func() {
 		if pending {
@@ -634,8 +633,7 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, rawMessage []b
 			logger.Debugf("[channel: %s] request to send time-to-cut with block number %d", chain.ChannelID(), chain.lastCutBlockNumber+1)
 
 			// record hash as the message is pending in blockcutter
-			messageHash := sha3.Sum224(rawMessage)
-			chain.messageHashes[string(messageHash[:])] = struct{}{}
+			chain.messageHashes[string(messageHash)] = struct{}{}
 		}
 	}()
 
@@ -697,7 +695,7 @@ func (chain *chainImpl) commitConfigMessage(message *cb.Envelope, curConsensusTi
 	chain.WriteBlock(block, true, curConsensusTimestamp)
 }
 
-func (chain *chainImpl) processRegularMessage(msg *hb.HcsMessageRegular, timestamp time.Time, receivedSequence uint64) error {
+func (chain *chainImpl) processRegularMessage(msg *hb.HcsMessageRegular, timestamp time.Time, receivedSequence uint64, messageHash []byte) error {
 	curConfigSeq := chain.Sequence()
 	env := &cb.Envelope{}
 	if err := proto.Unmarshal(msg.Payload, env); err != nil {
@@ -761,7 +759,7 @@ func (chain *chainImpl) processRegularMessage(msg *hb.HcsMessageRegular, timesta
 			newSeq = chain.lastOriginalSequenceProcessed
 		}
 
-		chain.commitNormalMessage(env, msg.Payload, timestamp, newSeq)
+		chain.commitNormalMessage(env, msg.Payload, timestamp, newSeq, messageHash)
 
 	case hb.HcsMessageRegular_CONFIG:
 		// This is a message that is re-validated and re-ordered
@@ -900,18 +898,18 @@ func (chain *chainImpl) processOrdererStartedMessage(msg *hb.HcsMessageOrdererSt
 }
 
 func (chain *chainImpl) sendTimeToCut(msg *hb.HcsMessage) error {
-	if !chain.enqueue(msg, false) {
+	if ok, _ := chain.enqueue(msg, false); !ok {
 		return errors.Errorf("[channel: %s] failed to send time-to-cut message", chain.ChannelID())
 	}
 	return nil
 }
 
-func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset uint64) (err error) {
-	var messageHash [28]byte
+func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset uint64) error {
+	var msgHash []byte
 	defer func() {
-		if err == nil {
+		if msgHash != nil {
 			// request to start the batch timeout timer when a non-config message is successfully sent
-			chain.timeToCutRequestChan <- timeToCutRequest{messageHash: messageHash[:]}
+			chain.timeToCutRequestChan <- timeToCutRequest{messageHash: msgHash}
 			logger.Debugf("[channel: %s] request to start the batch timer with non-config message successfully sent", chain.ChannelID())
 		}
 		chain.senderWaitGroup.Done()
@@ -922,10 +920,10 @@ func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset
 	if err != nil {
 		return errors.Errorf("cannot enqueue, unable to marshal envelope: %s", err)
 	}
-	if !chain.enqueue(newNormalMessage(marshaledEnv, configSeq, originalOffset), originalOffset != 0) {
+	ok, msgHash := chain.enqueue(newNormalMessage(marshaledEnv, configSeq, originalOffset), originalOffset != 0)
+	if !ok {
 		return errors.Errorf("[channel: %s] cannot enqueue", chain.ChannelID())
 	}
-	messageHash = sha3.Sum224(marshaledEnv)
 	return nil
 }
 
@@ -954,39 +952,39 @@ func (chain *chainImpl) configure(config *cb.Envelope, configSeq uint64, origina
 	if err != nil {
 		return errors.Errorf("unable to marshal config because %s", err)
 	}
-	if !chain.enqueue(newConfigMessage(marshaledConfig, configSeq, originalOffset), originalOffset != 0) {
+	if ok, _ := chain.enqueue(newConfigMessage(marshaledConfig, configSeq, originalOffset), originalOffset != 0); !ok {
 		return fmt.Errorf("cannot enqueue the config message")
 	}
 	return nil
 }
 
-func (chain *chainImpl) enqueue(message *hb.HcsMessage, isResubmission bool) bool {
+func (chain *chainImpl) enqueue(message *hb.HcsMessage, isResubmission bool) (bool, []byte) {
 	logger.Debugf("[channel: %s] Enqueueing envelope...", chain.ChannelID())
 	select {
 	case <-chain.startChan: // The Start phase has completed
 		select {
 		case <-chain.haltChan: // The chain has been halted, stop here
 			logger.Warningf("[channel: %s] consenter for this channel has been halted", chain.ChannelID())
-			return false
+			return false, nil
 		default: // The post path
 			return chain.enqueueChecked(message, isResubmission)
 		}
 	default: // Not ready yet
 		logger.Warningf("[channel: %s] Will not enqueue, consenter for this channel hasn't started yet", chain.ChannelID())
-		return false
+		return false, nil
 	}
 }
 
-func (chain *chainImpl) enqueueChecked(message *hb.HcsMessage, isResubmission bool) bool {
+func (chain *chainImpl) enqueueChecked(message *hb.HcsMessage, isResubmission bool) (bool, []byte) {
 	payload, err := protoutil.Marshal(message)
 	if err != nil {
 		logger.Errorf("[channel: %s] unable to marshal HCS message because = %s", chain.ChannelID(), err)
-		return false
+		return false, nil
 	}
-	chunks, err := chain.appMsgProcessor.Split(payload)
+	chunks, msgHash, err := chain.appMsgProcessor.Split(payload)
 	if err != nil {
 		logger.Errorf("[channel: %s] failed to split message - %v", chain.ChannelID(), err)
-		return false
+		return false, nil
 	}
 	logger.Debugf("[channel: %s] the payload of %d bytes is cut into %d chunks, resubmission ? %v",
 		chain.ChannelID(), len(payload), len(chunks), isResubmission)
@@ -1011,12 +1009,12 @@ func (chain *chainImpl) enqueueChecked(message *hb.HcsMessage, isResubmission bo
 		}
 		if err != nil {
 			logger.Errorf("[channel: %s] failed to send chunk %d, abort the whole message: %s", chain.ChannelID(), chunk.ChunkIndex, err)
-			return false
+			return false, nil
 		}
 		logger.Debugf("[channel: %s] chunk %d of message sent successfully", chain.ChannelID(), chunk.ChunkIndex)
 	}
 	logger.Debugf("[channel: %s] Envelope enqueued successfully", chain.ChannelID())
-	return true
+	return true, msgHash
 }
 
 func (chain *chainImpl) doneReprocessing() <-chan struct{} {
@@ -1092,7 +1090,7 @@ func startThread(chain *chainImpl) {
 	chain.doneProcessingMessages = make(chan struct{})
 	chain.errorChan = make(chan struct{})
 
-	if !chain.enqueueChecked(newOrdererStartedMessage(chain.appID), false) {
+	if ok, _ := chain.enqueueChecked(newOrdererStartedMessage(chain.appID), false); !ok {
 		logger.Panicf("[channel: %s] failed to send orderer started message", chain.ChannelID())
 	}
 

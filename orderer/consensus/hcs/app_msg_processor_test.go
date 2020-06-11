@@ -222,7 +222,7 @@ func TestAppMsgProcessor(t *testing.T) {
 					prevEncryptCallCount = tt.blockCipher.EncryptCallCount()
 				}
 
-				chunks, err := amp.Split(tt.message)
+				chunks, _, err := amp.Split(tt.message)
 				if tt.wantErr {
 					assert.Error(t, err, "Expected Split return err")
 				} else {
@@ -469,7 +469,7 @@ func TestAppMsgProcessor(t *testing.T) {
 
 				message := make([]byte, tt.messageSize)
 				rand.Read(message)
-				chunks, err := amp.Split(message)
+				chunks, _, err := amp.Split(message)
 				assert.NotNil(t, chunks, "Expected Split return non-nil chunks")
 				assert.Equal(t, tt.expectedChunksCount, int32(len(chunks)), "Expected Split return correct number of chunks")
 				assert.NoError(t, err, "Expected Split return no error")
@@ -484,7 +484,7 @@ func TestAppMsgProcessor(t *testing.T) {
 				}
 				var reassembled []byte
 				for index, chunk := range chunks {
-					reassembled, err = amp.Reassemble(chunk)
+					reassembled, _, err = amp.Reassemble(chunk)
 					if index != len(chunks)-1 {
 						assert.Nil(t, reassembled, "Expected Reassemble returns nil value for all but last chunk")
 					}
@@ -532,18 +532,18 @@ func TestAppMsgProcessor(t *testing.T) {
 			assert.NotNil(t, amp, "Expected newAppMsgProcessor returns non-nil value")
 			assert.NoError(t, err, "Expected newAppMsgProcessor returns no error")
 
-			chunks, err := amp.Split(make([]byte, maxConsensusMessageSize+100))
+			chunks, _, err := amp.Split(make([]byte, maxConsensusMessageSize+100))
 			assert.NotNil(t, chunks, "Expected Split returns non-nil value")
 			assert.True(t, len(chunks) > 1, "Expected more than one chunks")
 			assert.NoError(t, err, "Expected Split returns no error")
 			assert.False(t, amp.IsPending(), "Expected new amp IsPending = false")
 
-			_, err = amp.Reassemble(chunks[0])
+			_, _, err = amp.Reassemble(chunks[0])
 			assert.NoError(t, err, "Expected Reassemble returns no error")
 			assert.True(t, amp.IsPending(), "Expected IsPending = true")
 
 			for i := 1; i < len(chunks); i++ {
-				_, err = amp.Reassemble(chunks[i])
+				_, _, err = amp.Reassemble(chunks[i])
 				assert.NoError(t, err, "Expected Reassemble returns no error")
 			}
 			assert.False(t, amp.IsPending(), "Expected IsPending = false")
@@ -559,11 +559,11 @@ func TestAppMsgProcessor(t *testing.T) {
 		assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
-		chunks1, err := amp.Split(make([]byte, 2*maxConsensusMessageSize))
+		chunks1, _, err := amp.Split(make([]byte, 2*maxConsensusMessageSize))
 		assert.True(t, chunks1 != nil && len(chunks1) > 2, "Expected Split returns more than one chunks")
 		assert.NoError(t, err, "Expected Split returns no error")
 
-		chunks2, err := amp.Split(make([]byte, 2*maxConsensusMessageSize))
+		chunks2, _, err := amp.Split(make([]byte, 2*maxConsensusMessageSize))
 		assert.True(t, chunks2 != nil && len(chunks2) > 2, "Expected Split returns more than one chunks")
 		assert.NoError(t, err, "Expected Split returns no error")
 
@@ -600,7 +600,7 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name: "ProperExpireNothingAfterFullReassemble",
 				createChunksFunc: func(t *testing.T, amp appMsgProcessor) []*hb.ApplicationMessageChunk {
-					chunks, err := amp.Split(make([]byte, maxConsensusMessageSize*2))
+					chunks, _, err := amp.Split(make([]byte, maxConsensusMessageSize*2))
 					assert.True(t, chunks != nil && len(chunks) > 2, "Expected Split returns chunks")
 					assert.NoError(t, err, "Expected Split returns no error")
 					return chunks
@@ -612,7 +612,7 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name: "ProperExpireWithPartialReassemble",
 				createChunksFunc: func(t *testing.T, amp appMsgProcessor) []*hb.ApplicationMessageChunk {
-					chunks, err := amp.Split(make([]byte, maxConsensusMessageSize*2))
+					chunks, _, err := amp.Split(make([]byte, maxConsensusMessageSize*2))
 					assert.True(t, chunks != nil && len(chunks) > 2, "Expected Split returns chunks")
 					assert.NoError(t, err, "Expected Split returns no error")
 					return chunks[0:1]
@@ -646,7 +646,7 @@ func TestAppMsgProcessor(t *testing.T) {
 
 				chunks := tt.createChunksFunc(t, amp)
 				for _, chunk := range chunks {
-					_, err := amp.Reassemble(chunk)
+					_, _, err := amp.Reassemble(chunk)
 					assert.NoError(t, err, "Expected Reassemble returns no error")
 				}
 				count, err := amp.ExpireByAppID(tt.appIDArg)

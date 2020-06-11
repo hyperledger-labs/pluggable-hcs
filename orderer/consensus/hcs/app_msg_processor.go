@@ -30,8 +30,8 @@ type blockCipher interface {
 }
 
 type appMsgProcessor interface {
-	Split(message []byte) ([]*hb.ApplicationMessageChunk, error)
-	Reassemble(chunk *hb.ApplicationMessageChunk) ([]byte, error)
+	Split(message []byte) ([]*hb.ApplicationMessageChunk, []byte, error)
+	Reassemble(chunk *hb.ApplicationMessageChunk) ([]byte, []byte, error)
 	IsPending() bool
 	ExpireByAge(maxAge uint64) int
 	ExpireByAppID(appID []byte) (int, error)
@@ -77,11 +77,11 @@ type appMsgProcessorImpl struct {
 	tick            uint64
 }
 
-func (processor *appMsgProcessorImpl) Split(message []byte) ([]*hb.ApplicationMessageChunk, error) {
+func (processor *appMsgProcessorImpl) Split(message []byte) ([]*hb.ApplicationMessageChunk, []byte, error) {
 	if message == nil {
-		return nil, fmt.Errorf("invalid parameter, message is nil")
+		return nil, nil, fmt.Errorf("invalid parameter, message is nil")
 	} else if len(message) == 0 {
-		return nil, fmt.Errorf("invalid parameter, empty message")
+		return nil, nil, fmt.Errorf("invalid parameter, empty message")
 	}
 
 	// wrap message into ApplicationMessage
@@ -103,7 +103,7 @@ func (processor *appMsgProcessorImpl) Split(message []byte) ([]*hb.ApplicationMe
 	appMsg.UnencryptedBusinessProcessMessageHash = msgHash[:]
 	publicKey, signature, err := processor.signer.Sign(appMsg.UnencryptedBusinessProcessMessageHash)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign the unencrypted business process message hash - %v", err)
+		return nil, nil, fmt.Errorf("failed to sign the unencrypted business process message hash - %v", err)
 	}
 	appSig := &hb.ApplicationSignature{
 		PublicKey: publicKey,
@@ -113,7 +113,7 @@ func (processor *appMsgProcessorImpl) Split(message []byte) ([]*hb.ApplicationMe
 	if !processor.noBlockCipher {
 		iv, ciphertext, err := processor.blockCipher.Encrypt(message)
 		if err != nil {
-			return nil, fmt.Errorf("failed to encrypt message - %v", err)
+			return nil, nil, fmt.Errorf("failed to encrypt message - %v", err)
 		}
 		appMsg.BusinessProcessMessage = ciphertext
 		appMsg.EncryptionRandom = iv
@@ -135,10 +135,10 @@ func (processor *appMsgProcessorImpl) Split(message []byte) ([]*hb.ApplicationMe
 			MessageChunk:         data[first:last],
 		}
 	}
-	return chunks, nil
+	return chunks, appMsg.UnencryptedBusinessProcessMessageHash, nil
 }
 
-func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChunk) ([]byte, error) {
+func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChunk) ([]byte, []byte, error) {
 	isValidChunk := false
 	var holder *chunkHolder
 	defer func() {
@@ -151,10 +151,10 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 	}()
 
 	if chunk.ChunksCount < 1 {
-		return nil, fmt.Errorf("invalid ChunksCount - %d, corrupted data", chunk.ChunksCount)
+		return nil, nil, fmt.Errorf("invalid ChunksCount - %d, corrupted data", chunk.ChunksCount)
 	}
 	if chunk.ChunkIndex < 0 || chunk.ChunkIndex >= chunk.ChunksCount {
-		return nil, fmt.Errorf("invalid ChunkIndex - %d, ChunksCount - %d, coruupted data", chunk.ChunkIndex, chunk.ChunksCount)
+		return nil, nil, fmt.Errorf("invalid ChunkIndex - %d, ChunksCount - %d, coruupted data", chunk.ChunkIndex, chunk.ChunksCount)
 	}
 
 	var protoMsg []byte
@@ -179,10 +179,10 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 
 		index := chunk.ChunkIndex
 		if holder.chunks[index] != nil {
-			return nil, fmt.Errorf("received duplicate chunk at index %d", index)
+			return nil, nil, fmt.Errorf("received duplicate chunk at index %d", index)
 		}
 		if chunk.ChunksCount != int32(len(holder.chunks)) {
-			return nil, fmt.Errorf("incorrect chunk ChunksCount = %d, corrupted data", chunk.ChunksCount)
+			return nil, nil, fmt.Errorf("incorrect chunk ChunksCount = %d, corrupted data", chunk.ChunksCount)
 		}
 		isValidChunk = true
 		holder.chunks[index] = chunk
@@ -196,7 +196,7 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 			} else {
 				holder.el = processor.holderListByAge.PushBack(holder)
 			}
-			return nil, nil
+			return nil, nil, nil
 		} else {
 			reassembled := make([]byte, 0, holder.size)
 			for _, f := range holder.chunks {
@@ -209,31 +209,31 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 
 	appMsg := &hb.ApplicationMessage{}
 	if err := proto.Unmarshal(protoMsg, appMsg); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	plaintext := appMsg.BusinessProcessMessage
 	if appMsg.EncryptionRandom != nil {
 		if processor.noBlockCipher {
-			return nil, fmt.Errorf("application message is encrypted but appMsgProcessor is configured without a blockciper")
+			return nil, nil, fmt.Errorf("application message is encrypted but appMsgProcessor is configured without a blockciper")
 		}
 		decrypted, err := processor.blockCipher.Decrypt(appMsg.EncryptionRandom, appMsg.BusinessProcessMessage)
 		if err != nil {
-			return nil, fmt.Errorf("failed  to decrypt business process message - %v", err)
+			return nil, nil, fmt.Errorf("failed  to decrypt business process message - %v", err)
 		}
 		plaintext = decrypted
 	}
 	msgHash := sha256.Sum256(plaintext)
 	if !bytes.Equal(msgHash[:], appMsg.UnencryptedBusinessProcessMessageHash) {
-		return nil, fmt.Errorf("hash on unecnrypted business process message does not match, corrupted or malicious data")
+		return nil, nil, fmt.Errorf("hash on unecnrypted business process message does not match, corrupted or malicious data")
 	}
 	appSig := &hb.ApplicationSignature{}
 	if err := proto.Unmarshal(appMsg.BusinessProcessSignatureOnHash, appSig); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal BusinessProcessSignatureOnHash, corrupted data = %v", err)
+		return nil, nil, fmt.Errorf("failed to unmarshal BusinessProcessSignatureOnHash, corrupted data = %v", err)
 	}
 	if !processor.signer.Verify(appMsg.UnencryptedBusinessProcessMessageHash, appSig.PublicKey, appSig.Signature) {
-		return nil, fmt.Errorf("failed to verify unencrypted business process message signature")
+		return nil, nil, fmt.Errorf("failed to verify unencrypted business process message signature")
 	}
-	return plaintext, nil
+	return plaintext, appMsg.UnencryptedBusinessProcessMessageHash, nil
 }
 
 func (processor *appMsgProcessorImpl) IsPending() bool {
