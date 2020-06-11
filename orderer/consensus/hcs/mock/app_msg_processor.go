@@ -3,6 +3,7 @@ package mock
 
 import (
 	"sync"
+	"time"
 
 	"github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 )
@@ -57,10 +58,11 @@ type AppMsgProcessor struct {
 		result2 []byte
 		result3 error
 	}
-	SplitStub        func([]byte) ([]*protodef.ApplicationMessageChunk, []byte, error)
+	SplitStub        func([]byte, time.Time) ([]*protodef.ApplicationMessageChunk, []byte, error)
 	splitMutex       sync.RWMutex
 	splitArgsForCall []struct {
 		arg1 []byte
+		arg2 time.Time
 	}
 	splitReturns struct {
 		result1 []*protodef.ApplicationMessageChunk
@@ -322,7 +324,7 @@ func (fake *AppMsgProcessor) ReassembleReturnsOnCall(i int, result1 []byte, resu
 	}{result1, result2, result3}
 }
 
-func (fake *AppMsgProcessor) Split(arg1 []byte) ([]*protodef.ApplicationMessageChunk, []byte, error) {
+func (fake *AppMsgProcessor) Split(arg1 []byte, arg2 time.Time) ([]*protodef.ApplicationMessageChunk, []byte, error) {
 	var arg1Copy []byte
 	if arg1 != nil {
 		arg1Copy = make([]byte, len(arg1))
@@ -332,11 +334,12 @@ func (fake *AppMsgProcessor) Split(arg1 []byte) ([]*protodef.ApplicationMessageC
 	ret, specificReturn := fake.splitReturnsOnCall[len(fake.splitArgsForCall)]
 	fake.splitArgsForCall = append(fake.splitArgsForCall, struct {
 		arg1 []byte
-	}{arg1Copy})
-	fake.recordInvocation("Split", []interface{}{arg1Copy})
+		arg2 time.Time
+	}{arg1Copy, arg2})
+	fake.recordInvocation("Split", []interface{}{arg1Copy, arg2})
 	fake.splitMutex.Unlock()
 	if fake.SplitStub != nil {
-		return fake.SplitStub(arg1)
+		return fake.SplitStub(arg1, arg2)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2, ret.result3
@@ -351,17 +354,17 @@ func (fake *AppMsgProcessor) SplitCallCount() int {
 	return len(fake.splitArgsForCall)
 }
 
-func (fake *AppMsgProcessor) SplitCalls(stub func([]byte) ([]*protodef.ApplicationMessageChunk, []byte, error)) {
+func (fake *AppMsgProcessor) SplitCalls(stub func([]byte, time.Time) ([]*protodef.ApplicationMessageChunk, []byte, error)) {
 	fake.splitMutex.Lock()
 	defer fake.splitMutex.Unlock()
 	fake.SplitStub = stub
 }
 
-func (fake *AppMsgProcessor) SplitArgsForCall(i int) []byte {
+func (fake *AppMsgProcessor) SplitArgsForCall(i int) ([]byte, time.Time) {
 	fake.splitMutex.RLock()
 	defer fake.splitMutex.RUnlock()
 	argsForCall := fake.splitArgsForCall[i]
-	return argsForCall.arg1
+	return argsForCall.arg1, argsForCall.arg2
 }
 
 func (fake *AppMsgProcessor) SplitReturns(result1 []*protodef.ApplicationMessageChunk, result2 []byte, result3 error) {

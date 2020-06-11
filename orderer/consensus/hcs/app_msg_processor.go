@@ -30,7 +30,7 @@ type blockCipher interface {
 }
 
 type appMsgProcessor interface {
-	Split(message []byte) ([]*hb.ApplicationMessageChunk, []byte, error)
+	Split(message []byte, validStart time.Time) ([]*hb.ApplicationMessageChunk, []byte, error)
 	Reassemble(chunk *hb.ApplicationMessageChunk) ([]byte, []byte, error)
 	IsPending() bool
 	ExpireByAge(maxAge uint64) int
@@ -77,7 +77,7 @@ type appMsgProcessorImpl struct {
 	tick            uint64
 }
 
-func (processor *appMsgProcessorImpl) Split(message []byte) ([]*hb.ApplicationMessageChunk, []byte, error) {
+func (processor *appMsgProcessorImpl) Split(message []byte, validStart time.Time) ([]*hb.ApplicationMessageChunk, []byte, error) {
 	if message == nil {
 		return nil, nil, fmt.Errorf("invalid parameter, message is nil")
 	} else if len(message) == 0 {
@@ -87,7 +87,7 @@ func (processor *appMsgProcessorImpl) Split(message []byte) ([]*hb.ApplicationMe
 	// wrap message into ApplicationMessage
 	appMsg := &hb.ApplicationMessage{
 		ApplicationMessageId: &hb.ApplicationMessageID{
-			ValidStart: timestampProtoOrPanic(time.Now()),
+			ValidStart: timestampProtoOrPanic(validStart),
 			AccountID: &hb.AccountID{
 				ShardNum:   int64(processor.accountID.Shard),
 				RealmNum:   int64(processor.accountID.Realm),
@@ -166,9 +166,9 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 		var ok bool
 		holderKey := makeHolderKey(*chunk.ApplicationMessageId)
 		if holder, ok = processor.holders[holderKey]; !ok {
-			holder = newChunkHolder(chunk.ChunksCount, holderKey)
+			holder = newChunkHolder(chunk.ChunksCount, holderKey, chunk.ApplicationMessageId.Metadata.Value)
 			processor.holders[holderKey] = holder
-			appIDKey := hex.EncodeToString(processor.appID)
+			appIDKey := hex.EncodeToString(holder.appID)
 			appHolders, ok := processor.holdersByAppID[appIDKey]
 			if !ok {
 				appHolders = map[string]struct{}{}
@@ -186,7 +186,6 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 		}
 		isValidChunk = true
 		holder.chunks[index] = chunk
-		holder.appID = chunk.ApplicationMessageId.Metadata.Value
 		holder.count++
 		holder.size += uint32(len(chunk.MessageChunk))
 		if holder.count != int32(len(holder.chunks)) {
@@ -298,15 +297,18 @@ type chunkHolder struct {
 	el     *list.Element
 }
 
-func newChunkHolder(total int32, key string) *chunkHolder {
-	return &chunkHolder{chunks: make([]*hb.ApplicationMessageChunk, total), key: key}
+func newChunkHolder(total int32, key string, appID []byte) *chunkHolder {
+	return &chunkHolder{
+		chunks: make([]*hb.ApplicationMessageChunk, total),
+		key:    key,
+		appID:  appID,
+	}
 }
 
 // helper functions
 
 func makeHolderKey(id hb.ApplicationMessageID) string {
-	appID := id.Metadata.Value
-	return fmt.Sprintf("%s%s", hex.EncodeToString(appID), id.ValidStart)
+	return fmt.Sprintf("%s%d%d", hex.EncodeToString(id.Metadata.Value), id.ValidStart.Seconds, id.ValidStart.Nanos)
 }
 
 func calcAge(bornTick uint64, currentTick uint64) uint64 {

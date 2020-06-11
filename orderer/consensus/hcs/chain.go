@@ -981,7 +981,7 @@ func (chain *chainImpl) enqueueChecked(message *hb.HcsMessage, isResubmission bo
 		logger.Errorf("[channel: %s] unable to marshal HCS message because = %s", chain.ChannelID(), err)
 		return false, nil
 	}
-	chunks, msgHash, err := chain.appMsgProcessor.Split(payload)
+	chunks, msgHash, err := chain.appMsgProcessor.Split(payload, chain.getUniqueValidStart(time.Now().Add(-10*time.Second)))
 	if err != nil {
 		logger.Errorf("[channel: %s] failed to split message - %v", chain.ChannelID(), err)
 		return false, nil

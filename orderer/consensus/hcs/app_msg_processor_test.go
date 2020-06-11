@@ -9,6 +9,7 @@ import (
 	"github.com/hashgraph/hedera-sdk-go"
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	mockhcs "github.com/hyperledger/fabric/orderer/consensus/hcs/mock"
@@ -134,6 +135,7 @@ func TestNewEmptyAppMsgProcessor(t *testing.T) {
 
 func TestAppMsgProcessor(t *testing.T) {
 	fakeAppID := []byte("sample app id")
+	fakeOtherAppID := []byte("sample other app id")
 
 	t.Run("TestSplit", func(t *testing.T) {
 		fakeSigner := &mockhcs.Signer{}
@@ -222,7 +224,7 @@ func TestAppMsgProcessor(t *testing.T) {
 					prevEncryptCallCount = tt.blockCipher.EncryptCallCount()
 				}
 
-				chunks, _, err := amp.Split(tt.message)
+				chunks, _, err := amp.Split(tt.message, time.Now())
 				if tt.wantErr {
 					assert.Error(t, err, "Expected Split return err")
 				} else {
@@ -469,7 +471,7 @@ func TestAppMsgProcessor(t *testing.T) {
 
 				message := make([]byte, tt.messageSize)
 				rand.Read(message)
-				chunks, _, err := amp.Split(message)
+				chunks, _, err := amp.Split(message, time.Now())
 				assert.NotNil(t, chunks, "Expected Split return non-nil chunks")
 				assert.Equal(t, tt.expectedChunksCount, int32(len(chunks)), "Expected Split return correct number of chunks")
 				assert.NoError(t, err, "Expected Split return no error")
@@ -532,7 +534,7 @@ func TestAppMsgProcessor(t *testing.T) {
 			assert.NotNil(t, amp, "Expected newAppMsgProcessor returns non-nil value")
 			assert.NoError(t, err, "Expected newAppMsgProcessor returns no error")
 
-			chunks, _, err := amp.Split(make([]byte, maxConsensusMessageSize+100))
+			chunks, _, err := amp.Split(make([]byte, maxConsensusMessageSize+100), time.Now())
 			assert.NotNil(t, chunks, "Expected Split returns non-nil value")
 			assert.True(t, len(chunks) > 1, "Expected more than one chunks")
 			assert.NoError(t, err, "Expected Split returns no error")
@@ -559,11 +561,11 @@ func TestAppMsgProcessor(t *testing.T) {
 		assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
-		chunks1, _, err := amp.Split(make([]byte, 2*maxConsensusMessageSize))
+		chunks1, _, err := amp.Split(make([]byte, 2*maxConsensusMessageSize), time.Now())
 		assert.True(t, chunks1 != nil && len(chunks1) > 2, "Expected Split returns more than one chunks")
 		assert.NoError(t, err, "Expected Split returns no error")
 
-		chunks2, _, err := amp.Split(make([]byte, 2*maxConsensusMessageSize))
+		chunks2, _, err := amp.Split(make([]byte, 2*maxConsensusMessageSize), time.Now())
 		assert.True(t, chunks2 != nil && len(chunks2) > 2, "Expected Split returns more than one chunks")
 		assert.NoError(t, err, "Expected Split returns no error")
 
@@ -600,7 +602,7 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name: "ProperExpireNothingAfterFullReassemble",
 				createChunksFunc: func(t *testing.T, amp appMsgProcessor) []*hb.ApplicationMessageChunk {
-					chunks, _, err := amp.Split(make([]byte, maxConsensusMessageSize*2))
+					chunks, _, err := amp.Split(make([]byte, maxConsensusMessageSize*2), time.Now())
 					assert.True(t, chunks != nil && len(chunks) > 2, "Expected Split returns chunks")
 					assert.NoError(t, err, "Expected Split returns no error")
 					return chunks
@@ -612,7 +614,7 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name: "ProperExpireWithPartialReassemble",
 				createChunksFunc: func(t *testing.T, amp appMsgProcessor) []*hb.ApplicationMessageChunk {
-					chunks, _, err := amp.Split(make([]byte, maxConsensusMessageSize*2))
+					chunks, _, err := amp.Split(make([]byte, maxConsensusMessageSize*2), time.Now())
 					assert.True(t, chunks != nil && len(chunks) > 2, "Expected Split returns chunks")
 					assert.NoError(t, err, "Expected Split returns no error")
 					return chunks[0:1]
@@ -656,6 +658,70 @@ func TestAppMsgProcessor(t *testing.T) {
 					assert.Equal(t, tt.expectedCount, count, "Expected ExpireByAppID returns correct count")
 					assert.NoError(t, err, "Expected ExpireByAppID return error")
 				}
+			})
+		}
+	})
+
+	t.Run("TestExpireByOtherAppID", func(t *testing.T) {
+		fakesSigner := &mockhcs.Signer{}
+		fakesSigner.SignReturns([]byte("fake public key"), []byte("fake signature"), nil)
+		fakesSigner.VerifyReturns(true)
+
+		var tests = []struct {
+			name             string
+			createChunksFunc func(t *testing.T, amp appMsgProcessor) []*hb.ApplicationMessageChunk
+			appIDArg         []byte
+			expectedCount    int
+		}{
+			{
+				name: "ProperExpireNothing",
+				createChunksFunc: func(t *testing.T, otherAmp appMsgProcessor) []*hb.ApplicationMessageChunk {
+					return []*hb.ApplicationMessageChunk{}
+				},
+				appIDArg:      fakeOtherAppID,
+				expectedCount: 0,
+			},
+			{
+				name: "ProperExpireNothingAfterFullReassemble",
+				createChunksFunc: func(t *testing.T, otherAmp appMsgProcessor) []*hb.ApplicationMessageChunk {
+					chunks, _, err := otherAmp.Split(make([]byte, maxConsensusMessageSize*2), time.Now())
+					assert.True(t, chunks != nil && len(chunks) > 2, "Expected Split returns chunks")
+					assert.NoError(t, err, "Expected Split returns no error")
+					return chunks
+				},
+				appIDArg:      fakeOtherAppID,
+				expectedCount: 0,
+			},
+			{
+				name: "ProperExpireWithPartialReassemble",
+				createChunksFunc: func(t *testing.T, otherAmp appMsgProcessor) []*hb.ApplicationMessageChunk {
+					chunks, _, err := otherAmp.Split(make([]byte, maxConsensusMessageSize*2), time.Now())
+					assert.True(t, chunks != nil && len(chunks) > 2, "Expected Split returns chunks")
+					assert.NoError(t, err, "Expected Split returns no error")
+					return chunks[0:1]
+				},
+				appIDArg:      fakeOtherAppID,
+				expectedCount: 1,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, fakesSigner, nil)
+				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
+				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
+
+				otherAmp, err := newAppMsgProcessor(testAccountID, fakeOtherAppID, maxConsensusMessageSize, fakesSigner, nil)
+				assert.NotNil(t, otherAmp, "Expected newAppMsgProcessor return non-nil value")
+				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
+
+				chunks := tt.createChunksFunc(t, otherAmp)
+				for _, chunk := range chunks {
+					_, _, err := amp.Reassemble(chunk)
+					assert.NoError(t, err, "Expected Reassemble returns no error")
+				}
+				count, err := amp.ExpireByAppID(tt.appIDArg)
+				assert.Equal(t, tt.expectedCount, count, "Expected ExpireByAppID returns correct count")
+				assert.NoError(t, err, "Expected ExpireByAppID return error")
 			})
 		}
 	})
