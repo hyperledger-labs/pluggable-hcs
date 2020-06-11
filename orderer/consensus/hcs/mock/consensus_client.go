@@ -55,11 +55,12 @@ type ConsensusClient struct {
 	pingReturnsOnCall map[int]struct {
 		result1 error
 	}
-	SubmitConsensusMessageStub        func([]byte, *hedera.ConsensusTopicID) (*hedera.TransactionID, error)
+	SubmitConsensusMessageStub        func([]byte, *hedera.ConsensusTopicID, *hedera.TransactionID) (*hedera.TransactionID, error)
 	submitConsensusMessageMutex       sync.RWMutex
 	submitConsensusMessageArgsForCall []struct {
 		arg1 []byte
 		arg2 *hedera.ConsensusTopicID
+		arg3 *hedera.TransactionID
 	}
 	submitConsensusMessageReturns struct {
 		result1 *hedera.TransactionID
@@ -311,7 +312,7 @@ func (fake *ConsensusClient) PingReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
-func (fake *ConsensusClient) SubmitConsensusMessage(arg1 []byte, arg2 *hedera.ConsensusTopicID) (*hedera.TransactionID, error) {
+func (fake *ConsensusClient) SubmitConsensusMessage(arg1 []byte, arg2 *hedera.ConsensusTopicID, arg3 *hedera.TransactionID) (*hedera.TransactionID, error) {
 	var arg1Copy []byte
 	if arg1 != nil {
 		arg1Copy = make([]byte, len(arg1))
@@ -322,11 +323,12 @@ func (fake *ConsensusClient) SubmitConsensusMessage(arg1 []byte, arg2 *hedera.Co
 	fake.submitConsensusMessageArgsForCall = append(fake.submitConsensusMessageArgsForCall, struct {
 		arg1 []byte
 		arg2 *hedera.ConsensusTopicID
-	}{arg1Copy, arg2})
-	fake.recordInvocation("SubmitConsensusMessage", []interface{}{arg1Copy, arg2})
+		arg3 *hedera.TransactionID
+	}{arg1Copy, arg2, arg3})
+	fake.recordInvocation("SubmitConsensusMessage", []interface{}{arg1Copy, arg2, arg3})
 	fake.submitConsensusMessageMutex.Unlock()
 	if fake.SubmitConsensusMessageStub != nil {
-		return fake.SubmitConsensusMessageStub(arg1, arg2)
+		return fake.SubmitConsensusMessageStub(arg1, arg2, arg3)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
@@ -341,17 +343,17 @@ func (fake *ConsensusClient) SubmitConsensusMessageCallCount() int {
 	return len(fake.submitConsensusMessageArgsForCall)
 }
 
-func (fake *ConsensusClient) SubmitConsensusMessageCalls(stub func([]byte, *hedera.ConsensusTopicID) (*hedera.TransactionID, error)) {
+func (fake *ConsensusClient) SubmitConsensusMessageCalls(stub func([]byte, *hedera.ConsensusTopicID, *hedera.TransactionID) (*hedera.TransactionID, error)) {
 	fake.submitConsensusMessageMutex.Lock()
 	defer fake.submitConsensusMessageMutex.Unlock()
 	fake.SubmitConsensusMessageStub = stub
 }
 
-func (fake *ConsensusClient) SubmitConsensusMessageArgsForCall(i int) ([]byte, *hedera.ConsensusTopicID) {
+func (fake *ConsensusClient) SubmitConsensusMessageArgsForCall(i int) ([]byte, *hedera.ConsensusTopicID, *hedera.TransactionID) {
 	fake.submitConsensusMessageMutex.RLock()
 	defer fake.submitConsensusMessageMutex.RUnlock()
 	argsForCall := fake.submitConsensusMessageArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
 }
 
 func (fake *ConsensusClient) SubmitConsensusMessageReturns(result1 *hedera.TransactionID, result2 error) {
