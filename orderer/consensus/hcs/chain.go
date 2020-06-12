@@ -42,7 +42,7 @@ var (
 )
 
 const (
-	maxConsensusMessageSize    = 3500 // the max message size HCS supports is 4kB, including header
+	maxConsensusMessageSize    = 5600 // the max message size HCS supports is 6kB, including header
 	subscriptionRetryBaseDelay = 100 * time.Millisecond
 	subscriptionRetryMax       = 8
 )
