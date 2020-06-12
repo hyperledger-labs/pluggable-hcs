@@ -565,6 +565,10 @@ func (chain *chainImpl) processMessages() error {
 				continue
 			}
 			payload, msgHash, err := chain.appMsgProcessor.Reassemble(chunk)
+			if !chain.appMsgProcessor.IsPending() {
+				chain.lastChunkFreeConsensusTimestamp = chain.lastConsensusTimestamp
+				chain.lastChunkFreeSequenceProcessed = chain.lastSequenceProcessed
+			}
 			count := chain.appMsgProcessor.ExpireByAge(chain.maxChunkAge)
 			chain.consenter.Metrics().NumberMessagesDropped.With("channel", chain.ChannelID()).Add(float64(count))
 			if err != nil {
@@ -626,10 +630,6 @@ func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTime
 	logger.Infof("[channel: %s] request to stop the batch timer since a block is cut", chain.ChannelID())
 
 	chain.lastCutBlockNumber++
-	if !chain.appMsgProcessor.IsPending() {
-		chain.lastChunkFreeConsensusTimestamp = consensusTimestamp
-		chain.lastChunkFreeSequenceProcessed = chain.lastSequenceProcessed
-	}
 	metadata := newHcsMetadata(
 		timestampProtoOrPanic(consensusTimestamp),
 		chain.lastOriginalSequenceProcessed,
