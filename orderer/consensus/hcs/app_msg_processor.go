@@ -308,7 +308,7 @@ func newChunkHolder(total int32, key string, appID []byte) *chunkHolder {
 // helper functions
 
 func makeHolderKey(id hb.ApplicationMessageID) string {
-	return fmt.Sprintf("%s%d%d", hex.EncodeToString(id.Metadata.Value), id.ValidStart.Seconds, id.ValidStart.Nanos)
+	return fmt.Sprintf("%s:%ds%d", hex.EncodeToString(id.Metadata.Value), id.ValidStart.Seconds, id.ValidStart.Nanos)
 }
 
 func calcAge(bornTick uint64, currentTick uint64) uint64 {

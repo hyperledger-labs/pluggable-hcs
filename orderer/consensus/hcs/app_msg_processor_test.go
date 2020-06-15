@@ -6,6 +6,8 @@ package hcs
 
 import (
 	"fmt"
+	"github.com/golang/protobuf/ptypes/any"
+	"github.com/golang/protobuf/ptypes/timestamp"
 	"github.com/hashgraph/hedera-sdk-go"
 	"math/rand"
 	"testing"
@@ -727,6 +729,84 @@ func TestAppMsgProcessor(t *testing.T) {
 	})
 }
 
+func TestMakeHolderKey(t *testing.T) {
+	var tests = []struct {
+		name string
+		id1  hb.ApplicationMessageID
+		id2  hb.ApplicationMessageID
+	}{
+		{
+			name: "WithPossibleClash1",
+			id1: hb.ApplicationMessageID{
+				ValidStart: &timestamp.Timestamp{
+					Seconds: 1,
+					Nanos:   0,
+				},
+				AccountID: &hb.AccountID{
+					ShardNum:   0,
+					RealmNum:   0,
+					AccountNum: 18650,
+				},
+				Metadata: &any.Any{
+					Value: []byte("sample metadata1"),
+				},
+			},
+			id2: hb.ApplicationMessageID{
+				ValidStart: &timestamp.Timestamp{
+					Seconds: 11,
+					Nanos:   0,
+				},
+				AccountID: &hb.AccountID{
+					ShardNum:   0,
+					RealmNum:   0,
+					AccountNum: 18650,
+				},
+				Metadata: &any.Any{
+					Value: []byte("sample metadata"),
+				},
+			},
+		},
+		{
+			name: "WithPossibleClash2",
+			id1: hb.ApplicationMessageID{
+				ValidStart: &timestamp.Timestamp{
+					Seconds: 11,
+					Nanos:   0,
+				},
+				AccountID: &hb.AccountID{
+					ShardNum:   0,
+					RealmNum:   0,
+					AccountNum: 18650,
+				},
+				Metadata: &any.Any{
+					Value: []byte("sample metadata"),
+				},
+			},
+			id2: hb.ApplicationMessageID{
+				ValidStart: &timestamp.Timestamp{
+					Seconds: 1,
+					Nanos:   10,
+				},
+				AccountID: &hb.AccountID{
+					ShardNum:   0,
+					RealmNum:   0,
+					AccountNum: 18650,
+				},
+				Metadata: &any.Any{
+					Value: []byte("sample metadata"),
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key1 := makeHolderKey(tt.id1)
+			key2 := makeHolderKey(tt.id2)
+			assert.NotEqual(t, key1, key2, "key1 and key2 built from id1 and id2 should be different")
+		})
+	}
+}
 func TestCalcAge(t *testing.T) {
 	assert.Equal(t, uint64(0), calcAge(100, 100), "Expected age to be 0 when bornTick and currentTick equal")
 	assert.Equal(t, uint64(10), calcAge(100, 110), "Expected age to be 10")
