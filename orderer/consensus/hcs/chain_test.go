@@ -968,6 +968,7 @@ func TestChain(t *testing.T) {
 			assert.False(t, ok, "Expected enqueue call to return false")
 		})
 
+		grpcCodeInternal := codes.Internal
 		t.Run("WithError", func(t *testing.T) {
 			var tests = []struct {
 				name                  string
@@ -1003,10 +1004,36 @@ func TestChain(t *testing.T) {
 					expectSubmitCallCount: 2,
 				},
 				{
+					name: "ProperWithGrpcCodeInternal",
+					err: hedera.ErrHederaNetwork{
+						StatusCode: &grpcCodeInternal,
+					},
+					errCount:              1,
+					expectFailure:         false,
+					expectSubmitCallCount: 2,
+				},
+				{
 					name: "FailWithPreCheckDuplicationTransactionAndRetryExceeded",
 					err: hedera.ErrHederaPreCheckStatus{
 						TxID:   hedera.TransactionID{},
 						Status: hedera.StatusBusy,
+					},
+					errCount:      10,
+					expectFailure: true,
+				},
+				{
+					name: "FailWithPreCheckStatusBusyAndRetryExceeded",
+					err: hedera.ErrHederaPreCheckStatus{
+						TxID:   hedera.TransactionID{},
+						Status: hedera.StatusBusy,
+					},
+					errCount:      10,
+					expectFailure: true,
+				},
+				{
+					name: "FailWithGrpcCodeInternalAndRetryExceeded",
+					err: hedera.ErrHederaNetwork{
+						StatusCode: &grpcCodeInternal,
 					},
 					errCount:      10,
 					expectFailure: true,

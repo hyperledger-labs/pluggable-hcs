@@ -1021,13 +1021,19 @@ func (chain *chainImpl) enqueueChecked(message *hb.HcsMessage, isResubmission bo
 			}
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunk), chain.topicID, &txID)
 			if err != nil {
-				if preCheckErr, ok := err.(hedera.ErrHederaPreCheckStatus); ok {
-					switch preCheckErr.Status {
-					case hedera.StatusDuplicateTransaction, hedera.StatusBusy:
-						logger.Warnf("[channel: %s] received PreCheckStatus %s for tx %s, will retry", chain.ChannelID(), preCheckErr.Status, txID)
+				switch e := err.(type) {
+				case hedera.ErrHederaPreCheckStatus:
+					if e.Status == hedera.StatusDuplicateTransaction || e.Status == hedera.StatusBusy {
+						logger.Warnf("[channel: %s] received PreCheckStatus %s for tx %s, will retry", chain.ChannelID(), e.Status, txID)
 						continue
-					default:
 					}
+				case hedera.ErrHederaNetwork:
+					if e.StatusCode != nil && *e.StatusCode == codes.Internal {
+						logger.Warnf("[channel: %s] received ErrHederaNetwork %s for tx %s, will retry", chain.ChannelID(), e, txID)
+						continue
+					}
+				default:
+					// fall through for other errors
 				}
 			}
 			break
