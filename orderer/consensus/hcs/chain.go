@@ -214,9 +214,6 @@ type chainImpl struct {
 	doneProcessingMessages chan struct{}
 	startChan              chan struct{}
 
-	validStartMutex sync.Mutex
-	nextValidStart  time.Time
-
 	timeToCutRequestChan chan timeToCutRequest
 	messageHashes        map[string]struct{}
 	senderWaitGroup      sync.WaitGroup
@@ -1006,7 +1003,7 @@ func (chain *chainImpl) enqueueChecked(message *hb.HcsMessage, isResubmission bo
 		logger.Errorf("[channel: %s] unable to marshal HCS message because = %s", chain.ChannelID(), err)
 		return false, nil
 	}
-	chunks, msgHash, err := chain.appMsgProcessor.Split(payload, chain.getUniqueValidStart(time.Now().Add(-10*time.Second)))
+	chunks, msgHash, err := chain.appMsgProcessor.Split(payload, chain.consenter.getUniqueValidStart(time.Now().Add(-10*time.Second)))
 	if err != nil {
 		logger.Errorf("[channel: %s] failed to split message - %v", chain.ChannelID(), err)
 		return false, nil
@@ -1017,7 +1014,7 @@ func (chain *chainImpl) enqueueChecked(message *hb.HcsMessage, isResubmission bo
 		for attempt := 0; attempt < 3; attempt++ {
 			txID := hedera.TransactionID{
 				AccountID:  *chain.operatorID,
-				ValidStart: chain.getUniqueValidStart(time.Now().Add(-10 * time.Second)),
+				ValidStart: chain.consenter.getUniqueValidStart(time.Now().Add(-10 * time.Second)),
 			}
 			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunk), chain.topicID, &txID)
 			if err != nil {
@@ -1077,17 +1074,6 @@ func (chain *chainImpl) HealthCheck(ctx context.Context) error {
 		return fmt.Errorf("cannot connect to: %s", strings.Join(failed, ", "))
 	}
 	return nil
-}
-
-func (chain *chainImpl) getUniqueValidStart(wanted time.Time) time.Time {
-	chain.validStartMutex.Lock()
-	defer chain.validStartMutex.Unlock()
-	if wanted.After(chain.nextValidStart) {
-		chain.nextValidStart = wanted.Add(time.Microsecond * 10)
-	}
-	validStart := chain.nextValidStart
-	chain.nextValidStart = chain.nextValidStart.Add(time.Microsecond * 10)
-	return validStart
 }
 
 func startThread(chain *chainImpl) {

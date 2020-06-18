@@ -6,6 +6,9 @@ package hcs
 
 import (
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/hashgraph/hedera-sdk-go"
 	"github.com/hyperledger/fabric-lib-go/healthz"
@@ -47,6 +50,8 @@ func New(config localconfig.Hcs, publicIdentity msp.Identity, metricsProvider me
 // consensus.Consenter interface --as the HandleChain contract requires-- and
 // the commonConsenter one.
 type consenterImpl struct {
+	validStartMutex    sync.Mutex
+	nextValidStart     time.Time
 	sharedHcsConfigVal *localconfig.Hcs
 	identityVal        []byte
 	metrics            *Metrics
@@ -97,9 +102,21 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 // this consenter. They are set using local configuration settings. This
 // interface is satisfied by consenterImpl.
 type commonConsenter interface {
+	getUniqueValidStart(time.Time) time.Time
 	sharedHcsConfig() *localconfig.Hcs
 	identity() []byte
 	Metrics() *Metrics
+}
+
+func (consenter *consenterImpl) getUniqueValidStart(wanted time.Time) time.Time {
+	consenter.validStartMutex.Lock()
+	defer consenter.validStartMutex.Unlock()
+	if wanted.After(consenter.nextValidStart) {
+		consenter.nextValidStart = wanted
+	}
+	validStart := consenter.nextValidStart
+	consenter.nextValidStart = consenter.nextValidStart.Add(time.Nanosecond)
+	return validStart
 }
 
 func (consenter *consenterImpl) sharedHcsConfig() *localconfig.Hcs {
