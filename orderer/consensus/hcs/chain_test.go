@@ -298,7 +298,7 @@ func TestChain(t *testing.T) {
 			return origAppMsgProcessor.IsPending()
 		})
 		expireByAppIDSyncChan := make(chan struct{})
-		fakeAppMsgProcessor.ExpireByAppIDCalls(func(appID []byte) (int, error) {
+		fakeAppMsgProcessor.ExpireByAppIDCalls(func(appID []byte) (int, int, error) {
 			defer func() {
 				expireByAppIDSyncChan <- struct{}{}
 			}()

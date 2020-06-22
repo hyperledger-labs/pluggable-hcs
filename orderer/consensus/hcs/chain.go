@@ -911,9 +911,10 @@ func (chain *chainImpl) processTimeToCutMessage(msg *hb.HcsMessageTimeToCut, tim
 
 func (chain *chainImpl) processOrdererStartedMessage(msg *hb.HcsMessageOrdererStarted) {
 	logger.Infof("[channel: %s] orderer %s just started", chain.ChannelID(), hex.EncodeToString(msg.OrdererIdentity))
-	if count, err := chain.appMsgProcessor.ExpireByAppID(msg.OrdererIdentity); err == nil {
-		logger.Infof("[channel: %s] %d pending messages from orderer %s dropped", chain.ChannelID(), count, hex.EncodeToString(msg.OrdererIdentity))
-		chain.consenter.Metrics().NumberMessagesDropped.With("channel", chain.ChannelID()).Add(float64(count))
+	if expiredMessages, expiredChunks, err := chain.appMsgProcessor.ExpireByAppID(msg.OrdererIdentity); err == nil {
+		logger.Infof("[channel: %s] %d pending messages (%d pending chunks) from orderer %s dropped", chain.ChannelID(), expiredMessages, expiredChunks, hex.EncodeToString(msg.OrdererIdentity))
+		chain.consenter.Metrics().NumberMessagesDropped.With("channel", chain.ChannelID()).Add(float64(expiredMessages))
+		chain.consenter.Metrics().NumberChunksDropped.With("channel", chain.ChannelID()).Add(float64(expiredChunks))
 	} else {
 		logger.Errorf("[channel: %s] ExpireByAppID returns error = %v", chain.ChannelID(), err)
 	}

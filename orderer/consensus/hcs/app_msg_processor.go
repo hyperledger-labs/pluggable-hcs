@@ -34,7 +34,7 @@ type appMsgProcessor interface {
 	Split(message []byte, validStart time.Time) ([]*hb.ApplicationMessageChunk, []byte, error)
 	Reassemble(chunk *hb.ApplicationMessageChunk, timestamp time.Time) ([]byte, []byte, int, int, error)
 	IsPending() bool
-	ExpireByAppID(appID []byte) (int, error)
+	ExpireByAppID(appID []byte) (int, int, error)
 }
 
 func newAppMsgProcessor(accountID hedera.AccountID, appID []byte, chunkSize int, reassembleTimeout time.Duration, signer signer, blockCipher blockCipher) (appMsgProcessor, error) {
@@ -276,22 +276,23 @@ func (processor *appMsgProcessorImpl) expireByTimestamp(now time.Time) (expiredM
 	return
 }
 
-func (processor *appMsgProcessorImpl) ExpireByAppID(appID []byte) (int, error) {
+func (processor *appMsgProcessorImpl) ExpireByAppID(appID []byte) (expiredMessages int, expiredChunks int, err error) {
 	if appID == nil || len(appID) == 0 {
-		return 0, fmt.Errorf("invalid appID - %v", appID)
+		err = fmt.Errorf("invalid appID - %v", appID)
+		return
 	}
 	key := hex.EncodeToString(appID)
-	count := 0
 	if appHolders := processor.holdersByAppID[key]; appHolders != nil {
 		delete(processor.holdersByAppID, key)
-		count = len(appHolders)
 		for holderKey := range appHolders {
 			if holder := processor.holders[holderKey]; holder != nil {
+				expiredMessages++
+				expiredChunks += int(holder.received)
 				processor.removeHolder(holder, false)
 			}
 		}
 	}
-	return count, nil
+	return
 }
 
 func (processor *appMsgProcessorImpl) removeHolder(holder *chunkHolder, removeFomAppHolders bool) {

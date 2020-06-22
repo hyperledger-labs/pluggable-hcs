@@ -9,18 +9,20 @@ import (
 )
 
 type AppMsgProcessor struct {
-	ExpireByAppIDStub        func([]byte) (int, error)
+	ExpireByAppIDStub        func([]byte) (int, int, error)
 	expireByAppIDMutex       sync.RWMutex
 	expireByAppIDArgsForCall []struct {
 		arg1 []byte
 	}
 	expireByAppIDReturns struct {
 		result1 int
-		result2 error
+		result2 int
+		result3 error
 	}
 	expireByAppIDReturnsOnCall map[int]struct {
 		result1 int
-		result2 error
+		result2 int
+		result3 error
 	}
 	IsPendingStub        func() bool
 	isPendingMutex       sync.RWMutex
@@ -72,7 +74,7 @@ type AppMsgProcessor struct {
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *AppMsgProcessor) ExpireByAppID(arg1 []byte) (int, error) {
+func (fake *AppMsgProcessor) ExpireByAppID(arg1 []byte) (int, int, error) {
 	var arg1Copy []byte
 	if arg1 != nil {
 		arg1Copy = make([]byte, len(arg1))
@@ -89,10 +91,10 @@ func (fake *AppMsgProcessor) ExpireByAppID(arg1 []byte) (int, error) {
 		return fake.ExpireByAppIDStub(arg1)
 	}
 	if specificReturn {
-		return ret.result1, ret.result2
+		return ret.result1, ret.result2, ret.result3
 	}
 	fakeReturns := fake.expireByAppIDReturns
-	return fakeReturns.result1, fakeReturns.result2
+	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3
 }
 
 func (fake *AppMsgProcessor) ExpireByAppIDCallCount() int {
@@ -101,7 +103,7 @@ func (fake *AppMsgProcessor) ExpireByAppIDCallCount() int {
 	return len(fake.expireByAppIDArgsForCall)
 }
 
-func (fake *AppMsgProcessor) ExpireByAppIDCalls(stub func([]byte) (int, error)) {
+func (fake *AppMsgProcessor) ExpireByAppIDCalls(stub func([]byte) (int, int, error)) {
 	fake.expireByAppIDMutex.Lock()
 	defer fake.expireByAppIDMutex.Unlock()
 	fake.ExpireByAppIDStub = stub
@@ -114,30 +116,33 @@ func (fake *AppMsgProcessor) ExpireByAppIDArgsForCall(i int) []byte {
 	return argsForCall.arg1
 }
 
-func (fake *AppMsgProcessor) ExpireByAppIDReturns(result1 int, result2 error) {
+func (fake *AppMsgProcessor) ExpireByAppIDReturns(result1 int, result2 int, result3 error) {
 	fake.expireByAppIDMutex.Lock()
 	defer fake.expireByAppIDMutex.Unlock()
 	fake.ExpireByAppIDStub = nil
 	fake.expireByAppIDReturns = struct {
 		result1 int
-		result2 error
-	}{result1, result2}
+		result2 int
+		result3 error
+	}{result1, result2, result3}
 }
 
-func (fake *AppMsgProcessor) ExpireByAppIDReturnsOnCall(i int, result1 int, result2 error) {
+func (fake *AppMsgProcessor) ExpireByAppIDReturnsOnCall(i int, result1 int, result2 int, result3 error) {
 	fake.expireByAppIDMutex.Lock()
 	defer fake.expireByAppIDMutex.Unlock()
 	fake.ExpireByAppIDStub = nil
 	if fake.expireByAppIDReturnsOnCall == nil {
 		fake.expireByAppIDReturnsOnCall = make(map[int]struct {
 			result1 int
-			result2 error
+			result2 int
+			result3 error
 		})
 	}
 	fake.expireByAppIDReturnsOnCall[i] = struct {
 		result1 int
-		result2 error
-	}{result1, result2}
+		result2 int
+		result3 error
+	}{result1, result2, result3}
 }
 
 func (fake *AppMsgProcessor) IsPending() bool {

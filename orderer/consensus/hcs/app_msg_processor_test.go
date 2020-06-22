@@ -601,20 +601,22 @@ func TestAppMsgProcessor(t *testing.T) {
 		fakesSigner.VerifyReturns(true)
 
 		var tests = []struct {
-			name             string
-			createChunksFunc func(t *testing.T, amp appMsgProcessor) []*hb.ApplicationMessageChunk
-			appIDArg         []byte
-			wantErr          bool
-			expectedCount    int
+			name                 string
+			createChunksFunc     func(t *testing.T, amp appMsgProcessor) []*hb.ApplicationMessageChunk
+			appIDArg             []byte
+			wantErr              bool
+			expectedMessageCount int
+			expectedChunkCount   int
 		}{
 			{
 				name: "ProperExpireNothing",
 				createChunksFunc: func(t *testing.T, amp appMsgProcessor) []*hb.ApplicationMessageChunk {
 					return []*hb.ApplicationMessageChunk{}
 				},
-				appIDArg:      fakeAppID,
-				wantErr:       false,
-				expectedCount: 0,
+				appIDArg:             fakeAppID,
+				wantErr:              false,
+				expectedMessageCount: 0,
+				expectedChunkCount:   0,
 			},
 			{
 				name: "ProperExpireNothingAfterFullReassemble",
@@ -624,9 +626,10 @@ func TestAppMsgProcessor(t *testing.T) {
 					assert.NoError(t, err, "Expected Split returns no error")
 					return chunks
 				},
-				appIDArg:      fakeAppID,
-				wantErr:       false,
-				expectedCount: 0,
+				appIDArg:             fakeAppID,
+				wantErr:              false,
+				expectedMessageCount: 0,
+				expectedChunkCount:   0,
 			},
 			{
 				name: "ProperExpireWithPartialReassemble",
@@ -636,9 +639,10 @@ func TestAppMsgProcessor(t *testing.T) {
 					assert.NoError(t, err, "Expected Split returns no error")
 					return chunks[0:1]
 				},
-				appIDArg:      fakeAppID,
-				wantErr:       false,
-				expectedCount: 1,
+				appIDArg:             fakeAppID,
+				wantErr:              false,
+				expectedMessageCount: 1,
+				expectedChunkCount:   1,
 			},
 			{
 				name: "WithNilAppIDArg",
@@ -668,11 +672,12 @@ func TestAppMsgProcessor(t *testing.T) {
 					_, _, _, _, err := amp.Reassemble(chunk, time.Now())
 					assert.NoError(t, err, "Expected Reassemble returns no error")
 				}
-				count, err := amp.ExpireByAppID(tt.appIDArg)
+				expiredMessages, expiredChunks, err := amp.ExpireByAppID(tt.appIDArg)
 				if tt.wantErr {
 					assert.Error(t, err, "Expected ExpireByAppID return error")
 				} else {
-					assert.Equal(t, tt.expectedCount, count, "Expected ExpireByAppID returns correct count")
+					assert.Equal(t, tt.expectedMessageCount, expiredMessages, "Expected ExpireByAppID returns correct message count")
+					assert.Equal(t, tt.expectedChunkCount, expiredChunks, "Expected ExpireByAppID returns correct chunk count")
 					assert.NoError(t, err, "Expected ExpireByAppID return error")
 				}
 			})
@@ -736,7 +741,7 @@ func TestAppMsgProcessor(t *testing.T) {
 					_, _, _, _, err := amp.Reassemble(chunk, time.Now())
 					assert.NoError(t, err, "Expected Reassemble returns no error")
 				}
-				count, err := amp.ExpireByAppID(tt.appIDArg)
+				count, _, err := amp.ExpireByAppID(tt.appIDArg)
 				assert.Equal(t, tt.expectedCount, count, "Expected ExpireByAppID returns correct count")
 				assert.NoError(t, err, "Expected ExpireByAppID return error")
 			})
