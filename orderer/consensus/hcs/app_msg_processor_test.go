@@ -29,6 +29,11 @@ type mockBlockCipher interface {
 	blockCipher
 }
 
+const (
+	normalReassembleTimeout = 30 * time.Second
+	shortReassembleTimeout  = 5 * time.Second
+)
+
 var (
 	testAccountID = hedera.AccountID{
 		Shard:   0,
@@ -123,7 +128,7 @@ func TestNewEmptyAppMsgProcessor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			amp, err := newAppMsgProcessor(testAccountID, tt.args.appID, tt.args.chunkSize, tt.args.signer, tt.args.blockCipher)
+			amp, err := newAppMsgProcessor(testAccountID, tt.args.appID, tt.args.chunkSize, normalReassembleTimeout, tt.args.signer, tt.args.blockCipher)
 			if !tt.wantErr {
 				assert.NoError(t, err, "Expected newAppMsgProcessor returns no error")
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor returns non-nil value")
@@ -216,7 +221,7 @@ func TestAppMsgProcessor(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, tt.signer, tt.blockCipher)
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, tt.signer, tt.blockCipher)
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no err")
 
@@ -467,7 +472,7 @@ func TestAppMsgProcessor(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, tt.signer, tt.blockCipher)
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, tt.signer, tt.blockCipher)
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
@@ -488,7 +493,7 @@ func TestAppMsgProcessor(t *testing.T) {
 				}
 				var reassembled []byte
 				for index, chunk := range chunks {
-					reassembled, _, err = amp.Reassemble(chunk)
+					reassembled, _, _, _, err = amp.Reassemble(chunk, time.Now())
 					if index != len(chunks)-1 {
 						assert.Nil(t, reassembled, "Expected Reassemble returns nil value for all but last chunk")
 					}
@@ -525,14 +530,14 @@ func TestAppMsgProcessor(t *testing.T) {
 		mockSigner.VerifyReturns(true)
 
 		t.Run("ProperEmpty", func(t *testing.T) {
-			amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, mockSigner, nil)
+			amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, mockSigner, nil)
 			assert.NotNil(t, amp, "Expected newAppMsgProcessor returns non-nil value")
 			assert.NoError(t, err, "Expected newAppMsgProcessor returns no error")
 			assert.False(t, amp.IsPending(), "Expected new amp IsPending = false")
 		})
 
 		t.Run("ProperWithData", func(t *testing.T) {
-			amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, mockSigner, nil)
+			amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, mockSigner, nil)
 			assert.NotNil(t, amp, "Expected newAppMsgProcessor returns non-nil value")
 			assert.NoError(t, err, "Expected newAppMsgProcessor returns no error")
 
@@ -542,24 +547,24 @@ func TestAppMsgProcessor(t *testing.T) {
 			assert.NoError(t, err, "Expected Split returns no error")
 			assert.False(t, amp.IsPending(), "Expected new amp IsPending = false")
 
-			_, _, err = amp.Reassemble(chunks[0])
+			_, _, _, _, err = amp.Reassemble(chunks[0], time.Now())
 			assert.NoError(t, err, "Expected Reassemble returns no error")
 			assert.True(t, amp.IsPending(), "Expected IsPending = true")
 
 			for i := 1; i < len(chunks); i++ {
-				_, _, err = amp.Reassemble(chunks[i])
+				_, _, _, _, err = amp.Reassemble(chunks[i], time.Now())
 				assert.NoError(t, err, "Expected Reassemble returns no error")
 			}
 			assert.False(t, amp.IsPending(), "Expected IsPending = false")
 		})
 	})
 
-	t.Run("TestExpireByAge", func(t *testing.T) {
+	t.Run("TestExpireByTimestamp", func(t *testing.T) {
 		fakesSigner := &mockhcs.Signer{}
 		fakesSigner.SignReturns([]byte("fake public key"), []byte("fake signature"), nil)
 		fakesSigner.VerifyReturns(true)
 
-		amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, fakesSigner, nil)
+		amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, shortReassembleTimeout, fakesSigner, nil)
 		assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
@@ -571,13 +576,23 @@ func TestAppMsgProcessor(t *testing.T) {
 		assert.True(t, chunks2 != nil && len(chunks2) > 2, "Expected Split returns more than one chunks")
 		assert.NoError(t, err, "Expected Split returns no error")
 
-		assert.Equal(t, 0, amp.ExpireByAge(0), "Expected ExpireByAge(maxAge=0) returns 0")
+		baseTimestamp := time.Now()
 
-		amp.Reassemble(chunks1[0])
-		amp.Reassemble(chunks2[0])
-		amp.Reassemble(chunks1[1])
-		assert.Equal(t, 0, amp.ExpireByAge(2), "Expected ExpireByAge (maxAge=2) returns 0")
-		assert.Equal(t, 1, amp.ExpireByAge(1), "Expected ExpireByAge (maxAge=1) returns 1")
+		_, _, expiredMessages, expiredChunks, err := amp.Reassemble(chunks1[0], baseTimestamp)
+		assert.NoError(t, err, "Expected Reassemble returns no error")
+		assert.Equal(t, 0, expiredMessages, "Expected no messages expired")
+		assert.Equal(t, 0, expiredChunks, "Expected no chunks expired")
+
+		nextTimestamp := baseTimestamp.Add(shortReassembleTimeout / 2)
+		_, _, expiredMessages, expiredChunks, err = amp.Reassemble(chunks2[0], nextTimestamp)
+		assert.NoError(t, err, "Expected Reassemble returns no error")
+		assert.Equal(t, 0, expiredMessages, "Expected no messages expired")
+		assert.Equal(t, 0, expiredChunks, "Expected no chunks expired")
+
+		nextTimestamp = nextTimestamp.Add(shortReassembleTimeout)
+		_, _, expiredMessages, expiredChunks, err = amp.Reassemble(chunks1[1], nextTimestamp)
+		assert.Equal(t, 1, expiredMessages, "Expected a message has expired")
+		assert.Equal(t, 1, expiredChunks, "Expected a chunk has expired")
 	})
 
 	t.Run("TestExpireByAppID", func(t *testing.T) {
@@ -644,13 +659,13 @@ func TestAppMsgProcessor(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, fakesSigner, nil)
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, fakesSigner, nil)
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
 				chunks := tt.createChunksFunc(t, amp)
 				for _, chunk := range chunks {
-					_, _, err := amp.Reassemble(chunk)
+					_, _, _, _, err := amp.Reassemble(chunk, time.Now())
 					assert.NoError(t, err, "Expected Reassemble returns no error")
 				}
 				count, err := amp.ExpireByAppID(tt.appIDArg)
@@ -708,17 +723,17 @@ func TestAppMsgProcessor(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, fakesSigner, nil)
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, fakesSigner, nil)
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
-				otherAmp, err := newAppMsgProcessor(testAccountID, fakeOtherAppID, maxConsensusMessageSize, fakesSigner, nil)
+				otherAmp, err := newAppMsgProcessor(testAccountID, fakeOtherAppID, maxConsensusMessageSize, normalReassembleTimeout, fakesSigner, nil)
 				assert.NotNil(t, otherAmp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
 				chunks := tt.createChunksFunc(t, otherAmp)
 				for _, chunk := range chunks {
-					_, _, err := amp.Reassemble(chunk)
+					_, _, _, _, err := amp.Reassemble(chunk, time.Now())
 					assert.NoError(t, err, "Expected Reassemble returns no error")
 				}
 				count, err := amp.ExpireByAppID(tt.appIDArg)
@@ -806,11 +821,6 @@ func TestMakeHolderKey(t *testing.T) {
 			assert.NotEqual(t, key1, key2, "key1 and key2 built from id1 and id2 should be different")
 		})
 	}
-}
-func TestCalcAge(t *testing.T) {
-	assert.Equal(t, uint64(0), calcAge(100, 100), "Expected age to be 0 when bornTick and currentTick equal")
-	assert.Equal(t, uint64(10), calcAge(100, 110), "Expected age to be 10")
-	assert.Equal(t, uint64(6), calcAge(^uint64(1)-3, 2), "Expected age to be 6")
 }
 
 func TestIsNil(t *testing.T) {

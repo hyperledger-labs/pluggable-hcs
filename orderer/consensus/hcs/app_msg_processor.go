@@ -10,13 +10,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"reflect"
+	"time"
+
 	"github.com/golang/protobuf/proto"
-	any "github.com/golang/protobuf/ptypes/any"
+	"github.com/golang/protobuf/ptypes/any"
 	"github.com/hashgraph/hedera-sdk-go"
 	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 	"github.com/hyperledger/fabric/protoutil"
-	"reflect"
-	"time"
 )
 
 type signer interface {
@@ -31,13 +32,12 @@ type blockCipher interface {
 
 type appMsgProcessor interface {
 	Split(message []byte, validStart time.Time) ([]*hb.ApplicationMessageChunk, []byte, error)
-	Reassemble(chunk *hb.ApplicationMessageChunk) ([]byte, []byte, error)
+	Reassemble(chunk *hb.ApplicationMessageChunk, timestamp time.Time) ([]byte, []byte, int, int, error)
 	IsPending() bool
-	ExpireByAge(maxAge uint64) int
 	ExpireByAppID(appID []byte) (int, error)
 }
 
-func newAppMsgProcessor(accountID hedera.AccountID, appID []byte, chunkSize int, signer signer, blockCipher blockCipher) (appMsgProcessor, error) {
+func newAppMsgProcessor(accountID hedera.AccountID, appID []byte, chunkSize int, reassembleTimeout time.Duration, signer signer, blockCipher blockCipher) (appMsgProcessor, error) {
 	if chunkSize <= 0 {
 		return nil, fmt.Errorf("invalid chunkSize - %d", chunkSize)
 	}
@@ -51,30 +51,31 @@ func newAppMsgProcessor(accountID hedera.AccountID, appID []byte, chunkSize int,
 		return nil, fmt.Errorf("must provide signer")
 	}
 	return &appMsgProcessorImpl{
-		accountID:       accountID,
-		appID:           appID,
-		chunkSize:       chunkSize,
-		signer:          signer,
-		blockCipher:     blockCipher,
-		noBlockCipher:   isNil(blockCipher),
-		holders:         map[string]*chunkHolder{},
-		holdersByAppID:  map[string]map[string]struct{}{},
-		holderListByAge: list.New(),
+		accountID:         accountID,
+		appID:             appID,
+		chunkSize:         chunkSize,
+		reassembleTimeout: reassembleTimeout,
+		signer:            signer,
+		blockCipher:       blockCipher,
+		noBlockCipher:     isNil(blockCipher),
+		holders:           map[string]*chunkHolder{},
+		holdersByAppID:    map[string]map[string]struct{}{},
+		holderListByAge:   list.New(),
 	}, nil
 }
 
 type appMsgProcessorImpl struct {
-	accountID     hedera.AccountID
-	appID         []byte
-	chunkSize     int
-	signer        signer
-	blockCipher   blockCipher
-	noBlockCipher bool
+	accountID         hedera.AccountID
+	appID             []byte
+	chunkSize         int
+	reassembleTimeout time.Duration
+	signer            signer
+	blockCipher       blockCipher
+	noBlockCipher     bool
 
 	holders         map[string]*chunkHolder
 	holdersByAppID  map[string]map[string]struct{} // holder keys organized by appID
 	holderListByAge *list.List                     // from oldest to youngest
-	tick            uint64
 }
 
 func (processor *appMsgProcessorImpl) Split(message []byte, validStart time.Time) ([]*hb.ApplicationMessageChunk, []byte, error) {
@@ -138,23 +139,32 @@ func (processor *appMsgProcessorImpl) Split(message []byte, validStart time.Time
 	return chunks, appMsg.UnencryptedBusinessProcessMessageHash, nil
 }
 
-func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChunk) ([]byte, []byte, error) {
+func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChunk, timestamp time.Time) (
+	message []byte,
+	hash []byte,
+	expiredMessages int,
+	expiredChunks int,
+	err error,
+) {
 	isValidChunk := false
 	var holder *chunkHolder
 	defer func() {
 		if isValidChunk {
-			processor.tick++
 			if holder != nil {
-				holder.tick = processor.tick
+				holder.timestamp = timestamp
 			}
+
+			expiredMessages, expiredChunks = processor.expireByTimestamp(timestamp)
 		}
 	}()
 
 	if chunk.ChunksCount < 1 {
-		return nil, nil, fmt.Errorf("invalid ChunksCount - %d, corrupted data", chunk.ChunksCount)
+		err = fmt.Errorf("invalid ChunksCount - %d, corrupted data", chunk.ChunksCount)
+		return
 	}
 	if chunk.ChunkIndex < 0 || chunk.ChunkIndex >= chunk.ChunksCount {
-		return nil, nil, fmt.Errorf("invalid ChunkIndex - %d, ChunksCount - %d, coruupted data", chunk.ChunkIndex, chunk.ChunksCount)
+		err = fmt.Errorf("invalid ChunkIndex - %d, ChunksCount - %d, coruppted data", chunk.ChunkIndex, chunk.ChunksCount)
+		return
 	}
 
 	var protoMsg []byte
@@ -179,23 +189,25 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 
 		index := chunk.ChunkIndex
 		if holder.chunks[index] != nil {
-			return nil, nil, fmt.Errorf("received duplicate chunk at index %d", index)
+			err = fmt.Errorf("received duplicate chunk at index %d", index)
+			return
 		}
 		if chunk.ChunksCount != int32(len(holder.chunks)) {
-			return nil, nil, fmt.Errorf("incorrect chunk ChunksCount = %d, corrupted data", chunk.ChunksCount)
+			err = fmt.Errorf("incorrect chunk ChunksCount = %d, corrupted data", chunk.ChunksCount)
+			return
 		}
 		isValidChunk = true
 		holder.chunks[index] = chunk
-		holder.count++
+		holder.received++
 		holder.size += uint32(len(chunk.MessageChunk))
-		if holder.count != int32(len(holder.chunks)) {
+		if holder.received != int32(len(holder.chunks)) {
 			// the holder becomes the youngest
 			if holder.el != nil {
 				processor.holderListByAge.MoveToBack(holder.el)
 			} else {
 				holder.el = processor.holderListByAge.PushBack(holder)
 			}
-			return nil, nil, nil
+			return
 		} else {
 			reassembled := make([]byte, 0, holder.size)
 			for _, f := range holder.chunks {
@@ -207,53 +219,60 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 	}
 
 	appMsg := &hb.ApplicationMessage{}
-	if err := proto.Unmarshal(protoMsg, appMsg); err != nil {
-		return nil, nil, err
+	if err = proto.Unmarshal(protoMsg, appMsg); err != nil {
+		return
 	}
 	plaintext := appMsg.BusinessProcessMessage
 	if appMsg.EncryptionRandom != nil {
 		if processor.noBlockCipher {
-			return nil, nil, fmt.Errorf("application message is encrypted but appMsgProcessor is configured without a blockciper")
+			err = fmt.Errorf("application message is encrypted but appMsgProcessor is configured without a blockciper")
+			return
 		}
-		decrypted, err := processor.blockCipher.Decrypt(appMsg.EncryptionRandom, appMsg.BusinessProcessMessage)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed  to decrypt business process message - %v", err)
+		if plaintext, err = processor.blockCipher.Decrypt(appMsg.EncryptionRandom, appMsg.BusinessProcessMessage); err != nil {
+			err = fmt.Errorf("failed  to decrypt business process message - %v", err)
+			return
 		}
-		plaintext = decrypted
 	}
 	msgHash := sha256.Sum256(plaintext)
 	if !bytes.Equal(msgHash[:], appMsg.UnencryptedBusinessProcessMessageHash) {
-		return nil, nil, fmt.Errorf("hash on unecnrypted business process message does not match, corrupted or malicious data")
+		err = fmt.Errorf("hash on unecnrypted business process message does not match, corrupted or malicious data")
+		return
 	}
 	appSig := &hb.ApplicationSignature{}
-	if err := proto.Unmarshal(appMsg.BusinessProcessSignatureOnHash, appSig); err != nil {
-		return nil, nil, fmt.Errorf("failed to unmarshal BusinessProcessSignatureOnHash, corrupted data = %v", err)
+	if err = proto.Unmarshal(appMsg.BusinessProcessSignatureOnHash, appSig); err != nil {
+		err = fmt.Errorf("failed to unmarshal BusinessProcessSignatureOnHash, corrupted data = %v", err)
+		return
 	}
 	if !processor.signer.Verify(appMsg.UnencryptedBusinessProcessMessageHash, appSig.PublicKey, appSig.Signature) {
-		return nil, nil, fmt.Errorf("failed to verify unencrypted business process message signature")
+		err = fmt.Errorf("failed to verify unencrypted business process message signature")
+		return
 	}
-	return plaintext, appMsg.UnencryptedBusinessProcessMessageHash, nil
+	message = plaintext
+	hash = appMsg.UnencryptedBusinessProcessMessageHash
+	return
 }
 
 func (processor *appMsgProcessorImpl) IsPending() bool {
 	return len(processor.holders) != 0
 }
 
-func (processor *appMsgProcessorImpl) ExpireByAge(maxAge uint64) (count int) {
+func (processor *appMsgProcessorImpl) expireByTimestamp(now time.Time) (expiredMessages int, expiredChunks int) {
 	for {
 		oldest := processor.holderListByAge.Front()
 		if oldest == nil {
 			break
 		}
 		holder := oldest.Value.(*chunkHolder)
-		age := calcAge(holder.tick, processor.tick)
-		if age >= maxAge {
+		diff := now.Sub(holder.timestamp)
+		if diff >= processor.reassembleTimeout {
+			expiredMessages++
+			expiredChunks += int(holder.received)
 			processor.removeHolder(holder, true)
-			count++
 		} else {
 			break
 		}
 	}
+
 	return
 }
 
@@ -288,13 +307,13 @@ func (processor *appMsgProcessorImpl) removeHolder(holder *chunkHolder, removeFo
 }
 
 type chunkHolder struct {
-	chunks []*hb.ApplicationMessageChunk
-	appID  []byte
-	key    string
-	count  int32
-	size   uint32
-	tick   uint64
-	el     *list.Element
+	chunks    []*hb.ApplicationMessageChunk
+	appID     []byte
+	key       string
+	received  int32
+	size      uint32
+	timestamp time.Time
+	el        *list.Element
 }
 
 func newChunkHolder(total int32, key string, appID []byte) *chunkHolder {
@@ -309,13 +328,6 @@ func newChunkHolder(total int32, key string, appID []byte) *chunkHolder {
 
 func makeHolderKey(id hb.ApplicationMessageID) string {
 	return fmt.Sprintf("%s:%ds%d", hex.EncodeToString(id.Metadata.Value), id.ValidStart.Seconds, id.ValidStart.Nanos)
-}
-
-func calcAge(bornTick uint64, currentTick uint64) uint64 {
-	if currentTick < bornTick {
-		return ^uint64(1) - bornTick + currentTick + 1
-	}
-	return currentTick - bornTick
 }
 
 func isNil(i interface{}) bool {

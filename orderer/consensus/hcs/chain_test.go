@@ -85,8 +85,9 @@ func newMockOrderer(batchTimeout time.Duration, topicID string, publicKeys []*hb
 	mockOrderer.CapabilitiesReturns(mockCapabilities)
 	mockOrderer.BatchTimeoutReturns(batchTimeout)
 	mockOrderer.ConsensusMetadataReturns(protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{
-		TopicId:    topicID,
-		PublicKeys: publicKeys,
+		TopicId:           topicID,
+		PublicKeys:        publicKeys,
+		ReassembleTimeout: "30s",
 	}))
 	return mockOrderer
 }
@@ -290,14 +291,11 @@ func TestChain(t *testing.T) {
 		fakeAppMsgProcessor.SplitCalls(func(message []byte, validStart time.Time) ([]*hb.ApplicationMessageChunk, []byte, error) {
 			return origAppMsgProcessor.Split(message, validStart)
 		})
-		fakeAppMsgProcessor.ReassembleCalls(func(chunk *hb.ApplicationMessageChunk) ([]byte, []byte, error) {
-			return origAppMsgProcessor.Reassemble(chunk)
+		fakeAppMsgProcessor.ReassembleCalls(func(chunk *hb.ApplicationMessageChunk, timestamp time.Time) ([]byte, []byte, int, int, error) {
+			return origAppMsgProcessor.Reassemble(chunk, timestamp)
 		})
 		fakeAppMsgProcessor.IsPendingCalls(func() bool {
 			return origAppMsgProcessor.IsPending()
-		})
-		fakeAppMsgProcessor.ExpireByAgeCalls(func(maxAge uint64) int {
-			return origAppMsgProcessor.ExpireByAge(maxAge)
 		})
 		expireByAppIDSyncChan := make(chan struct{})
 		fakeAppMsgProcessor.ExpireByAppIDCalls(func(appID []byte) (int, error) {
@@ -564,7 +562,7 @@ func TestChain(t *testing.T) {
 		t.Run("ProperReprocess", func(t *testing.T) {
 			mockConsenter, mockSupport := newMocks(t)
 			hcf := newMockHcsClientFactoryWithNoopConsensusClient()
-			lastChunkFreeBlockConsensusTimestamp := newestConsensusTimestamp.Add(-10 * time.Minute)
+			lastChunkFreeBlockConsensusTimestamp := newestConsensusTimestamp.Add(-(normalReassembleTimeout / 2))
 			chain, _ := newChain(
 				mockConsenter,
 				mockSupport,
@@ -1765,7 +1763,7 @@ func TestProcessTimeToCutRequests(t *testing.T) {
 
 			appID: []byte("bare-minimum appID"),
 		}
-		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, chain, nil)
+		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, normalReassembleTimeout, chain, nil)
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
 		return chain
@@ -1837,7 +1835,7 @@ func TestProcessTimeToCutRequests(t *testing.T) {
 		data, _, _ := topicProducer.SubmitConsensusMessageArgsForCall(0)
 		chunk := &hb.ApplicationMessageChunk{}
 		assert.NoError(t, proto.Unmarshal(data, chunk), "expected data successfully unmarshalled to ApplicationMessageChunk")
-		rawHcsMsg, _, err := chain.appMsgProcessor.Reassemble(chunk)
+		rawHcsMsg, _, _, _, err := chain.appMsgProcessor.Reassemble(chunk, time.Now())
 		assert.NoError(t, err, "expected reassemble successfully")
 		hcsMsg := &hb.HcsMessage{}
 		assert.NoError(t, proto.Unmarshal(rawHcsMsg, hcsMsg), "expected rawHcsMsg unmarshalled successfully")
@@ -1896,7 +1894,7 @@ func TestProcessTimeToCutRequests(t *testing.T) {
 		data, _, _ := topicProducer.SubmitConsensusMessageArgsForCall(0)
 		chunk := &hb.ApplicationMessageChunk{}
 		assert.NoError(t, proto.Unmarshal(data, chunk), "expected data successfully unmarshalled to ApplicationMessageChunk")
-		rawHcsMsg, _, err := chain.appMsgProcessor.Reassemble(chunk)
+		rawHcsMsg, _, _, _, err := chain.appMsgProcessor.Reassemble(chunk, time.Now())
 		assert.NoError(t, err, "expected reassemble successfully")
 		hcsMsg := &hb.HcsMessage{}
 		assert.NoError(t, proto.Unmarshal(rawHcsMsg, hcsMsg), "expected rawHcsMsg unmarshalled successfully")
@@ -2037,11 +2035,9 @@ func TestProcessMessages(t *testing.T) {
 			doneProcessingMessages: make(chan struct{}),
 			timeToCutRequestChan:   make(chan timeToCutRequest),
 			messageHashes:          make(map[string]struct{}),
-
-			appID:       []byte("bare-minimum appID"),
-			maxChunkAge: calcMaxChunkAge(200, len(mockSupport.ChannelConfig().OrdererAddresses())),
+			appID:                  []byte("bare-minimum appID"),
 		}
-		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, chain, nil)
+		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, normalReassembleTimeout, chain, nil)
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
 		if lastConsensusTimestampPersisted != nil {
@@ -2673,11 +2669,9 @@ func TestResubmission(t *testing.T) {
 			timeToCutRequestChan:        make(chan timeToCutRequest),
 			messageHashes:               make(map[string]struct{}),
 			doneReprocessingMsgInFlight: doneReprocessingMsgInFlight,
-
-			appID:       []byte("bare-minimum appID"),
-			maxChunkAge: calcMaxChunkAge(200, len(mockSupport.ChannelConfig().OrdererAddresses())),
+			appID:                       []byte("bare-minimum appID"),
 		}
-		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, chain, nil)
+		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, normalReassembleTimeout, chain, nil)
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 		return chain
 	}
@@ -3386,14 +3380,16 @@ func TestParseConfig(t *testing.T) {
 				Key:  "302a300506032b6570032100708e6eef139eaeba32f91c1a36230bd2d9c10b43a7a48308bc9e056107ac312a",
 			},
 		},
+		ReassembleTimeout: "30s",
 	})
 
 	t.Run("WithValidConfig", func(t *testing.T) {
-		topicID, publicKeys, network, operatorID, privateKey, err := parseConfig(mockHcsConfigMetadata, &mockHcsConfig)
+		topicID, publicKeys, reassembleTimeout, network, operatorID, privateKey, err := parseConfig(mockHcsConfigMetadata, &mockHcsConfig)
 
 		assert.NoError(t, err, "Expected parseConfig returns no errors")
 		assert.Equal(t, goodHcsTopicIDStr, topicID.String(), "Expect correct topicID")
 		assert.Equal(t, 3, len(publicKeys), "Expected publicKeys have correct number of entries")
+		assert.Equal(t, 30*time.Second, reassembleTimeout, "Expected reassembleTimeout to be 30s")
 		assert.NotNil(t, network, "Expect non-nil chain.network")
 		assert.Equal(t, len(mockHcsConfig.Nodes), len(network), "Expect chain.network has correct number of entries")
 		assert.Equal(t, mockHcsConfig.Operator.Id, operatorID.String(), "Expect correct operator ID string")
@@ -3408,11 +3404,12 @@ func TestParseConfig(t *testing.T) {
 			Bytes: rawKey,
 		}
 		localHcsConfig.Operator.PrivateKey.Key = string(pem.EncodeToMemory(block))
-		topicID, publicKeys, network, operatorID, privateKey, err := parseConfig(mockHcsConfigMetadata, &localHcsConfig)
+		topicID, publicKeys, reassembleTimeout, network, operatorID, privateKey, err := parseConfig(mockHcsConfigMetadata, &localHcsConfig)
 
 		assert.NoError(t, err, "Expected parseConfig returns no errors")
 		assert.Equal(t, goodHcsTopicIDStr, topicID.String(), "Expect correct topicID")
 		assert.Equal(t, 3, len(publicKeys), "Expected publicKeys have correct number of entries")
+		assert.Equal(t, 30*time.Second, reassembleTimeout, "Expected reassembleTimeout to be 30s")
 		assert.NotNil(t, network, "Expect non-nil chain.network")
 		assert.Equal(t, len(mockHcsConfig.Nodes), len(network), "Expect chain.network has correct number of entries")
 		assert.Equal(t, mockHcsConfig.Operator.Id, operatorID.String(), "Expect correct operator ID string")
@@ -3422,9 +3419,8 @@ func TestParseConfig(t *testing.T) {
 	t.Run("WithEmptyNodes", func(t *testing.T) {
 		invalidMockHcsConfig := mockHcsConfig
 		invalidMockHcsConfig.Nodes = make(map[string]string)
-		_, _, _, _, _, err := parseConfig(mockHcsConfigMetadata, &invalidMockHcsConfig)
+		_, _, _, _, _, _, err := parseConfig(mockHcsConfigMetadata, &invalidMockHcsConfig)
 		assert.Error(t, err, "Expected parseConfig returns error when Nodes in HcsConfig is empty")
-
 	})
 
 	t.Run("WithInvalidAccountIDInNodes", func(t *testing.T) {
@@ -3433,7 +3429,7 @@ func TestParseConfig(t *testing.T) {
 			"127.0.0.1:50211": "0.0.3",
 			"127.0.0.2:50211": "invalid account id",
 		}
-		_, _, _, _, _, err := parseConfig(mockHcsConfigMetadata, &invalidMockHcsConfig)
+		_, _, _, _, _, _, err := parseConfig(mockHcsConfigMetadata, &invalidMockHcsConfig)
 		assert.Error(t, err, "Expected parseConfig returns err when account ID in Nodes in invalid")
 
 	})
@@ -3441,14 +3437,14 @@ func TestParseConfig(t *testing.T) {
 	t.Run("WithInvalidOperatorID", func(t *testing.T) {
 		invalidMockHcsConfig := mockHcsConfig
 		invalidMockHcsConfig.Operator.Id = "invalid operator id"
-		_, _, _, _, _, err := parseConfig(mockHcsConfigMetadata, &invalidMockHcsConfig)
+		_, _, _, _, _, _, err := parseConfig(mockHcsConfigMetadata, &invalidMockHcsConfig)
 		assert.Error(t, err, "Expected parseConfig returns error when operator ID is invalid")
 	})
 
 	t.Run("WithInvalidPrivateKey", func(t *testing.T) {
 		invalidMockHcsConfig := mockHcsConfig
 		invalidMockHcsConfig.Operator.PrivateKey.Key = "invalid key string"
-		_, _, _, _, _, err := parseConfig(mockHcsConfigMetadata, &invalidMockHcsConfig)
+		_, _, _, _, _, _, err := parseConfig(mockHcsConfigMetadata, &invalidMockHcsConfig)
 		assert.Error(t, err, "Expected parseConfig returns error when operator private key is invalid")
 	})
 
@@ -3465,17 +3461,19 @@ func TestParseConfig(t *testing.T) {
 					Key:  "302a300506032b6570032100708e6eef139eaeba32f91c1a36230bd2d9c10b43a7a48308bc9e056107ac312a",
 				},
 			},
+			ReassembleTimeout: "30s",
 		})
-		_, _, _, _, _, err := parseConfig(invalidHcsConfigMetadata, &mockHcsConfig)
+		_, _, _, _, _, _, err := parseConfig(invalidHcsConfigMetadata, &mockHcsConfig)
 		assert.Error(t, err, "Expected parseConfig returns error when hcs topic ID is invalid")
 	})
 
 	t.Run("WithInvalidPublicKey", func(t *testing.T) {
 		invalidHcsConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{
-			TopicId:    goodHcsTopicIDStr,
-			PublicKeys: []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: "invalid key"}},
+			TopicId:           goodHcsTopicIDStr,
+			PublicKeys:        []*hb.HcsConfigPublicKey{{Type: "ed25519", Key: "invalid key"}},
+			ReassembleTimeout: "30s",
 		})
-		_, _, _, _, _, err := parseConfig(invalidHcsConfigMetadata, &mockHcsConfig)
+		_, _, _, _, _, _, err := parseConfig(invalidHcsConfigMetadata, &mockHcsConfig)
 		assert.Error(t, err, "Expected parseConfig returns error when public key is invalid")
 	})
 
@@ -3488,13 +3486,52 @@ func TestParseConfig(t *testing.T) {
 					Key:  "302a300506032b6570032100708e6eef139eaeba32f91c1a36230bd2d9c10b43a7a48308bc9e056107ac312a",
 				},
 			},
+			ReassembleTimeout: "30s",
 		})
-		_, _, _, _, _, err := parseConfig(invalidHcsConfigMetadata, &mockHcsConfig)
+		_, _, _, _, _, _, err := parseConfig(invalidHcsConfigMetadata, &mockHcsConfig)
 		assert.Error(t, err, "Expected parseConfig returns error when public key is invalid")
 	})
 
+	t.Run("WithInvalidDurationFormat", func(t *testing.T) {
+		invalidHcsConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{
+			TopicId: goodHcsTopicIDStr,
+			PublicKeys: []*hb.HcsConfigPublicKey{
+				{
+					Type: "ed25519",
+					Key:  "302a300506032b657003210023452d9c2cc4e01deb670780f8e6d4e31badd1f5d2f5464971b490232a601c30",
+				},
+				{
+					Type: "ed25519",
+					Key:  "302a300506032b6570032100708e6eef139eaeba32f91c1a36230bd2d9c10b43a7a48308bc9e056107ac312a",
+				},
+			},
+			ReassembleTimeout: "30",
+		})
+		_, _, _, _, _, _, err := parseConfig(invalidHcsConfigMetadata, &mockHcsConfig)
+		assert.Error(t, err, "Expected parseConfig returns error when ReassembleTimeout invalid")
+	})
+
+	t.Run("WithZeroReassembleTimeout", func(t *testing.T) {
+		invalidHcsConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{
+			TopicId: goodHcsTopicIDStr,
+			PublicKeys: []*hb.HcsConfigPublicKey{
+				{
+					Type: "ed25519",
+					Key:  "302a300506032b657003210023452d9c2cc4e01deb670780f8e6d4e31badd1f5d2f5464971b490232a601c30",
+				},
+				{
+					Type: "ed25519",
+					Key:  "302a300506032b6570032100708e6eef139eaeba32f91c1a36230bd2d9c10b43a7a48308bc9e056107ac312a",
+				},
+			},
+			ReassembleTimeout: "0s",
+		})
+		_, _, _, _, _, _, err := parseConfig(invalidHcsConfigMetadata, &mockHcsConfig)
+		assert.Error(t, err, "Expected parseConfig returns error when ReassembleTimeout is 0")
+	})
+
 	t.Run("WithCorruptedMetadata", func(t *testing.T) {
-		_, _, _, _, _, err := parseConfig([]byte("corrupted metadata"), &mockHcsConfig)
+		_, _, _, _, _, _, err := parseConfig([]byte("corrupted metadata"), &mockHcsConfig)
 		assert.Error(t, err, "Expected parseConfig returns error when configuration metadata is corrupted")
 	})
 }

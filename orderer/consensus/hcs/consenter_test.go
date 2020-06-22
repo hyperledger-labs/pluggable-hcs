@@ -68,8 +68,14 @@ func TestHandleChain(t *testing.T) {
 	publicIdentity.SerializeReturns(make([]byte, 16), nil)
 	healthChecker := &mock.HealthChecker{}
 	mockOrderer := &mock.OrdererConfig{}
-	mockConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicId: "0.0.19718"})
-	mockInvalidConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicId: "invalid hcs topic id"})
+	mockConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{
+		TopicId:           "0.0.19718",
+		ReassembleTimeout: "30s",
+	})
+	mockInvalidConfigMetadata := protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{
+		TopicId:           "invalid hcs topic id",
+		ReassembleTimeout: "0s",
+	})
 
 	zeroTimestamp := timestamp.Timestamp{Seconds: 0, Nanos: 0}
 	mockBlockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&hb.HcsMetadata{
@@ -205,7 +211,10 @@ func TestHandleChain(t *testing.T) {
 		assert.NoError(t, err, "Expected HandleChain returns no error")
 		assert.NotNil(t, ch, "Expected HandleChain returns a non-nil chain")
 
-		mockOrderer.ConsensusMetadataReturns(protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{TopicId: "0.0.5530"}))
+		mockOrderer.ConsensusMetadataReturns(protoutil.MarshalOrPanic(&hb.HcsConfigMetadata{
+			TopicId:           "0.0.5530",
+			ReassembleTimeout: "15s",
+		}))
 		mockSupport = &mockmultichannel.ConsenterSupport{
 			SharedConfigVal:  mockOrderer,
 			ChannelIDVal:     channelNameForTest(t) + ".1",

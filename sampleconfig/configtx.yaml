@@ -325,6 +325,8 @@ Orderer: &OrdererDefaults
         PublicKeys:
             #- Type: ed25519
             #  Key: 302a300506032b657003210023452d9c2cc4e01deb670780f8e6d4e31badd1f5d2f5464971b490232a601c30
+        # Reassemble Timeout: The amount of time to wait for the next chunk before dropping the whole message
+        ReassembleTimeout: 30s
 
     # EtcdRaft defines configuration which must be set when the "etcdraft"
     # orderertype is chosen.

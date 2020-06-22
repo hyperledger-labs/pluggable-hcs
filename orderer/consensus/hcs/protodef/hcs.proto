@@ -73,6 +73,8 @@ message HcsConfigMetadata {
     string topic_id = 1;
     // public keys of orderer nodes for signature verification
     repeated HcsConfigPublicKey public_keys = 2;
+    // the amount of time to wait before dropping a fragmented message
+    string reassemble_timeout = 3;
 }
 
 message AccountID {

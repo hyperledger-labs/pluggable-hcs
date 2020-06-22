@@ -39,6 +39,14 @@ var (
 		LabelNames:   []string{"channel"},
 		StatsdFormat: "%{#fqname}.%{channel}",
 	}
+	numberChunksDroppedOpts = metrics.CounterOpts{
+		Namespace:    "consensus",
+		Subsystem:    "hcs",
+		Name:         "chunks_dropped",
+		Help:         "The total number of dropped chunks",
+		LabelNames:   []string{"channel"},
+		StatsdFormat: "%{#fqname}.%{channel}",
+	}
 )
 
 type Metrics struct {
@@ -46,6 +54,7 @@ type Metrics struct {
 	CommittedBlockNumber            metrics.Gauge
 	LastConsensusTimestampPersisted metrics.Gauge
 	NumberMessagesDropped           metrics.Counter
+	NumberChunksDropped             metrics.Counter
 }
 
 func NewMetrics(p metrics.Provider) *Metrics {
@@ -54,5 +63,6 @@ func NewMetrics(p metrics.Provider) *Metrics {
 		CommittedBlockNumber:            p.NewGauge(committedBlockNumberOpts),
 		LastConsensusTimestampPersisted: p.NewGauge(lastConsensusTimestampPersistedOpts),
 		NumberMessagesDropped:           p.NewCounter(numberMessagesDroppedOpts),
+		NumberChunksDropped:             p.NewCounter(numberChunksDroppedOpts),
 	}
 }

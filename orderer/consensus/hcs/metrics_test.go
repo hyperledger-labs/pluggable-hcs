@@ -23,6 +23,7 @@ func TestNewMetrics(t *testing.T) {
 	assert.Equal(t, fakeGauge, metrics.CommittedBlockNumber)
 	assert.Equal(t, fakeGauge, metrics.LastConsensusTimestampPersisted)
 	assert.Equal(t, fakeCounter, metrics.NumberMessagesDropped)
+	assert.Equal(t, fakeCounter, metrics.NumberChunksDropped)
 }
 
 // helper functions for testing purpose
@@ -33,6 +34,7 @@ func newFakeMetrics(fakeFields *fakeMetricsFields) *Metrics {
 		CommittedBlockNumber:            fakeFields.fakeCommittedBlockNumber,
 		LastConsensusTimestampPersisted: fakeFields.fakeLastConsensusTimestampPersisted,
 		NumberMessagesDropped:           fakeFields.fakeMessagesDropped,
+		NumberChunksDropped:             fakeFields.fakeChunksDropped,
 	}
 }
 
@@ -41,6 +43,7 @@ type fakeMetricsFields struct {
 	fakeCommittedBlockNumber            *metricsfakes.Gauge
 	fakeLastConsensusTimestampPersisted *metricsfakes.Gauge
 	fakeMessagesDropped                 *metricsfakes.Counter
+	fakeChunksDropped                   *metricsfakes.Counter
 }
 
 func newFakeMetricsFields() *fakeMetricsFields {
@@ -49,6 +52,7 @@ func newFakeMetricsFields() *fakeMetricsFields {
 		fakeCommittedBlockNumber:            newFakeGauge(),
 		fakeLastConsensusTimestampPersisted: newFakeGauge(),
 		fakeMessagesDropped:                 newFakeCounter(),
+		fakeChunksDropped:                   newFakeCounter(),
 	}
 }
 

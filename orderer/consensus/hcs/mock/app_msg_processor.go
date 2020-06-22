@@ -9,17 +9,6 @@ import (
 )
 
 type AppMsgProcessor struct {
-	ExpireByAgeStub        func(uint64) int
-	expireByAgeMutex       sync.RWMutex
-	expireByAgeArgsForCall []struct {
-		arg1 uint64
-	}
-	expireByAgeReturns struct {
-		result1 int
-	}
-	expireByAgeReturnsOnCall map[int]struct {
-		result1 int
-	}
 	ExpireByAppIDStub        func([]byte) (int, error)
 	expireByAppIDMutex       sync.RWMutex
 	expireByAppIDArgsForCall []struct {
@@ -43,20 +32,25 @@ type AppMsgProcessor struct {
 	isPendingReturnsOnCall map[int]struct {
 		result1 bool
 	}
-	ReassembleStub        func(*protodef.ApplicationMessageChunk) ([]byte, []byte, error)
+	ReassembleStub        func(*protodef.ApplicationMessageChunk, time.Time) ([]byte, []byte, int, int, error)
 	reassembleMutex       sync.RWMutex
 	reassembleArgsForCall []struct {
 		arg1 *protodef.ApplicationMessageChunk
+		arg2 time.Time
 	}
 	reassembleReturns struct {
 		result1 []byte
 		result2 []byte
-		result3 error
+		result3 int
+		result4 int
+		result5 error
 	}
 	reassembleReturnsOnCall map[int]struct {
 		result1 []byte
 		result2 []byte
-		result3 error
+		result3 int
+		result4 int
+		result5 error
 	}
 	SplitStub        func([]byte, time.Time) ([]*protodef.ApplicationMessageChunk, []byte, error)
 	splitMutex       sync.RWMutex
@@ -76,66 +70,6 @@ type AppMsgProcessor struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
-}
-
-func (fake *AppMsgProcessor) ExpireByAge(arg1 uint64) int {
-	fake.expireByAgeMutex.Lock()
-	ret, specificReturn := fake.expireByAgeReturnsOnCall[len(fake.expireByAgeArgsForCall)]
-	fake.expireByAgeArgsForCall = append(fake.expireByAgeArgsForCall, struct {
-		arg1 uint64
-	}{arg1})
-	fake.recordInvocation("ExpireByAge", []interface{}{arg1})
-	fake.expireByAgeMutex.Unlock()
-	if fake.ExpireByAgeStub != nil {
-		return fake.ExpireByAgeStub(arg1)
-	}
-	if specificReturn {
-		return ret.result1
-	}
-	fakeReturns := fake.expireByAgeReturns
-	return fakeReturns.result1
-}
-
-func (fake *AppMsgProcessor) ExpireByAgeCallCount() int {
-	fake.expireByAgeMutex.RLock()
-	defer fake.expireByAgeMutex.RUnlock()
-	return len(fake.expireByAgeArgsForCall)
-}
-
-func (fake *AppMsgProcessor) ExpireByAgeCalls(stub func(uint64) int) {
-	fake.expireByAgeMutex.Lock()
-	defer fake.expireByAgeMutex.Unlock()
-	fake.ExpireByAgeStub = stub
-}
-
-func (fake *AppMsgProcessor) ExpireByAgeArgsForCall(i int) uint64 {
-	fake.expireByAgeMutex.RLock()
-	defer fake.expireByAgeMutex.RUnlock()
-	argsForCall := fake.expireByAgeArgsForCall[i]
-	return argsForCall.arg1
-}
-
-func (fake *AppMsgProcessor) ExpireByAgeReturns(result1 int) {
-	fake.expireByAgeMutex.Lock()
-	defer fake.expireByAgeMutex.Unlock()
-	fake.ExpireByAgeStub = nil
-	fake.expireByAgeReturns = struct {
-		result1 int
-	}{result1}
-}
-
-func (fake *AppMsgProcessor) ExpireByAgeReturnsOnCall(i int, result1 int) {
-	fake.expireByAgeMutex.Lock()
-	defer fake.expireByAgeMutex.Unlock()
-	fake.ExpireByAgeStub = nil
-	if fake.expireByAgeReturnsOnCall == nil {
-		fake.expireByAgeReturnsOnCall = make(map[int]struct {
-			result1 int
-		})
-	}
-	fake.expireByAgeReturnsOnCall[i] = struct {
-		result1 int
-	}{result1}
 }
 
 func (fake *AppMsgProcessor) ExpireByAppID(arg1 []byte) (int, error) {
@@ -258,22 +192,23 @@ func (fake *AppMsgProcessor) IsPendingReturnsOnCall(i int, result1 bool) {
 	}{result1}
 }
 
-func (fake *AppMsgProcessor) Reassemble(arg1 *protodef.ApplicationMessageChunk) ([]byte, []byte, error) {
+func (fake *AppMsgProcessor) Reassemble(arg1 *protodef.ApplicationMessageChunk, arg2 time.Time) ([]byte, []byte, int, int, error) {
 	fake.reassembleMutex.Lock()
 	ret, specificReturn := fake.reassembleReturnsOnCall[len(fake.reassembleArgsForCall)]
 	fake.reassembleArgsForCall = append(fake.reassembleArgsForCall, struct {
 		arg1 *protodef.ApplicationMessageChunk
-	}{arg1})
-	fake.recordInvocation("Reassemble", []interface{}{arg1})
+		arg2 time.Time
+	}{arg1, arg2})
+	fake.recordInvocation("Reassemble", []interface{}{arg1, arg2})
 	fake.reassembleMutex.Unlock()
 	if fake.ReassembleStub != nil {
-		return fake.ReassembleStub(arg1)
+		return fake.ReassembleStub(arg1, arg2)
 	}
 	if specificReturn {
-		return ret.result1, ret.result2, ret.result3
+		return ret.result1, ret.result2, ret.result3, ret.result4, ret.result5
 	}
 	fakeReturns := fake.reassembleReturns
-	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3
+	return fakeReturns.result1, fakeReturns.result2, fakeReturns.result3, fakeReturns.result4, fakeReturns.result5
 }
 
 func (fake *AppMsgProcessor) ReassembleCallCount() int {
@@ -282,31 +217,33 @@ func (fake *AppMsgProcessor) ReassembleCallCount() int {
 	return len(fake.reassembleArgsForCall)
 }
 
-func (fake *AppMsgProcessor) ReassembleCalls(stub func(*protodef.ApplicationMessageChunk) ([]byte, []byte, error)) {
+func (fake *AppMsgProcessor) ReassembleCalls(stub func(*protodef.ApplicationMessageChunk, time.Time) ([]byte, []byte, int, int, error)) {
 	fake.reassembleMutex.Lock()
 	defer fake.reassembleMutex.Unlock()
 	fake.ReassembleStub = stub
 }
 
-func (fake *AppMsgProcessor) ReassembleArgsForCall(i int) *protodef.ApplicationMessageChunk {
+func (fake *AppMsgProcessor) ReassembleArgsForCall(i int) (*protodef.ApplicationMessageChunk, time.Time) {
 	fake.reassembleMutex.RLock()
 	defer fake.reassembleMutex.RUnlock()
 	argsForCall := fake.reassembleArgsForCall[i]
-	return argsForCall.arg1
+	return argsForCall.arg1, argsForCall.arg2
 }
 
-func (fake *AppMsgProcessor) ReassembleReturns(result1 []byte, result2 []byte, result3 error) {
+func (fake *AppMsgProcessor) ReassembleReturns(result1 []byte, result2 []byte, result3 int, result4 int, result5 error) {
 	fake.reassembleMutex.Lock()
 	defer fake.reassembleMutex.Unlock()
 	fake.ReassembleStub = nil
 	fake.reassembleReturns = struct {
 		result1 []byte
 		result2 []byte
-		result3 error
-	}{result1, result2, result3}
+		result3 int
+		result4 int
+		result5 error
+	}{result1, result2, result3, result4, result5}
 }
 
-func (fake *AppMsgProcessor) ReassembleReturnsOnCall(i int, result1 []byte, result2 []byte, result3 error) {
+func (fake *AppMsgProcessor) ReassembleReturnsOnCall(i int, result1 []byte, result2 []byte, result3 int, result4 int, result5 error) {
 	fake.reassembleMutex.Lock()
 	defer fake.reassembleMutex.Unlock()
 	fake.ReassembleStub = nil
@@ -314,14 +251,18 @@ func (fake *AppMsgProcessor) ReassembleReturnsOnCall(i int, result1 []byte, resu
 		fake.reassembleReturnsOnCall = make(map[int]struct {
 			result1 []byte
 			result2 []byte
-			result3 error
+			result3 int
+			result4 int
+			result5 error
 		})
 	}
 	fake.reassembleReturnsOnCall[i] = struct {
 		result1 []byte
 		result2 []byte
-		result3 error
-	}{result1, result2, result3}
+		result3 int
+		result4 int
+		result5 error
+	}{result1, result2, result3, result4, result5}
 }
 
 func (fake *AppMsgProcessor) Split(arg1 []byte, arg2 time.Time) ([]*protodef.ApplicationMessageChunk, []byte, error) {
@@ -399,8 +340,6 @@ func (fake *AppMsgProcessor) SplitReturnsOnCall(i int, result1 []*protodef.Appli
 func (fake *AppMsgProcessor) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
-	fake.expireByAgeMutex.RLock()
-	defer fake.expireByAgeMutex.RUnlock()
 	fake.expireByAppIDMutex.RLock()
 	defer fake.expireByAppIDMutex.RUnlock()
 	fake.isPendingMutex.RLock()

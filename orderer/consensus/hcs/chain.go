@@ -91,7 +91,7 @@ func newChain(
 		"last recorded block [%d]", support.ChannelID(), lastConsensusTimestampPersisted.UnixNano(), lastCutBlockNumber)
 
 	localHcsConfig := consenter.sharedHcsConfig()
-	topicID, publicKeys, network, operatorID, operatorPrivateKey, err := parseConfig(support.SharedConfig().ConsensusMetadata(), localHcsConfig)
+	topicID, publicKeys, reassembleTimeout, network, operatorID, operatorPrivateKey, err := parseConfig(support.SharedConfig().ConsensusMetadata(), localHcsConfig)
 	if err != nil {
 		logger.Errorf("[channel: %s] err parsing config = %v", support.ChannelID(), err)
 		return nil, err
@@ -160,7 +160,6 @@ func newChain(
 		doneReprocessingMsgInFlight:     doneReprocessingMsgInFlight,
 		timeToCutRequestChan:            make(chan timeToCutRequest),
 		messageHashes:                   make(map[string]struct{}),
-		maxChunkAge:                     calcMaxChunkAge(200, len(support.ChannelConfig().OrdererAddresses())),
 		gcmCipher:                       gcmCipher,
 		nonceReader:                     crand.Reader,
 		appID:                           appID[:],
@@ -170,7 +169,7 @@ func newChain(
 	if gcmCipher != nil {
 		blkCipher = chain
 	}
-	if chain.appMsgProcessor, err = newAppMsgProcessor(*chain.operatorID, chain.appID, maxConsensusMessageSize, chain, blkCipher); err != nil {
+	if chain.appMsgProcessor, err = newAppMsgProcessor(*chain.operatorID, chain.appID, maxConsensusMessageSize, reassembleTimeout, chain, blkCipher); err != nil {
 		logger.Errorf("[channel: %s] failed to create appMsgProcessor with chunk size %d bytes", chain.ChannelID(), maxConsensusMessageSize)
 		return nil, fmt.Errorf("failed to create appMsgProcessor with chunk size %d bytes - %v", maxConsensusMessageSize, err)
 	}
@@ -231,7 +230,6 @@ type chainImpl struct {
 
 	appMsgProcessor appMsgProcessor
 	appID           []byte
-	maxChunkAge     uint64
 
 	gcmCipher   cipher.AEAD
 	nonceReader io.Reader
@@ -561,16 +559,20 @@ func (chain *chainImpl) processMessages() error {
 				logger.Errorf("[channel: %s] failed to unmarshal ordered message into ApplicationMessageChunk = %v", chain.ChannelID(), err)
 				continue
 			}
-			payload, msgHash, err := chain.appMsgProcessor.Reassemble(chunk)
+			logger.Debugf("[channel: %s] processing a chunk with consensus timestamp = %d, sequence = %d", chain.ChannelID(), resp.ConsensusTimeStamp.UnixNano(), resp.SequenceNumber)
+			payload, msgHash, expiredMessages, expiredChunks, err := chain.appMsgProcessor.Reassemble(chunk, resp.ConsensusTimeStamp)
 			if !chain.appMsgProcessor.IsPending() {
 				chain.lastChunkFreeConsensusTimestamp = chain.lastConsensusTimestamp
 				chain.lastChunkFreeSequenceProcessed = chain.lastSequenceProcessed
 			}
-			count := chain.appMsgProcessor.ExpireByAge(chain.maxChunkAge)
-			chain.consenter.Metrics().NumberMessagesDropped.With("channel", chain.ChannelID()).Add(float64(count))
 			if err != nil {
 				logger.Errorf("[channel: %s] failed to process a received chunk - %v", chain.ChannelID(), err)
 				continue
+			}
+			if expiredMessages != 0 {
+				logger.Warnf("[channel: %s] %d messages and %d chunks expired", chain.ChannelID(), expiredMessages, expiredChunks)
+				chain.consenter.Metrics().NumberMessagesDropped.With("channel", chain.ChannelID()).Add(float64(expiredMessages))
+				chain.consenter.Metrics().NumberChunksDropped.With("channel", chain.ChannelID()).Add(float64(expiredChunks))
 			}
 			if payload == nil {
 				logger.Debugf("need more chunks to reassemble the HCS message")
@@ -643,7 +645,7 @@ func (chain *chainImpl) WriteBlock(block *cb.Block, isConfig bool, consensusTime
 	chain.consenter.Metrics().LastConsensusTimestampPersisted.With("channel", chain.ChannelID()).Set(float64(consensusTimestamp.UnixNano()))
 }
 
-func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, rawMessage []byte, curConsensusTimestamp time.Time, newOriginalSequenceProcessed uint64, messageHash []byte) {
+func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTimestamp time.Time, newOriginalSequenceProcessed uint64, messageHash []byte) {
 	var pending bool
 	defer func() {
 		if pending {
@@ -781,7 +783,7 @@ func (chain *chainImpl) processRegularMessage(msg *hb.HcsMessageRegular, timesta
 			newSeq = chain.lastOriginalSequenceProcessed
 		}
 
-		chain.commitNormalMessage(env, msg.Payload, timestamp, newSeq, messageHash)
+		chain.commitNormalMessage(env, timestamp, newSeq, messageHash)
 
 	case hb.HcsMessageRegular_CONFIG:
 		// This is a message that is re-validated and re-ordered
@@ -850,8 +852,6 @@ func (chain *chainImpl) processRegularMessage(msg *hb.HcsMessageRegular, timesta
 		chain.commitConfigMessage(env, timestamp, newSeq)
 		// new configuration is applied, number of orderers may have changed
 		chain.consenter.Metrics().NumberNodes.With("channel", chain.ChannelID()).Set(float64(len(chain.ChannelConfig().OrdererAddresses())))
-		chain.maxChunkAge = calcMaxChunkAge(200, len(chain.ChannelConfig().OrdererAddresses()))
-		logger.Debugf("[channel: %s] channel configuration has changed, updated maxChunkAge to %d", chain.ChannelID(), chain.maxChunkAge)
 
 		// update publicKeys
 		hcsConfigMetadata := &hb.HcsConfigMetadata{}
@@ -1148,7 +1148,7 @@ func getPublicKeys(publicKeysIn []*hb.HcsConfigPublicKey, extra hedera.Ed25519Pu
 func parseConfig(
 	configMetaData []byte,
 	config *localconfig.Hcs,
-) (topicID hedera.ConsensusTopicID, publicKeys map[string]*hedera.Ed25519PublicKey, network map[string]hedera.AccountID, operatorID *hedera.AccountID, privateKey *hedera.Ed25519PrivateKey, err error) {
+) (topicID hedera.ConsensusTopicID, publicKeys map[string]*hedera.Ed25519PublicKey, reassembleTimeout time.Duration, network map[string]hedera.AccountID, operatorID *hedera.AccountID, privateKey *hedera.Ed25519PrivateKey, err error) {
 	hcsConfigMetadata := &hb.HcsConfigMetadata{}
 	if config.Operator.PrivateKey.Type != "ed25519" {
 		err = fmt.Errorf("private key type \"%s\" is not supported", config.Operator.PrivateKey.Type)
@@ -1171,6 +1171,16 @@ func parseConfig(
 	tmpPublicKeys, err := getPublicKeys(hcsConfigMetadata.PublicKeys, tmpPrivateKey.PublicKey())
 	if err != nil {
 		err = fmt.Errorf("failed to parse public keys = %v", err)
+		return
+	}
+
+	timeout, err := time.ParseDuration(hcsConfigMetadata.ReassembleTimeout)
+	if err != nil {
+		err = fmt.Errorf("failed to parse reassemble timeout = %v", err)
+		return
+	}
+	if timeout == 0 {
+		err = fmt.Errorf("invalid reassemble timeout - %s", timeout)
 		return
 	}
 
@@ -1197,6 +1207,7 @@ func parseConfig(
 
 	topicID = tmpTopicID
 	publicKeys = tmpPublicKeys
+	reassembleTimeout = timeout
 	network = tmpNetwork
 	operatorID = &tmpOperatorID
 	privateKey = &tmpPrivateKey
@@ -1306,10 +1317,6 @@ func timestampProtoOrPanic(t time.Time) *timestamp.Timestamp {
 		return nil
 	}
 	return ts
-}
-
-func calcMaxChunkAge(maxAgeBase uint64, numOrderers int) uint64 {
-	return maxAgeBase * uint64(numOrderers)
 }
 
 func isSubscriptionErrorRecoverable(code codes.Code) bool {
