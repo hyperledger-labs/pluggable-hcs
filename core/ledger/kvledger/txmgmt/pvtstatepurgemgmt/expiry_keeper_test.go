@@ -14,6 +14,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/bookkeeping"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExpiryKVEncoding(t *testing.T) {
@@ -40,9 +41,9 @@ func TestExpiryKeeper(t *testing.T) {
 	expinfo4 := &expiryInfo{&expiryInfoKey{committingBlk: 5, expiryBlk: 17}, buildPvtdataKeysForTest(4, 4)}
 
 	// Insert entries for keys at committingBlk 3
-	expiryKeeper.updateBookkeeping([]*expiryInfo{expinfo1, expinfo2}, nil)
+	expiryKeeper.update([]*expiryInfo{expinfo1, expinfo2}, nil)
 	// Insert entries for keys at committingBlk 4 and 5
-	expiryKeeper.updateBookkeeping([]*expiryInfo{expinfo3, expinfo4}, nil)
+	expiryKeeper.update([]*expiryInfo{expinfo3, expinfo4}, nil)
 
 	// Retrieve entries by expiring block 13, 15, and 17
 	listExpinfo1, _ := expiryKeeper.retrieve(13)
@@ -63,7 +64,7 @@ func TestExpiryKeeper(t *testing.T) {
 	assert.True(t, proto.Equal(expinfo4.pvtdataKeys, listExpinfo3[0].pvtdataKeys))
 
 	// Clear entries for keys expiring at block 13 and 15 and again retrieve by expiring block 13, 15, and 17
-	expiryKeeper.updateBookkeeping(nil, []*expiryInfoKey{expinfo1.expiryInfoKey, expinfo2.expiryInfoKey, expinfo3.expiryInfoKey})
+	expiryKeeper.update(nil, []*expiryInfoKey{expinfo1.expiryInfoKey, expinfo2.expiryInfoKey, expinfo3.expiryInfoKey})
 	listExpinfo4, _ := expiryKeeper.retrieve(13)
 	assert.Nil(t, listExpinfo4)
 
@@ -74,6 +75,13 @@ func TestExpiryKeeper(t *testing.T) {
 	assert.Len(t, listExpinfo6, 1)
 	assert.Equal(t, expinfo4.expiryInfoKey, listExpinfo6[0].expiryInfoKey)
 	assert.True(t, proto.Equal(expinfo4.pvtdataKeys, listExpinfo6[0].pvtdataKeys))
+
+	t.Run("test-error-path", func(t *testing.T) {
+		testenv.TestProvider.Close()
+		expirtyInfo, err := expiryKeeper.retrieve(15)
+		require.EqualError(t, err, "internal leveldb error while obtaining db iterator: leveldb: closed")
+		require.Nil(t, expirtyInfo)
+	})
 }
 
 func buildPvtdataKeysForTest(startingEntry int, numEntries int) *PvtdataKeys {

@@ -27,11 +27,12 @@ peer:
       timeout: 20s
   gossip:
     bootstrap: 127.0.0.1:{{ .PeerPort Peer "Listen" }}
-    useLeaderElection: true
-    orgLeader: false
+    endpoint: 127.0.0.1:{{ .PeerPort Peer "Listen" }}
+    externalEndpoint: 127.0.0.1:{{ .PeerPort Peer "Listen" }}
+    useLeaderElection: false
+    orgLeader: true
     membershipTrackerInterval: 5s
-    endpoint:
-    maxBlockCountToStore: 100
+    maxBlockCountToStore: 10
     maxPropagationBurstLatency: 10ms
     maxPropagationBurstSize: 10
     propagateIterations: 1
@@ -52,7 +53,6 @@ peer:
     aliveTimeInterval: 5s
     aliveExpirationTimeout: 25s
     reconnectInterval: 25s
-    externalEndpoint: 127.0.0.1:{{ .PeerPort Peer "Listen" }}
     election:
       startupGracePeriod: 15s
       membershipSampleInterval: 1s
@@ -67,12 +67,15 @@ peer:
       reconcileSleepInterval: 10s
       reconciliationEnabled: true
       skipPullingInvalidTransactionsDuringCommit: false
+      implicitCollectionDisseminationPolicy:
+        requiredPeerCount: 0
+        maxPeerCount: 1
     state:
-       enabled: true
+       enabled: false
        checkInterval: 10s
        responseTimeout: 3s
        batchSize: 10
-       blockBufferSize: 100
+       blockBufferSize: 20
        maxRetries: 3
   events:
     address: 127.0.0.1:{{ .PeerPort Peer "Events" }}
@@ -136,7 +139,8 @@ peer:
     orgMembersAllowedAccess: false
   limits:
     concurrency:
-      qscc: 500
+      endorserService: 100
+      deliverService: 100
 
 vm:
   endpoint: unix:///var/run/docker.sock
@@ -188,7 +192,7 @@ chaincode:
   externalBuilders: {{ range .ExternalBuilders }}
     - path: {{ .Path }}
       name: {{ .Name }}
-      environmentWhitelist: {{ range .EnvironmentWhitelist }}
+      propagateEnvironment: {{ range .PropagateEnvironment }}
          - {{ . }}
       {{- end }}
   {{- end }}
@@ -225,8 +229,13 @@ operations:
 metrics:
   provider: {{ .MetricsProvider }}
   statsd:
+    {{- if .StatsdEndpoint }}
+    network: tcp
+    address: {{ .StatsdEndpoint }}
+    {{- else }}
     network: udp
-    address: {{ if .StatsdEndpoint }}{{ .StatsdEndpoint }}{{ else }}127.0.0.1:8125{{ end }}
+    address: 127.0.0.1:8125
+    {{- end }}
     writeInterval: 5s
     prefix: {{ ReplaceAll (ToLower Peer.ID) "." "_" }}
 `

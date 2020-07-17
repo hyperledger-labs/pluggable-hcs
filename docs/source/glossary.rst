@@ -25,7 +25,7 @@ For example, let's assume we have three organizations --- ``A``, ``B``, ``C`` --
 and a single anchor peer --- ``peer0.orgC`` --- defined for organization ``C``.
 When ``peer1.orgA`` (from organization ``A``) contacts ``peer0.orgC``, it will
 tell ``peer0.orgC`` about ``peer0.orgA``. And when at a later time ``peer1.orgB``
-contacts ``peer0.orgC``, the latter would tell the former about ``peer0.orgA``.
+contacts ``peer0.orgC``, the latter would tell the former about ``peer0.orgB``.
 From that point forward, organizations ``A`` and ``B`` would start exchanging
 membership information directly without any assistance from ``peer0.orgC``.
 
@@ -330,7 +330,7 @@ submit the read-only transaction, unless there is desire to log the read on the 
 for audit purpose. The invoke includes a channel identifier, the chaincode function to
 invoke, and an array of arguments.
 
-.. _Leader
+.. _Leader:
 
 Leader
 ------
@@ -383,7 +383,7 @@ process called **consensus**. The term **Distributed Ledger Technology**
 singular, but has many identical copies distributed across a set of network
 nodes (peers and the ordering service).
 
-.. _Log-entry
+.. _Log-entry:
 
 Log entry
 ---------
@@ -496,7 +496,7 @@ Policy
 ------
 
 Policies are expressions composed of properties of digital identities, for
-example: ``Org1.Peer OR Org2.Peer``. They are used to restrict access to
+example: ``OR('Org1.peer', 'Org2.peer')``. They are used to restrict access to
 resources on a blockchain network. For instance, they dictate who can read from
 or write to a channel, or who can use a specific chaincode API via an ACL_.
 Policies may be defined in ``configtx.yaml`` prior to bootstrapping an ordering
@@ -571,7 +571,7 @@ Raft
 
 New for v1.4.1, Raft is a crash fault tolerant (CFT) ordering service
 implementation based on the `etcd library <https://coreos.com/etcd/>`_
-of the `Raft protocol` <https://raft.github.io/raft.pdf>`_. Raft follows a
+of the `Raft protocol <https://raft.github.io/raft.pdf>`_. Raft follows a
 "leader and follower" model, where a leader node is elected (per channel) and
 its decisions are replicated by the followers. Raft ordering services should
 be easier to set up and manage than Kafka-based ordering services, and their

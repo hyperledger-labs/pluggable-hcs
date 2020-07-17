@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/pem"
 	"fmt"
+	"github.com/hyperledger/fabric/orderer/common/types"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -459,6 +460,12 @@ func (c *Chain) Consensus(req *orderer.ConsensusRequest, sender uint64) error {
 		return fmt.Errorf("failed to unmarshal StepRequest payload to Raft Message: %s", err)
 	}
 
+	if stepMsg.To != c.raftID {
+		c.logger.Warnf("Received msg to %d, my ID is probably wrong due to out of date, cowardly halting", stepMsg.To)
+		c.Halt()
+		return nil
+	}
+
 	if err := c.Node.Step(context.TODO(), *stepMsg); err != nil {
 		return fmt.Errorf("failed to process Raft Step message: %s", err)
 	}
@@ -866,8 +873,6 @@ func (c *Chain) propose(ch chan<- *common.Block, bc *blockCreator, batches ...[]
 
 		c.blockInflight++
 	}
-
-	return
 }
 
 func (c *Chain) catchUp(snap *raftpb.Snapshot) error {
@@ -942,7 +947,7 @@ func (c *Chain) detectConfChange(block *common.Block) *MembershipChanges {
 		c.sizeLimit = configMetadata.Options.SnapshotIntervalSize
 	}
 
-	changes, err := ComputeMembershipChanges(c.opts.BlockMetadata, c.opts.Consenters, configMetadata.Consenters)
+	changes, err := ComputeMembershipChanges(c.opts.BlockMetadata, c.opts.Consenters, configMetadata.Consenters, c.support.SharedConfig())
 	if err != nil {
 		c.logger.Panicf("illegal configuration change detected: %s", err)
 	}
@@ -1062,8 +1067,6 @@ func (c *Chain) apply(ents []raftpb.Entry) {
 			c.logger.Warnf("Snapshotting is in progress, it is very likely that SnapshotIntervalSize is too small")
 		}
 	}
-
-	return
 }
 
 func (c *Chain) gc() {
@@ -1304,9 +1307,12 @@ func (c *Chain) ValidateConsensusMetadata(oldMetadataBytes, newMetadataBytes []b
 	}
 
 	// create the dummy parameters for ComputeMembershipChanges
-	dummyOldBlockMetadata, _ := ReadBlockMetadata(nil, oldMetadata)
+	c.raftMetadataLock.RLock()
+	dummyOldBlockMetadata := proto.Clone(c.opts.BlockMetadata).(*etcdraft.BlockMetadata)
+	c.raftMetadataLock.RUnlock()
+
 	dummyOldConsentersMap := CreateConsentersMap(dummyOldBlockMetadata, oldMetadata)
-	changes, err := ComputeMembershipChanges(dummyOldBlockMetadata, dummyOldConsentersMap, newMetadata.Consenters)
+	changes, err := ComputeMembershipChanges(dummyOldBlockMetadata, dummyOldConsentersMap, newMetadata.Consenters, c.support.SharedConfig())
 	if err != nil {
 		return err
 	}
@@ -1317,6 +1323,11 @@ func (c *Chain) ValidateConsensusMetadata(oldMetadataBytes, newMetadataBytes []b
 	}
 
 	return nil
+}
+
+// StatusReport returns the ClusterRelation & Status
+func (c *Chain) StatusReport() (types.ClusterRelation, types.Status) {
+	return types.ClusterRelationMember, types.StatusActive
 }
 
 func (c *Chain) suspectEviction() bool {

@@ -9,6 +9,7 @@ package discovery
 import (
 	"fmt"
 
+	protolib "github.com/golang/protobuf/proto"
 	proto "github.com/hyperledger/fabric-protos-go/gossip"
 	"github.com/hyperledger/fabric/gossip/common"
 	"github.com/hyperledger/fabric/gossip/protoext"
@@ -72,6 +73,11 @@ type CommService interface {
 	IdentitySwitch() <-chan common.PKIidType
 }
 
+// AnchorPeerTracker is an interface that is passed to discovery to check if an endpoint is an anchor peer
+type AnchorPeerTracker interface {
+	IsAnchorPeer(endpoint string) bool
+}
+
 // NetworkMember is a peer's representation
 type NetworkMember struct {
 	Endpoint         string
@@ -80,6 +86,28 @@ type NetworkMember struct {
 	InternalEndpoint string
 	Properties       *proto.Properties
 	*proto.Envelope
+}
+
+// Clone clones the NetworkMember
+func (n NetworkMember) Clone() NetworkMember {
+	pkiIDClone := make(common.PKIidType, len(n.PKIid))
+	copy(pkiIDClone, n.PKIid)
+	nmClone := NetworkMember{
+		Endpoint:         n.Endpoint,
+		Metadata:         n.Metadata,
+		InternalEndpoint: n.InternalEndpoint,
+		PKIid:            pkiIDClone,
+	}
+
+	if n.Properties != nil {
+		nmClone.Properties = protolib.Clone(n.Properties).(*proto.Properties)
+	}
+
+	if n.Envelope != nil {
+		nmClone.Envelope = protolib.Clone(n.Envelope).(*proto.Envelope)
+	}
+
+	return nmClone
 }
 
 // String returns a string representation of the NetworkMember

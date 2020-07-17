@@ -3,6 +3,7 @@ package hedera
 import (
 	"fmt"
 	"time"
+	"math/rand"
 
 	"github.com/hashgraph/hedera-sdk-go/proto"
 )
@@ -17,9 +18,10 @@ type TransactionID struct {
 // NewTransactionID constructs a new Transaction id struct with the provided AccountID and the valid start time set
 // to the current time - 10 seconds.
 func NewTransactionID(accountID AccountID) TransactionID {
-	now := time.Now().Add(-10 * time.Second)
-
-	return TransactionID{accountID, now}
+	allowance := -(time.Duration(rand.Intn(5 * int(time.Second))) + (8 * time.Second))
+	validStart := time.Now().UTC().Add(allowance)
+	
+	return TransactionID{accountID, validStart}
 }
 
 // NewTransactionIDWithValidStart constructs a new Transaction id struct with the provided AccountID and the valid start

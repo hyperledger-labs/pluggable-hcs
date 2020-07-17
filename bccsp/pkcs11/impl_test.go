@@ -10,7 +10,6 @@ package pkcs11
 
 import (
 	"bytes"
-	"crypto"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
@@ -236,9 +235,6 @@ func TestInvalidSKI(t *testing.T) {
 }
 
 func TestKeyGenECDSAOpts(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestKeyGenECDSAOpts")
-	}
 	// Curve P256
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAP256KeyGenOpts{Temporary: false})
 	if err != nil {
@@ -281,9 +277,6 @@ func TestKeyGenECDSAOpts(t *testing.T) {
 }
 
 func TestKeyGenAESOpts(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestKeyGenAESOpts")
-	}
 	// AES 128
 	k, err := currentBCCSP.KeyGen(&bccsp.AES128KeyGenOpts{Temporary: false})
 	if err != nil {
@@ -331,9 +324,6 @@ func TestKeyGenAESOpts(t *testing.T) {
 }
 
 func TestHashOpts(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestHashOpts")
-	}
 	msg := []byte("abcd")
 
 	// SHA256
@@ -394,9 +384,6 @@ func TestHashOpts(t *testing.T) {
 }
 
 func TestECDSAKeyGenEphemeral(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSAKeyGenEphemeral")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: true})
 	if err != nil {
 		t.Fatalf("Failed generating ECDSA key [%s]", err)
@@ -427,9 +414,6 @@ func TestECDSAKeyGenEphemeral(t *testing.T) {
 }
 
 func TestECDSAPrivateKeySKI(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSAPrivateKeySKI")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating ECDSA key [%s]", err)
@@ -442,9 +426,6 @@ func TestECDSAPrivateKeySKI(t *testing.T) {
 }
 
 func TestECDSAKeyGenNonEphemeral(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSAKeyGenNonEphemeral")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating ECDSA key [%s]", err)
@@ -461,9 +442,6 @@ func TestECDSAKeyGenNonEphemeral(t *testing.T) {
 }
 
 func TestECDSAGetKeyBySKI(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSAGetKeyBySKI")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating ECDSA key [%s]", err)
@@ -490,9 +468,6 @@ func TestECDSAGetKeyBySKI(t *testing.T) {
 }
 
 func TestECDSAPublicKeyFromPrivateKey(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSAPublicKeyFromPrivateKey")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating ECDSA key [%s]", err)
@@ -514,10 +489,6 @@ func TestECDSAPublicKeyFromPrivateKey(t *testing.T) {
 }
 
 func TestECDSAPublicKeyBytes(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSAPublicKeyBytes")
-	}
-
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating ECDSA key [%s]", err)
@@ -538,9 +509,6 @@ func TestECDSAPublicKeyBytes(t *testing.T) {
 }
 
 func TestECDSAPublicKeySKI(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSAPublicKeySKI")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating ECDSA key [%s]", err)
@@ -558,9 +526,6 @@ func TestECDSAPublicKeySKI(t *testing.T) {
 }
 
 func TestECDSASign(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSASign")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating ECDSA key [%s]", err)
@@ -591,9 +556,6 @@ func TestECDSASign(t *testing.T) {
 }
 
 func TestECDSAVerify(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSAVerify")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating ECDSA key [%s]", err)
@@ -671,9 +633,6 @@ func TestECDSAVerify(t *testing.T) {
 }
 
 func TestECDSAKeyImportFromExportedKey(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSAKeyImportFromExportedKey")
-	}
 	// Generate an ECDSA key
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
@@ -723,9 +682,6 @@ func TestECDSAKeyImportFromExportedKey(t *testing.T) {
 }
 
 func TestECDSAKeyImportFromECDSAPublicKey(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSAKeyImportFromECDSAPublicKey")
-	}
 	// Generate an ECDSA key
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
@@ -743,7 +699,7 @@ func TestECDSAKeyImportFromECDSAPublicKey(t *testing.T) {
 		t.Fatalf("Failed getting ECDSA raw public key [%s]", err)
 	}
 
-	pub, err := utils.DERToPublicKey(pkRaw)
+	pub, err := x509.ParsePKIXPublicKey(pkRaw)
 	if err != nil {
 		t.Fatalf("Failed converting raw to ecdsa.PublicKey [%s]", err)
 	}
@@ -780,9 +736,6 @@ func TestECDSAKeyImportFromECDSAPublicKey(t *testing.T) {
 }
 
 func TestKeyImportFromX509ECDSAPublicKey(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestKeyImportFromX509ECDSAPublicKey")
-	}
 	// Generate an ECDSA key
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
@@ -862,7 +815,7 @@ func TestKeyImportFromX509ECDSAPublicKey(t *testing.T) {
 		t.Fatalf("Failed getting ECDSA raw public key [%s]", err)
 	}
 
-	pub, err := utils.DERToPublicKey(pkRaw)
+	pub, err := x509.ParsePKIXPublicKey(pkRaw)
 	if err != nil {
 		t.Fatalf("Failed converting raw to ECDSA.PublicKey [%s]", err)
 	}
@@ -872,7 +825,7 @@ func TestKeyImportFromX509ECDSAPublicKey(t *testing.T) {
 		t.Fatalf("Failed generating self-signed certificate [%s]", err)
 	}
 
-	cert, err := utils.DERToX509Certificate(certRaw)
+	cert, err := x509.ParseCertificate(certRaw)
 	if err != nil {
 		t.Fatalf("Failed generating X509 certificate object from raw [%s]", err)
 	}
@@ -910,9 +863,6 @@ func TestKeyImportFromX509ECDSAPublicKey(t *testing.T) {
 }
 
 func TestECDSASignatureEncoding(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSASignatureEncoding")
-	}
 	v := []byte{0x30, 0x07, 0x02, 0x01, 0x8F, 0x02, 0x02, 0xff, 0xf1}
 	_, err := asn1.Unmarshal(v, &utils.ECDSASignature{})
 	if err == nil {
@@ -951,9 +901,6 @@ func TestECDSASignatureEncoding(t *testing.T) {
 }
 
 func TestECDSALowS(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestECDSALowS")
-	}
 	// Ensure that signature with low-S are generated
 	k, err := currentBCCSP.KeyGen(&bccsp.ECDSAKeyGenOpts{Temporary: false})
 	if err != nil {
@@ -1016,9 +963,6 @@ func TestECDSALowS(t *testing.T) {
 }
 
 func TestAESKeyGen(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestAESKeyGen")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.AESKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating AES_256 key [%s]", err)
@@ -1043,9 +987,6 @@ func TestAESKeyGen(t *testing.T) {
 }
 
 func TestAESEncrypt(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestAESEncrypt")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.AESKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating AES_256 key [%s]", err)
@@ -1061,9 +1002,6 @@ func TestAESEncrypt(t *testing.T) {
 }
 
 func TestAESDecrypt(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestAESDecrypt")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.AESKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating AES_256 key [%s]", err)
@@ -1090,9 +1028,6 @@ func TestAESDecrypt(t *testing.T) {
 }
 
 func TestHMACTruncated256KeyDerivOverAES256Key(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestHMACTruncated256KeyDerivOverAES256Key")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.AESKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating AES_256 key [%s]", err)
@@ -1141,9 +1076,6 @@ func TestHMACTruncated256KeyDerivOverAES256Key(t *testing.T) {
 }
 
 func TestHMACKeyDerivOverAES256Key(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestHMACKeyDerivOverAES256Key")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.AESKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating AES_256 key [%s]", err)
@@ -1173,9 +1105,6 @@ func TestHMACKeyDerivOverAES256Key(t *testing.T) {
 }
 
 func TestAES256KeyImport(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestAES256KeyImport")
-	}
 	raw, err := sw.GetRandomBytes(32)
 	if err != nil {
 		t.Fatalf("Failed generating AES key [%s]", err)
@@ -1223,9 +1152,6 @@ func TestAES256KeyImport(t *testing.T) {
 }
 
 func TestAES256KeyImportBadPaths(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestAES256KeyImportBadPaths")
-	}
 	_, err := currentBCCSP.KeyImport(nil, &bccsp.AES256ImportKeyOpts{Temporary: false})
 	if err == nil {
 		t.Fatal("Failed importing key. Must fail on importing nil key")
@@ -1238,9 +1164,6 @@ func TestAES256KeyImportBadPaths(t *testing.T) {
 }
 
 func TestAES256KeyGenSKI(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestAES256KeyGenSKI")
-	}
 	k, err := currentBCCSP.KeyGen(&bccsp.AESKeyGenOpts{Temporary: false})
 	if err != nil {
 		t.Fatalf("Failed generating AES_256 key [%s]", err)
@@ -1268,9 +1191,6 @@ func TestAES256KeyGenSKI(t *testing.T) {
 }
 
 func TestSHA(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping TestSHA")
-	}
 	for i := 0; i < 100; i++ {
 		b, err := sw.GetRandomBytes(i)
 		if err != nil {
@@ -1312,31 +1232,4 @@ func TestSHA(t *testing.T) {
 			t.Fatalf("Discrempancy found in HASH result [%x], [%x]!=[%x]", b, h1, h2)
 		}
 	}
-}
-
-func getCryptoHashIndex(t *testing.T) crypto.Hash {
-	switch currentTestConfig.hashFamily {
-	case "SHA2":
-		switch currentTestConfig.securityLevel {
-		case 256:
-			return crypto.SHA256
-		case 384:
-			return crypto.SHA384
-		default:
-			t.Fatalf("Invalid security level [%d]", currentTestConfig.securityLevel)
-		}
-	case "SHA3":
-		switch currentTestConfig.securityLevel {
-		case 256:
-			return crypto.SHA3_256
-		case 384:
-			return crypto.SHA3_384
-		default:
-			t.Fatalf("Invalid security level [%d]", currentTestConfig.securityLevel)
-		}
-	default:
-		t.Fatalf("Invalid hash family [%s]", currentTestConfig.hashFamily)
-	}
-
-	return crypto.SHA3_256
 }

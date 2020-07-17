@@ -15,9 +15,9 @@ import (
 
 	docker "github.com/fsouza/go-dockerclient"
 	"github.com/golang/protobuf/proto"
+	"github.com/hyperledger/fabric-config/protolator"
+	"github.com/hyperledger/fabric-config/protolator/protoext/ordererext"
 	"github.com/hyperledger/fabric-protos-go/common"
-	"github.com/hyperledger/fabric/common/tools/protolator"
-	"github.com/hyperledger/fabric/common/tools/protolator/protoext/ordererext"
 	"github.com/hyperledger/fabric/integration/nwo"
 	"github.com/hyperledger/fabric/integration/nwo/commands"
 	"github.com/hyperledger/fabric/integration/nwo/fabricconfig"
@@ -68,11 +68,12 @@ var _ = Describe("Lifecycle", func() {
 		core.Ledger.State.StateDatabase = "CouchDB"
 		core.Ledger.State.CouchDBConfig.CouchDBAddress = couchAddr
 		processes[couchDB.Name] = couchProcess
-		setTermFileEnvForBinaryExternalBuilder := func(envKey, termFile string, externalBuilders []*fabricconfig.ExternalBuilder) {
+		setTermFileEnvForBinaryExternalBuilder := func(envKey, termFile string, externalBuilders []fabricconfig.ExternalBuilder) {
 			os.Setenv(envKey, termFile)
-			for _, e := range externalBuilders {
+			for i, e := range externalBuilders {
 				if e.Name == "binary" {
-					e.EnvironmentWhitelist = append(e.EnvironmentWhitelist, envKey)
+					e.PropagateEnvironment = append(e.PropagateEnvironment, envKey)
+					externalBuilders[i] = e
 				}
 			}
 		}
@@ -122,13 +123,13 @@ var _ = Describe("Lifecycle", func() {
 		testPeers := network.PeersWithChannel("testchannel")
 		org1peer0 := network.Peer("Org1", "peer0")
 
-		chaincodePath := components.Build("github.com/hyperledger/fabric/integration/chaincode/module")
+		chaincodePath := components.Build("github.com/hyperledger/fabric/integration/chaincode/simple/cmd")
 		chaincode := nwo.Chaincode{
 			Name:                "My_1st-Chaincode",
 			Version:             "Version-0.0",
 			Path:                chaincodePath,
 			Lang:                "binary",
-			PackageFile:         filepath.Join(testDir, "modulecc.tar.gz"),
+			PackageFile:         filepath.Join(testDir, "simplecc.tar.gz"),
 			Ctor:                `{"Args":["init","a","100","b","200"]}`,
 			ChannelConfigPolicy: "/Channel/Application/Endorsement",
 			Sequence:            "1",
@@ -212,7 +213,7 @@ var _ = Describe("Lifecycle", func() {
 		previousLabel := chaincode.Label
 		previousPackageID := chaincode.PackageID
 		chaincode.Label = "my_simple_chaincode_updated"
-		chaincode.PackageFile = filepath.Join(testDir, "modulecc-updated.tar.gz")
+		chaincode.PackageFile = filepath.Join(testDir, "simplecc-updated.tar.gz")
 		chaincode.Sequence = "2"
 		nwo.PackageChaincodeBinary(chaincode)
 		chaincode.SetPackageIDFromPackageFile()
@@ -251,7 +252,7 @@ var _ = Describe("Lifecycle", func() {
 			Version:             "Version+0_0",
 			Path:                chaincodePath,
 			Lang:                "binary",
-			PackageFile:         filepath.Join(testDir, "modulecc.tar.gz"),
+			PackageFile:         filepath.Join(testDir, "simplecc.tar.gz"),
 			Ctor:                `{"Args":["init","a","100","b","200"]}`,
 			ChannelConfigPolicy: "/Channel/Application/Endorsement",
 			Sequence:            "1",

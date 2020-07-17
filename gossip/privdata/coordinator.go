@@ -108,7 +108,7 @@ type Support struct {
 // CoordinatorConfig encapsulates the config that is passed to a new coordinator
 type CoordinatorConfig struct {
 	// TransientBlockRetention indicates the number of blocks to retain in the transient store
-	// when purging below height on commiting every TransientBlockRetention-th block
+	// when purging below height on committing every TransientBlockRetention-th block
 	TransientBlockRetention uint64
 	// PullRetryThreshold indicates the max duration an attempted fetch from a remote peer will retry
 	// for before giving up and leaving the private data as missing
@@ -119,6 +119,7 @@ type CoordinatorConfig struct {
 }
 
 type coordinator struct {
+	mspID          string
 	selfSignedData protoutil.SignedData
 	Support
 	store                          *transientstore.Store
@@ -130,9 +131,10 @@ type coordinator struct {
 }
 
 // NewCoordinator creates a new instance of coordinator
-func NewCoordinator(support Support, store *transientstore.Store, selfSignedData protoutil.SignedData, metrics *metrics.PrivdataMetrics,
+func NewCoordinator(mspID string, support Support, store *transientstore.Store, selfSignedData protoutil.SignedData, metrics *metrics.PrivdataMetrics,
 	config CoordinatorConfig, idDeserializerFactory IdentityDeserializerFactory) Coordinator {
 	return &coordinator{Support: support,
+		mspID:                          mspID,
 		store:                          store,
 		selfSignedData:                 selfSignedData,
 		transientBlockRetention:        config.TransientBlockRetention,
@@ -183,6 +185,7 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 	fetchDurationHistogram := c.metrics.FetchDuration.With("channel", c.ChainID)
 	purgeDurationHistogram := c.metrics.PurgeDuration.With("channel", c.ChainID)
 	pdp := &PvtdataProvider{
+		mspID:                                   c.mspID,
 		selfSignedData:                          c.selfSignedData,
 		logger:                                  logger.With("channel", c.ChainID),
 		listMissingPrivateDataDurationHistogram: listMissingPrivateDataDurationHistogram,
@@ -225,7 +228,7 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 	}
 
 	// Purge transactions
-	retrievedPvtdata.Purge()
+	go retrievedPvtdata.Purge()
 
 	return nil
 }
@@ -429,7 +432,7 @@ func getTxInfoFromTransactionBytes(envBytes []byte) (*txInfo, error) {
 
 	if chdr.Type != int32(common.HeaderType_ENDORSER_TRANSACTION) {
 		err := errors.New("header type is not an endorser transaction")
-		logger.Warningf("Invalid transaction type: %s", err)
+		logger.Debugf("Invalid transaction type: %s", err)
 		return nil, err
 	}
 

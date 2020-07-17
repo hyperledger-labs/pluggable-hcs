@@ -90,6 +90,7 @@ var _ = Describe("QueryInstalled", func() {
 					},
 				}
 				json, err := json.MarshalIndent(expectedOutput, "", "\t")
+				Expect(err).NotTo(HaveOccurred())
 				Eventually(installedQuerier.Writer).Should(gbytes.Say(fmt.Sprintf(`\Q%s\E`, string(json))))
 			})
 		})
@@ -183,14 +184,14 @@ var _ = Describe("QueryInstalled", func() {
 	})
 
 	Describe("QueryInstalledCmd", func() {
-		var (
-			queryInstalledCmd *cobra.Command
-		)
+		var queryInstalledCmd *cobra.Command
 
 		BeforeEach(func() {
 			cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
 			Expect(err).To(BeNil())
 			queryInstalledCmd = chaincode.QueryInstalledCmd(nil, cryptoProvider)
+			queryInstalledCmd.SilenceErrors = true
+			queryInstalledCmd.SilenceUsage = true
 			queryInstalledCmd.SetArgs([]string{
 				"--peerAddresses=querypeer1",
 				"--tlsRootCertFiles=tls1",

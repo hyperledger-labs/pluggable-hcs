@@ -1,5 +1,6 @@
 /*
 Copyright IBM Corp. All Rights Reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 
@@ -39,7 +40,7 @@ func (f *ProcessorFactory) CreateProcessor(txEnvelopeBytes []byte) (processor tx
 	return c.NewProcessor(txEnv)
 }
 
-// validateProtoAndConstructTxEnv attemps to unmarshal the bytes and prepare an instance of struct tx.Envelope
+// validateProtoAndConstructTxEnv attempts to unmarshal the bytes and prepare an instance of struct tx.Envelope
 // It returns an error of type `tx.InvalidErr` if the proto message is found to be invalid
 func validateProtoAndConstructTxEnv(txEnvelopeBytes []byte) (*tx.Envelope, error) {
 	txenv, err := protoutil.UnmarshalEnvelope(txEnvelopeBytes)
@@ -105,7 +106,7 @@ func validateProtoAndConstructTxEnv(txEnvelopeBytes []byte) (*tx.Envelope, error
 	//other checks over shdr.Nonce, shdr.Creator can be added if universally applicable
 
 	//what TODO in legacy validation:
-	//   validate cHdr.ChainID ?
+	//   validate cHdr.ChannelId ?
 	//   validate epoch in cHdr.Epoch?
 
 	return &tx.Envelope{

@@ -44,11 +44,13 @@ var defaultTestConfig = DiscoveryConfig{
 	AliveExpirationTimeout:       10 * aliveTimeInterval,
 	AliveExpirationCheckInterval: aliveTimeInterval,
 	ReconnectInterval:            10 * aliveTimeInterval,
+	MaxConnectionAttempts:        DefMaxConnectionAttempts,
+	MsgExpirationFactor:          DefMsgExpirationFactor,
 }
 
 func init() {
 	util.SetupTestLogging()
-	maxConnectionAttempts = 10000
+	defaultTestConfig.MaxConnectionAttempts = 10000
 }
 
 type dummyReceivedMessage struct {
@@ -74,6 +76,15 @@ func (rm *dummyReceivedMessage) GetConnectionInfo() *protoext.ConnectionInfo {
 
 func (*dummyReceivedMessage) Ack(err error) {
 	panic("implement me")
+}
+
+// mockAnchorPeerTracker implements AnchorPeerTracker interface
+type mockAnchorPeerTracker struct {
+	apEndpoints []string
+}
+
+func (m *mockAnchorPeerTracker) IsAnchorPeer(endpoint string) bool {
+	return util.Contains(endpoint, m.apEndpoints)
 }
 
 type dummyCommModule struct {
@@ -378,6 +389,12 @@ func createDiscoveryInstanceThatGossips(port int, id string, bootstrapPeers []st
 }
 
 func createDiscoveryInstanceThatGossipsWithInterceptors(port int, id string, bootstrapPeers []string, shouldGossip bool, pol DisclosurePolicy, f func(*protoext.SignedGossipMessage), config DiscoveryConfig) *gossipInstance {
+	mockTracker := &mockAnchorPeerTracker{}
+	return createDiscoveryInstanceWithAnchorPeerTracker(port, id, bootstrapPeers, shouldGossip, pol, f, config, mockTracker)
+}
+
+func createDiscoveryInstanceWithAnchorPeerTracker(port int, id string, bootstrapPeers []string, shouldGossip bool, pol DisclosurePolicy,
+	f func(*protoext.SignedGossipMessage), config DiscoveryConfig, anchorPeerTracker AnchorPeerTracker) *gossipInstance {
 	comm := &dummyCommModule{
 		conns:          make(map[string]*grpc.ClientConn),
 		streams:        make(map[string]proto.Gossip_GossipStreamClient),
@@ -403,12 +420,14 @@ func createDiscoveryInstanceThatGossipsWithInterceptors(port int, id string, boo
 	listenAddress := fmt.Sprintf("%s:%d", "", port)
 	ll, err := net.Listen("tcp", listenAddress)
 	if err != nil {
-		fmt.Printf("Error listening on %v, %v", listenAddress, err)
+		errMsg := fmt.Sprintf("Failed creating listener on address %v for gossip instance: %v", listenAddress, err)
+		panic(errMsg)
 	}
 	s := grpc.NewServer()
 
 	config.BootstrapPeers = bootstrapPeers
-	discSvc := NewDiscoveryService(self, comm, comm, pol, config)
+
+	discSvc := NewDiscoveryService(self, comm, comm, pol, config, anchorPeerTracker)
 	for _, bootPeer := range bootstrapPeers {
 		bp := bootPeer
 		discSvc.Connect(NetworkMember{Endpoint: bp, InternalEndpoint: bootPeer}, func() (*PeerIdentification, error) {
@@ -426,6 +445,27 @@ func createDiscoveryInstanceThatGossipsWithInterceptors(port int, id string, boo
 
 func bootPeer(port int) string {
 	return fmt.Sprintf("localhost:%d", port)
+}
+
+func TestClone(t *testing.T) {
+	nm := &NetworkMember{
+		PKIid: common.PKIidType("abc"),
+		Properties: &proto.Properties{
+			LedgerHeight: 1,
+			LeftChannel:  true,
+		},
+		Envelope: &proto.Envelope{
+			Payload: []byte("payload"),
+		},
+		InternalEndpoint: "internal",
+		Metadata:         []byte{1, 2, 3},
+		Endpoint:         "endpoint",
+	}
+
+	nm2 := nm.Clone()
+	assert.Equal(t, *nm, nm2, "Clones are different")
+	assert.False(t, nm.Properties == nm2.Properties, "Cloning should be deep and not shallow")
+	assert.False(t, nm.Envelope == nm2.Envelope, "Cloning should be deep and not shallow")
 }
 
 func TestHasExternalEndpoints(t *testing.T) {
@@ -491,7 +531,6 @@ func TestBadInput(t *testing.T) {
 }
 
 func TestConnect(t *testing.T) {
-	t.Parallel()
 	nodeNum := 10
 	instances := []*gossipInstance{}
 	firstSentMemReqMsgs := make(chan *protoext.SignedGossipMessage, nodeNum)
@@ -544,8 +583,6 @@ func TestConnect(t *testing.T) {
 }
 
 func TestValidation(t *testing.T) {
-	t.Parallel()
-
 	// Scenarios: This test contains the following sub-tests:
 	// 1) alive message validation: a message is validated <==> it entered the message store
 	// 2) request/response message validation:
@@ -638,7 +675,6 @@ func TestValidation(t *testing.T) {
 	assert.NotNil(t, membershipRequest.Load())
 
 	t.Run("alive message", func(t *testing.T) {
-		t.Parallel()
 		// Spawn a new peer - p4
 		p4 := createDiscoveryInstance(4678, "p1", nil)
 		defer p4.Stop()
@@ -696,7 +732,6 @@ func TestValidation(t *testing.T) {
 	} {
 		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
 			p := createDiscoveryInstance(testCase.port, "p", nil)
 			defer p.Stop()
 			// Record messages validated
@@ -734,7 +769,6 @@ func TestValidation(t *testing.T) {
 }
 
 func TestUpdate(t *testing.T) {
-	t.Parallel()
 	nodeNum := 5
 	bootPeers := []string{bootPeer(6611), bootPeer(6612)}
 	instances := []*gossipInstance{}
@@ -784,7 +818,6 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestInitiateSync(t *testing.T) {
-	t.Parallel()
 	nodeNum := 10
 	bootPeers := []string{bootPeer(3611), bootPeer(3612)}
 	instances := []*gossipInstance{}
@@ -811,7 +844,6 @@ func TestInitiateSync(t *testing.T) {
 }
 
 func TestSelf(t *testing.T) {
-	t.Parallel()
 	inst := createDiscoveryInstance(13463, "d1", []string{})
 	defer inst.Stop()
 	env := inst.Self().Envelope
@@ -826,7 +858,6 @@ func TestSelf(t *testing.T) {
 }
 
 func TestExpiration(t *testing.T) {
-	t.Parallel()
 	nodeNum := 5
 	bootPeers := []string{bootPeer(2611), bootPeer(2612)}
 	instances := []*gossipInstance{}
@@ -866,7 +897,6 @@ func TestExpiration(t *testing.T) {
 }
 
 func TestGetFullMembership(t *testing.T) {
-	t.Parallel()
 	nodeNum := 15
 	bootPeers := []string{bootPeer(5511), bootPeer(5512)}
 	instances := []*gossipInstance{}
@@ -908,14 +938,12 @@ func TestGetFullMembership(t *testing.T) {
 }
 
 func TestGossipDiscoveryStopping(t *testing.T) {
-	t.Parallel()
 	inst := createDiscoveryInstance(9611, "d1", []string{bootPeer(9611)})
 	time.Sleep(time.Second)
 	waitUntilOrFailBlocking(t, inst.Stop)
 }
 
 func TestGossipDiscoverySkipConnectingToLocalhostBootstrap(t *testing.T) {
-	t.Parallel()
 	inst := createDiscoveryInstance(11611, "d1", []string{"localhost:11611", "127.0.0.1:11611"})
 	inst.comm.lock.Lock()
 	inst.comm.mock = &mock.Mock{}
@@ -931,7 +959,6 @@ func TestGossipDiscoverySkipConnectingToLocalhostBootstrap(t *testing.T) {
 }
 
 func TestConvergence(t *testing.T) {
-	t.Parallel()
 	// scenario:
 	// {boot peer: [peer list]}
 	// {d1: d2, d3, d4}
@@ -964,7 +991,6 @@ func TestConvergence(t *testing.T) {
 }
 
 func TestDisclosurePolicyWithPull(t *testing.T) {
-	t.Parallel()
 	// Scenario: run 2 groups of peers that simulate 2 organizations:
 	// {p0, p1, p2, p3, p4}
 	// {p5, p6, p7, p8, p9}
@@ -1109,8 +1135,6 @@ func discPolForPeer(selfPort int) DisclosurePolicy {
 }
 
 func TestCertificateChange(t *testing.T) {
-	t.Parallel()
-
 	bootPeers := []string{bootPeer(42611), bootPeer(42612), bootPeer(42613)}
 	p1 := createDiscoveryInstance(42611, "d1", bootPeers)
 	p2 := createDiscoveryInstance(42612, "d2", bootPeers)
@@ -1179,7 +1203,6 @@ func TestMsgStoreExpiration(t *testing.T) {
 	// Starts 4 instances, wait for membership to build, stop 2 instances
 	// Check that membership in 2 running instances become 2
 	// Wait for expiration and check that alive messages and related entities in maps are removed in running instances
-	t.Parallel()
 	nodeNum := 4
 	bootPeers := []string{bootPeer(12611), bootPeer(12612)}
 	instances := []*gossipInstance{}
@@ -1241,7 +1264,7 @@ func TestMsgStoreExpiration(t *testing.T) {
 		return true
 	}
 
-	waitUntilTimeoutOrFail(t, checkMessages, defaultTestConfig.AliveExpirationTimeout*(msgExpirationFactor+5))
+	waitUntilTimeoutOrFail(t, checkMessages, defaultTestConfig.AliveExpirationTimeout*(DefMsgExpirationFactor+5))
 
 	assertMembership(t, instances[:len(instances)-2], nodeNum-3)
 
@@ -1249,8 +1272,6 @@ func TestMsgStoreExpiration(t *testing.T) {
 }
 
 func TestExpirationNoSecretEnvelope(t *testing.T) {
-	t.Parallel()
-
 	l, err := zap.NewDevelopment()
 	assert.NoError(t, err)
 
@@ -1262,12 +1283,14 @@ func TestExpirationNoSecretEnvelope(t *testing.T) {
 		return nil
 	}))
 
+	mockTracker := &mockAnchorPeerTracker{}
 	msgStore := newAliveMsgStore(&gossipDiscoveryImpl{
 		aliveExpirationTimeout: time.Millisecond,
 		lock:                   &sync.RWMutex{},
 		aliveMembership:        util.NewMembershipStore(),
 		deadMembership:         util.NewMembershipStore(),
 		logger:                 logger,
+		anchorPeerTracker:      mockTracker,
 	})
 
 	msg := &proto.GossipMessage{
@@ -1301,8 +1324,6 @@ func TestMsgStoreExpirationWithMembershipMessages(t *testing.T) {
 	// Waits for expiration and checks msgStore and related maps
 	// Processes stored MembershipRequest msg and checks msgStore and related maps
 	// Processes stored MembershipResponse msg and checks msgStore and related maps
-
-	t.Parallel()
 	bootPeers := []string{}
 	peersNum := 3
 	instances := []*gossipInstance{}
@@ -1435,7 +1456,7 @@ func TestMsgStoreExpirationWithMembershipMessages(t *testing.T) {
 	}
 
 	// Sleep until expire
-	time.Sleep(defaultTestConfig.AliveExpirationTimeout * (msgExpirationFactor + 5))
+	time.Sleep(defaultTestConfig.AliveExpirationTimeout * (DefMsgExpirationFactor + 5))
 
 	// Checking Alive expired
 	for i := 0; i < peersNum; i++ {
@@ -1513,8 +1534,6 @@ func TestMsgStoreExpirationWithMembershipMessages(t *testing.T) {
 }
 
 func TestAliveMsgStore(t *testing.T) {
-	t.Parallel()
-
 	bootPeers := []string{}
 	peersNum := 2
 	instances := []*gossipInstance{}
@@ -1562,7 +1581,6 @@ func TestAliveMsgStore(t *testing.T) {
 }
 
 func TestMemRespDisclosurePol(t *testing.T) {
-	t.Parallel()
 	pol := func(remotePeer *NetworkMember) (Sieve, EnvelopeFilter) {
 		return func(_ *protoext.SignedGossipMessage) bool {
 				return remotePeer.Endpoint == "localhost:7880"
@@ -1647,8 +1665,6 @@ func TestMembersIntersect(t *testing.T) {
 }
 
 func TestPeerIsolation(t *testing.T) {
-	t.Parallel()
-
 	// Scenario:
 	// Start 3 peers (peer0, peer1, peer2). Set peer1 as the bootstrap peer for all.
 	// Stop peer0 and peer1 for a while, start them again and test if peer2 still gets full membership
@@ -1676,7 +1692,7 @@ func TestPeerIsolation(t *testing.T) {
 
 	// Sleep the same amount of time as it takes to remove a message from the aliveMsgStore (aliveMsgTTL)
 	// Add a second as buffer
-	time.Sleep(config.AliveExpirationTimeout*msgExpirationFactor + time.Second)
+	time.Sleep(config.AliveExpirationTimeout*DefMsgExpirationFactor + time.Second)
 
 	// Start again the first 2 peers and wait for all the peers to get full membership.
 	// Especially, we want to test that peer2 won't be isolated
@@ -1686,6 +1702,110 @@ func TestPeerIsolation(t *testing.T) {
 		instances[i] = inst
 	}
 	assertMembership(t, instances, peersNum-1)
+}
+
+func TestMembershipAfterExpiration(t *testing.T) {
+	// Scenario:
+	// Start 3 peers (peer0, peer1, peer2). Set peer0 as the anchor peer.
+	// Stop peer0 and peer1 for a while, start them again and test if peer2 still gets full membership
+
+	config := defaultTestConfig
+	// Use a smaller AliveExpirationTimeout than the default to reduce the running time of the test.
+	config.AliveExpirationTimeout = 2 * config.AliveTimeInterval
+	config.ReconnectInterval = config.AliveExpirationTimeout
+	config.MsgExpirationFactor = 5
+
+	peersNum := 3
+	ports := []int{9120, 9121, 9122}
+	anchorPeer := "localhost:9120"
+	bootPeers := []string{}
+	instances := []*gossipInstance{}
+	var inst *gossipInstance
+	mockTracker := &mockAnchorPeerTracker{[]string{anchorPeer}}
+
+	// use a custom logger to verify messages from expiration callback
+	expectedMsgs := []string{
+		"Do not remove bootstrap or anchor peer endpoint localhost:9120 from membership",
+		"Removing member: Endpoint: localhost:9121",
+	}
+	numMsgsFound := 0
+	l, err := zap.NewDevelopment()
+	assert.NoError(t, err)
+	expired := make(chan struct{})
+	logger := flogging.NewFabricLogger(l, zap.Hooks(func(entry zapcore.Entry) error {
+		// do nothing if we already found all the expectedMsgs
+		if numMsgsFound == len(expectedMsgs) {
+			return nil
+		}
+		for _, msg := range expectedMsgs {
+			if strings.Contains(entry.Message, msg) {
+				numMsgsFound++
+				if numMsgsFound == len(expectedMsgs) {
+					expired <- struct{}{}
+				}
+				break
+			}
+		}
+		return nil
+	}))
+
+	// Start all peers, connect to the anchor peer and verify full membership
+	for i := 0; i < peersNum; i++ {
+		id := fmt.Sprintf("d%d", i)
+		inst = createDiscoveryInstanceWithAnchorPeerTracker(ports[i], id, bootPeers, true, noopPolicy, func(_ *protoext.SignedGossipMessage) {}, config, mockTracker)
+		instances = append(instances, inst)
+	}
+	instances[peersNum-1].Discovery.(*gossipDiscoveryImpl).logger = logger
+	for i := 1; i < peersNum; i++ {
+		connect(instances[i], anchorPeer)
+	}
+	assertMembership(t, instances, peersNum-1)
+
+	// Stop peer0 and peer1 so that peer2 would stay alone
+	stopInstances(t, instances[0:peersNum-1])
+
+	// waitTime is the same amount of time as it takes to remove a message from the aliveMsgStore (aliveMsgTTL)
+	// Add a second as buffer
+	waitTime := config.AliveExpirationTimeout*time.Duration(config.MsgExpirationFactor) + time.Second
+	select {
+	case <-expired:
+	case <-time.After(waitTime):
+		t.Fatalf("timed out")
+	}
+	// peer2's deadMembership should contain the anchor peer
+	deadMemeberShip := instances[peersNum-1].discoveryImpl().deadMembership
+	assert.Equal(t, 1, deadMemeberShip.Size())
+	assertMembership(t, instances[peersNum-1:], 0)
+
+	// Start again peer0 and peer1 and wait for all the peers to get full membership.
+	// Especially, we want to test that peer2 won't be isolated
+	for i := 0; i < peersNum-1; i++ {
+		id := fmt.Sprintf("d%d", i)
+		inst = createDiscoveryInstanceWithAnchorPeerTracker(ports[i], id, bootPeers, true, noopPolicy, func(_ *protoext.SignedGossipMessage) {}, config, mockTracker)
+		instances[i] = inst
+	}
+	connect(instances[1], anchorPeer)
+	assertMembership(t, instances, peersNum-1)
+}
+
+func connect(inst *gossipInstance, endpoint string) {
+	inst.comm.lock.Lock()
+	inst.comm.mock = &mock.Mock{}
+	inst.comm.mock.On("SendToPeer", mock.Anything, mock.Anything).Run(func(arguments mock.Arguments) {
+		inst := inst
+		msg := arguments.Get(1).(*protoext.SignedGossipMessage)
+		if req := msg.GetMemReq(); req != nil {
+			inst.comm.lock.Lock()
+			inst.comm.mock = nil
+			inst.comm.lock.Unlock()
+		}
+	})
+	inst.comm.mock.On("Ping", mock.Anything)
+	inst.comm.lock.Unlock()
+	netMember2Connect2 := NetworkMember{Endpoint: endpoint, PKIid: []byte(endpoint)}
+	inst.Connect(netMember2Connect2, func() (identification *PeerIdentification, err error) {
+		return &PeerIdentification{SelfOrg: true, ID: nil}, nil
+	})
 }
 
 func waitUntilOrFail(t *testing.T, pred func() bool) {

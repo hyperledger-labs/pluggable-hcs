@@ -11,6 +11,20 @@ import (
 )
 
 type LegacyDeployedCCInfoProvider struct {
+	AllChaincodesInfoStub        func(string, ledger.SimpleQueryExecutor) (map[string]*ledger.DeployedChaincodeInfo, error)
+	allChaincodesInfoMutex       sync.RWMutex
+	allChaincodesInfoArgsForCall []struct {
+		arg1 string
+		arg2 ledger.SimpleQueryExecutor
+	}
+	allChaincodesInfoReturns struct {
+		result1 map[string]*ledger.DeployedChaincodeInfo
+		result2 error
+	}
+	allChaincodesInfoReturnsOnCall map[int]struct {
+		result1 map[string]*ledger.DeployedChaincodeInfo
+		result2 error
+	}
 	AllCollectionsConfigPkgStub        func(string, string, ledger.SimpleQueryExecutor) (*peer.CollectionConfigPackage, error)
 	allCollectionsConfigPkgMutex       sync.RWMutex
 	allCollectionsConfigPkgArgsForCall []struct {
@@ -57,6 +71,17 @@ type LegacyDeployedCCInfoProvider struct {
 		result1 *peer.StaticCollectionConfig
 		result2 error
 	}
+	GenerateImplicitCollectionForOrgStub        func(string) *peer.StaticCollectionConfig
+	generateImplicitCollectionForOrgMutex       sync.RWMutex
+	generateImplicitCollectionForOrgArgsForCall []struct {
+		arg1 string
+	}
+	generateImplicitCollectionForOrgReturns struct {
+		result1 *peer.StaticCollectionConfig
+	}
+	generateImplicitCollectionForOrgReturnsOnCall map[int]struct {
+		result1 *peer.StaticCollectionConfig
+	}
 	ImplicitCollectionsStub        func(string, string, ledger.SimpleQueryExecutor) ([]*peer.StaticCollectionConfig, error)
 	implicitCollectionsMutex       sync.RWMutex
 	implicitCollectionsArgsForCall []struct {
@@ -97,6 +122,70 @@ type LegacyDeployedCCInfoProvider struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *LegacyDeployedCCInfoProvider) AllChaincodesInfo(arg1 string, arg2 ledger.SimpleQueryExecutor) (map[string]*ledger.DeployedChaincodeInfo, error) {
+	fake.allChaincodesInfoMutex.Lock()
+	ret, specificReturn := fake.allChaincodesInfoReturnsOnCall[len(fake.allChaincodesInfoArgsForCall)]
+	fake.allChaincodesInfoArgsForCall = append(fake.allChaincodesInfoArgsForCall, struct {
+		arg1 string
+		arg2 ledger.SimpleQueryExecutor
+	}{arg1, arg2})
+	fake.recordInvocation("AllChaincodesInfo", []interface{}{arg1, arg2})
+	fake.allChaincodesInfoMutex.Unlock()
+	if fake.AllChaincodesInfoStub != nil {
+		return fake.AllChaincodesInfoStub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	fakeReturns := fake.allChaincodesInfoReturns
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *LegacyDeployedCCInfoProvider) AllChaincodesInfoCallCount() int {
+	fake.allChaincodesInfoMutex.RLock()
+	defer fake.allChaincodesInfoMutex.RUnlock()
+	return len(fake.allChaincodesInfoArgsForCall)
+}
+
+func (fake *LegacyDeployedCCInfoProvider) AllChaincodesInfoCalls(stub func(string, ledger.SimpleQueryExecutor) (map[string]*ledger.DeployedChaincodeInfo, error)) {
+	fake.allChaincodesInfoMutex.Lock()
+	defer fake.allChaincodesInfoMutex.Unlock()
+	fake.AllChaincodesInfoStub = stub
+}
+
+func (fake *LegacyDeployedCCInfoProvider) AllChaincodesInfoArgsForCall(i int) (string, ledger.SimpleQueryExecutor) {
+	fake.allChaincodesInfoMutex.RLock()
+	defer fake.allChaincodesInfoMutex.RUnlock()
+	argsForCall := fake.allChaincodesInfoArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *LegacyDeployedCCInfoProvider) AllChaincodesInfoReturns(result1 map[string]*ledger.DeployedChaincodeInfo, result2 error) {
+	fake.allChaincodesInfoMutex.Lock()
+	defer fake.allChaincodesInfoMutex.Unlock()
+	fake.AllChaincodesInfoStub = nil
+	fake.allChaincodesInfoReturns = struct {
+		result1 map[string]*ledger.DeployedChaincodeInfo
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *LegacyDeployedCCInfoProvider) AllChaincodesInfoReturnsOnCall(i int, result1 map[string]*ledger.DeployedChaincodeInfo, result2 error) {
+	fake.allChaincodesInfoMutex.Lock()
+	defer fake.allChaincodesInfoMutex.Unlock()
+	fake.AllChaincodesInfoStub = nil
+	if fake.allChaincodesInfoReturnsOnCall == nil {
+		fake.allChaincodesInfoReturnsOnCall = make(map[int]struct {
+			result1 map[string]*ledger.DeployedChaincodeInfo
+			result2 error
+		})
+	}
+	fake.allChaincodesInfoReturnsOnCall[i] = struct {
+		result1 map[string]*ledger.DeployedChaincodeInfo
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *LegacyDeployedCCInfoProvider) AllCollectionsConfigPkg(arg1 string, arg2 string, arg3 ledger.SimpleQueryExecutor) (*peer.CollectionConfigPackage, error) {
@@ -295,6 +384,66 @@ func (fake *LegacyDeployedCCInfoProvider) CollectionInfoReturnsOnCall(i int, res
 	}{result1, result2}
 }
 
+func (fake *LegacyDeployedCCInfoProvider) GenerateImplicitCollectionForOrg(arg1 string) *peer.StaticCollectionConfig {
+	fake.generateImplicitCollectionForOrgMutex.Lock()
+	ret, specificReturn := fake.generateImplicitCollectionForOrgReturnsOnCall[len(fake.generateImplicitCollectionForOrgArgsForCall)]
+	fake.generateImplicitCollectionForOrgArgsForCall = append(fake.generateImplicitCollectionForOrgArgsForCall, struct {
+		arg1 string
+	}{arg1})
+	fake.recordInvocation("GenerateImplicitCollectionForOrg", []interface{}{arg1})
+	fake.generateImplicitCollectionForOrgMutex.Unlock()
+	if fake.GenerateImplicitCollectionForOrgStub != nil {
+		return fake.GenerateImplicitCollectionForOrgStub(arg1)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	fakeReturns := fake.generateImplicitCollectionForOrgReturns
+	return fakeReturns.result1
+}
+
+func (fake *LegacyDeployedCCInfoProvider) GenerateImplicitCollectionForOrgCallCount() int {
+	fake.generateImplicitCollectionForOrgMutex.RLock()
+	defer fake.generateImplicitCollectionForOrgMutex.RUnlock()
+	return len(fake.generateImplicitCollectionForOrgArgsForCall)
+}
+
+func (fake *LegacyDeployedCCInfoProvider) GenerateImplicitCollectionForOrgCalls(stub func(string) *peer.StaticCollectionConfig) {
+	fake.generateImplicitCollectionForOrgMutex.Lock()
+	defer fake.generateImplicitCollectionForOrgMutex.Unlock()
+	fake.GenerateImplicitCollectionForOrgStub = stub
+}
+
+func (fake *LegacyDeployedCCInfoProvider) GenerateImplicitCollectionForOrgArgsForCall(i int) string {
+	fake.generateImplicitCollectionForOrgMutex.RLock()
+	defer fake.generateImplicitCollectionForOrgMutex.RUnlock()
+	argsForCall := fake.generateImplicitCollectionForOrgArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *LegacyDeployedCCInfoProvider) GenerateImplicitCollectionForOrgReturns(result1 *peer.StaticCollectionConfig) {
+	fake.generateImplicitCollectionForOrgMutex.Lock()
+	defer fake.generateImplicitCollectionForOrgMutex.Unlock()
+	fake.GenerateImplicitCollectionForOrgStub = nil
+	fake.generateImplicitCollectionForOrgReturns = struct {
+		result1 *peer.StaticCollectionConfig
+	}{result1}
+}
+
+func (fake *LegacyDeployedCCInfoProvider) GenerateImplicitCollectionForOrgReturnsOnCall(i int, result1 *peer.StaticCollectionConfig) {
+	fake.generateImplicitCollectionForOrgMutex.Lock()
+	defer fake.generateImplicitCollectionForOrgMutex.Unlock()
+	fake.GenerateImplicitCollectionForOrgStub = nil
+	if fake.generateImplicitCollectionForOrgReturnsOnCall == nil {
+		fake.generateImplicitCollectionForOrgReturnsOnCall = make(map[int]struct {
+			result1 *peer.StaticCollectionConfig
+		})
+	}
+	fake.generateImplicitCollectionForOrgReturnsOnCall[i] = struct {
+		result1 *peer.StaticCollectionConfig
+	}{result1}
+}
+
 func (fake *LegacyDeployedCCInfoProvider) ImplicitCollections(arg1 string, arg2 string, arg3 ledger.SimpleQueryExecutor) ([]*peer.StaticCollectionConfig, error) {
 	fake.implicitCollectionsMutex.Lock()
 	ret, specificReturn := fake.implicitCollectionsReturnsOnCall[len(fake.implicitCollectionsArgsForCall)]
@@ -478,12 +627,16 @@ func (fake *LegacyDeployedCCInfoProvider) UpdatedChaincodesReturnsOnCall(i int, 
 func (fake *LegacyDeployedCCInfoProvider) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
+	fake.allChaincodesInfoMutex.RLock()
+	defer fake.allChaincodesInfoMutex.RUnlock()
 	fake.allCollectionsConfigPkgMutex.RLock()
 	defer fake.allCollectionsConfigPkgMutex.RUnlock()
 	fake.chaincodeInfoMutex.RLock()
 	defer fake.chaincodeInfoMutex.RUnlock()
 	fake.collectionInfoMutex.RLock()
 	defer fake.collectionInfoMutex.RUnlock()
+	fake.generateImplicitCollectionForOrgMutex.RLock()
+	defer fake.generateImplicitCollectionForOrgMutex.RUnlock()
 	fake.implicitCollectionsMutex.RLock()
 	defer fake.implicitCollectionsMutex.RUnlock()
 	fake.namespacesMutex.RLock()

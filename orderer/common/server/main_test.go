@@ -5,7 +5,7 @@ package server
 
 import (
 	"fmt"
-	"github.com/hyperledger/fabric/msp"
+
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -23,23 +23,23 @@ import (
 	"github.com/hyperledger/fabric/bccsp/sw"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/crypto/tlsgen"
-	deliver_mocks "github.com/hyperledger/fabric/common/deliver/mock"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/flogging/floggingtest"
 	"github.com/hyperledger/fabric/common/ledger/blockledger"
 	"github.com/hyperledger/fabric/common/ledger/blockledger/fileledger"
-	ledger_mocks "github.com/hyperledger/fabric/common/ledger/blockledger/mocks"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
 	"github.com/hyperledger/fabric/common/metrics/prometheus"
-	"github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/core/config/configtest"
 	"github.com/hyperledger/fabric/internal/configtxgen/encoder"
 	"github.com/hyperledger/fabric/internal/configtxgen/genesisconfig"
+	"github.com/hyperledger/fabric/internal/pkg/comm"
 	"github.com/hyperledger/fabric/internal/pkg/identity"
+	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/orderer/common/bootstrap/file"
 	"github.com/hyperledger/fabric/orderer/common/cluster"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/common/multichannel"
+	"github.com/hyperledger/fabric/orderer/common/onboarding"
 	server_mocks "github.com/hyperledger/fabric/orderer/common/server/mocks"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/protoutil"
@@ -47,7 +47,6 @@ import (
 	"github.com/onsi/gomega/gexec"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -63,6 +62,43 @@ type signerSerializer interface {
 
 type fakeIdentity interface {
 	msp.Identity
+}
+
+// the path to cryptogen, which can be used by tests to create certificates
+var cryptogen, tempDir string
+
+func TestMain(m *testing.M) {
+	var err error
+	cryptogen, err = gexec.Build("github.com/hyperledger/fabric/cmd/cryptogen")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cryptogen build failed: %v", err)
+		os.Exit(-1)
+	}
+	defer gexec.CleanupBuildArtifacts()
+
+	tempDir, err = ioutil.TempDir("", "main-test")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create temporary directory: %v", err)
+		os.Exit(-1)
+	}
+	defer os.RemoveAll(tempDir)
+
+	copyYamlFiles("testdata", tempDir)
+
+	os.Exit(m.Run())
+}
+
+func copyYamlFiles(src, dst string) {
+	for _, file := range []string{"configtx.yaml", "examplecom-config.yaml", "orderer.yaml"} {
+		fileBytes, err := ioutil.ReadFile(filepath.Join(src, file))
+		if err != nil {
+			os.Exit(-1)
+		}
+		err = ioutil.WriteFile(filepath.Join(dst, file), fileBytes, 0644)
+		if err != nil {
+			os.Exit(-1)
+		}
+	}
 }
 
 func TestInitializeLogging(t *testing.T) {
@@ -408,7 +444,7 @@ func TestInitializeMultichannelRegistrar(t *testing.T) {
 		initializeBootstrapChannel(bootBlock, lf)
 		registrar := initializeMultichannelRegistrar(
 			bootBlock,
-			&replicationInitiator{cryptoProvider: cryptoProvider},
+			onboarding.NewReplicationInitiator(lf, bootBlock, conf, comm.SecureOptions{}, signer, cryptoProvider),
 			&cluster.PredicateDialer{},
 			comm.ServerConfig{},
 			nil,
@@ -427,14 +463,16 @@ func TestInitializeMultichannelRegistrar(t *testing.T) {
 	t.Run("registrar without a system channel", func(t *testing.T) {
 		conf.General.BootstrapMethod = "none"
 		conf.General.GenesisFile = ""
+		srv, err := comm.NewGRPCServer("127.0.0.1:0", comm.ServerConfig{})
+		assert.NoError(t, err)
 		lf, _, err := createLedgerFactory(conf, &disabled.Provider{})
 		assert.NoError(t, err)
 		registrar := initializeMultichannelRegistrar(
 			nil,
-			&replicationInitiator{cryptoProvider: cryptoProvider},
+			nil,
 			&cluster.PredicateDialer{},
 			comm.ServerConfig{},
-			nil,
+			srv,
 			conf,
 			signer,
 			mockIdentity,
@@ -544,7 +582,7 @@ func TestUpdateTrustedRoots(t *testing.T) {
 
 	initializeMultichannelRegistrar(
 		bootBlock,
-		&replicationInitiator{cryptoProvider: cryptoProvider},
+		onboarding.NewReplicationInitiator(lf, bootBlock, conf, comm.SecureOptions{}, signer, cryptoProvider),
 		&cluster.PredicateDialer{},
 		comm.ServerConfig{},
 		nil,
@@ -596,7 +634,7 @@ func TestUpdateTrustedRoots(t *testing.T) {
 	}
 	initializeMultichannelRegistrar(
 		bootBlock,
-		&replicationInitiator{cryptoProvider: cryptoProvider},
+		onboarding.NewReplicationInitiator(lf, bootBlock, conf, comm.SecureOptions{}, signer, cryptoProvider),
 		predDialer,
 		comm.ServerConfig{},
 		nil,
@@ -637,7 +675,7 @@ func TestConfigureClusterListener(t *testing.T) {
 	unUsedPort := allocatePort()
 
 	backupLogger := logger
-	logger = logger.With(zap.Hooks(func(entry zapcore.Entry) error {
+	logger = logger.WithOptions(zap.Hooks(func(entry zapcore.Entry) error {
 		logEntries <- entry.Message
 		return nil
 	}))
@@ -707,7 +745,7 @@ func TestConfigureClusterListener(t *testing.T) {
 			},
 			expectedPanic:      "Failed to load cluster server key from 'bad' (I/O error)",
 			generalSrv:         &comm.GRPCServer{},
-			expectedLogEntries: []string{"Failed to load cluster server certificate from 'bad' (I/O error)"},
+			expectedLogEntries: []string{"Failed to load cluster server key from 'bad' (I/O error)"},
 		},
 		{
 			name:        "invalid ca cert",
@@ -783,7 +821,7 @@ func TestConfigureClusterListener(t *testing.T) {
 				logEntry := <-logEntries
 				loggedMessages = append(loggedMessages, logEntry)
 			}
-			assert.Subset(t, testCase.expectedLogEntries, loggedMessages)
+			assert.Subset(t, loggedMessages, testCase.expectedLogEntries)
 		})
 	}
 }
@@ -791,15 +829,15 @@ func TestConfigureClusterListener(t *testing.T) {
 func TestReuseListener(t *testing.T) {
 	t.Run("good to reuse", func(t *testing.T) {
 		top := &localconfig.TopLevel{General: localconfig.General{TLS: localconfig.TLS{Enabled: true}}}
-		require.True(t, reuseListener(top, "foo"))
+		require.True(t, reuseListener(top))
 	})
 
 	t.Run("reuse tls disabled", func(t *testing.T) {
 		top := &localconfig.TopLevel{}
 		require.PanicsWithValue(
 			t,
-			"TLS is required for running ordering nodes of type foo.",
-			func() { reuseListener(top, "foo") },
+			"TLS is required for running ordering nodes of cluster type.",
+			func() { reuseListener(top) },
 		)
 	})
 
@@ -814,7 +852,7 @@ func TestReuseListener(t *testing.T) {
 				},
 			},
 		}
-		require.False(t, reuseListener(top, "foo"))
+		require.False(t, reuseListener(top))
 	})
 
 	t.Run("partial config", func(t *testing.T) {
@@ -831,7 +869,7 @@ func TestReuseListener(t *testing.T) {
 			t,
 			"Options: General.Cluster.ListenPort, General.Cluster.ListenAddress,"+
 				" General.Cluster.ServerCertificate, General.Cluster.ServerPrivateKey, should be defined altogether.",
-			func() { reuseListener(top, "foo") },
+			func() { reuseListener(top) },
 		)
 	})
 }
@@ -857,11 +895,13 @@ func TestInitializeEtcdraftConsenter(t *testing.T) {
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
 	assert.NoError(t, err)
 
-	initializeEtcdraftConsenter(consenters,
+	initializeEtcdraftConsenter(
+		consenters,
 		&localconfig.TopLevel{},
 		rlf,
 		&cluster.PredicateDialer{},
-		genesisBlock, &replicationInitiator{cryptoProvider: cryptoProvider},
+		genesisBlock,
+		onboarding.NewReplicationInitiator(rlf, genesisBlock, nil, comm.SecureOptions{}, nil, cryptoProvider),
 		comm.ServerConfig{
 			SecOpts: comm.SecureOptions{
 				Certificate: crt.Cert,
@@ -912,36 +952,6 @@ func panicMsg(f func()) string {
 
 	return message.(string)
 
-}
-
-func TestCreateReplicator(t *testing.T) {
-	cleanup := configtest.SetDevFabricConfigPath(t)
-	defer cleanup()
-	bootBlock := encoder.New(genesisconfig.Load(genesisconfig.SampleDevModeSoloProfile)).GenesisBlockForChannel("system")
-
-	iterator := &deliver_mocks.BlockIterator{}
-	iterator.NextReturnsOnCall(0, bootBlock, common.Status_SUCCESS)
-	iterator.NextReturnsOnCall(1, bootBlock, common.Status_SUCCESS)
-
-	ledger := &ledger_mocks.ReadWriter{}
-	ledger.On("Height").Return(uint64(1))
-	ledger.On("Iterator", mock.Anything).Return(iterator, uint64(1))
-
-	ledgerFactory := &server_mocks.Factory{}
-	ledgerFactory.On("GetOrCreate", "mychannel").Return(ledger, nil)
-	ledgerFactory.On("ChannelIDs").Return([]string{"mychannel"})
-
-	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	assert.NoError(t, err)
-
-	signer := &server_mocks.SignerSerializer{}
-	r := createReplicator(ledgerFactory, bootBlock, &localconfig.TopLevel{}, comm.SecureOptions{}, signer, cryptoProvider)
-
-	err = r.verifierRetriever.RetrieveVerifier("mychannel").VerifyBlockSignature(nil, nil)
-	assert.EqualError(t, err, "implicit policy evaluation failed - 0 sub-policies were satisfied, but this policy requires 1 of the 'Writers' sub-policies to be satisfied")
-
-	err = r.verifierRetriever.RetrieveVerifier("system").VerifyBlockSignature(nil, nil)
-	assert.NoError(t, err)
 }
 
 func produceGenesisFile(t *testing.T, profile, channelID string) string {

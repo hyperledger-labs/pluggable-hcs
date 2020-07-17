@@ -8,6 +8,7 @@ package etcdraft
 
 import (
 	"bytes"
+	"github.com/hyperledger/fabric/orderer/consensus/follower"
 	"path"
 	"reflect"
 	"time"
@@ -20,7 +21,7 @@ import (
 	"github.com/hyperledger/fabric/bccsp"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/metrics"
-	"github.com/hyperledger/fabric/core/comm"
+	"github.com/hyperledger/fabric/internal/pkg/comm"
 	"github.com/hyperledger/fabric/orderer/common/cluster"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/common/multichannel"
@@ -31,16 +32,13 @@ import (
 	"go.etcd.io/etcd/raft"
 )
 
-// CreateChainCallback creates a new chain
-type CreateChainCallback func()
-
 //go:generate mockery -dir . -name InactiveChainRegistry -case underscore -output mocks
 
 // InactiveChainRegistry registers chains that are inactive
 type InactiveChainRegistry interface {
 	// TrackChain tracks a chain with the given name, and calls the given callback
 	// when this chain should be created.
-	TrackChain(chainName string, genesisBlock *common.Block, createChain CreateChainCallback)
+	TrackChain(chainName string, genesisBlock *common.Block, createChain func())
 }
 
 //go:generate mockery -dir . -name ChainGetter -case underscore -output mocks
@@ -161,10 +159,15 @@ func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *co
 
 	id, err := c.detectSelfID(consenters)
 	if err != nil {
-		c.InactiveChainRegistry.TrackChain(support.ChannelID(), support.Block(0), func() {
-			c.CreateChain(support.ChannelID())
-		})
-		return &inactive.Chain{Err: errors.Errorf("channel %s is not serviced by me", support.ChannelID())}, nil
+		if c.InactiveChainRegistry != nil {
+			c.InactiveChainRegistry.TrackChain(support.ChannelID(), support.Block(0), func() {
+				c.CreateChain(support.ChannelID())
+			})
+			return &inactive.Chain{Err: errors.Errorf("channel %s is not serviced by me", support.ChannelID())}, nil
+		} else {
+			//TODO fully construct a follower chain
+			return &follower.Chain{Err: errors.Errorf("orderer is a follower of channel %s", support.ChannelID())}, nil
+		}
 	}
 
 	var evictionSuspicion time.Duration
@@ -215,6 +218,26 @@ func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *co
 		Comm:          c.Communication,
 		StreamsByType: cluster.NewStreamsByType(),
 	}
+
+	// when we have a system channel
+	if c.InactiveChainRegistry != nil {
+		return NewChain(
+			support,
+			opts,
+			c.Communication,
+			rpc,
+			c.BCCSP,
+			func() (BlockPuller, error) {
+				return NewBlockPuller(support, c.Dialer, c.OrdererConfig.General.Cluster, c.BCCSP)
+			},
+			func() {
+				c.InactiveChainRegistry.TrackChain(support.ChannelID(), nil, func() { c.CreateChain(support.ChannelID()) })
+			},
+			nil,
+		)
+	}
+
+	// when we do NOT have a system channel
 	return NewChain(
 		support,
 		opts,
@@ -225,10 +248,16 @@ func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *co
 			return NewBlockPuller(support, c.Dialer, c.OrdererConfig.General.Cluster, c.BCCSP)
 		},
 		func() {
-			c.InactiveChainRegistry.TrackChain(support.ChannelID(), nil, func() { c.CreateChain(support.ChannelID()) })
+			c.Logger.Warning("Start a follower.Chain: not yet implemented")
+			//TODO start follower.Chain
 		},
 		nil,
 	)
+}
+
+func (c *Consenter) JoinChain(support consensus.ConsenterSupport, joinBlock *common.Block) (consensus.Chain, error) {
+	//TODO fully construct a follower.Chain
+	return nil, errors.New("not implemented")
 }
 
 // ReadBlockMetadata attempts to read raft metadata from block metadata, if available.
@@ -304,6 +333,11 @@ func New(
 		Dispatcher: comm,
 	}
 	orderer.RegisterClusterServer(srv.Server(), svc)
+
+	if icr == nil {
+		logger.Debug("Created an etcdraft consenter without a system channel, InactiveChainRegistry is nil")
+	}
+
 	return consenter
 }
 

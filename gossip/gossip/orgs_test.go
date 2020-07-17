@@ -18,7 +18,6 @@ import (
 	proto "github.com/hyperledger/fabric-protos-go/gossip"
 	"github.com/hyperledger/fabric/bccsp/factory"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
-	"github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/gossip/api"
 	gcomm "github.com/hyperledger/fabric/gossip/comm"
 	"github.com/hyperledger/fabric/gossip/common"
@@ -27,6 +26,7 @@ import (
 	"github.com/hyperledger/fabric/gossip/metrics"
 	"github.com/hyperledger/fabric/gossip/protoext"
 	"github.com/hyperledger/fabric/gossip/util"
+	"github.com/hyperledger/fabric/internal/pkg/comm"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -106,7 +106,7 @@ func newGossipInstanceWithGRPCWithExternalEndpoint(id int, port int, gRPCServer 
 	conf := &Config{
 		BootstrapPeers:               bootPeersWithPorts(boot...),
 		ID:                           fmt.Sprintf("p%d", id),
-		MaxBlockCountToStore:         100,
+		MaxBlockCountToStore:         10,
 		MaxPropagationBurstLatency:   time.Duration(500) * time.Millisecond,
 		MaxPropagationBurstSize:      20,
 		PropagateIterations:          1,
@@ -132,10 +132,12 @@ func newGossipInstanceWithGRPCWithExternalEndpoint(id int, port int, gRPCServer 
 		AliveExpirationTimeout:       discoveryConfig.AliveExpirationTimeout,
 		AliveExpirationCheckInterval: discoveryConfig.AliveExpirationCheckInterval,
 		ReconnectInterval:            discoveryConfig.ReconnectInterval,
+		MaxConnectionAttempts:        discoveryConfig.MaxConnectionAttempts,
+		MsgExpirationFactor:          discoveryConfig.MsgExpirationFactor,
 	}
 	selfID := api.PeerIdentityType(conf.InternalEndpoint)
 	g := New(conf, gRPCServer.Server(), mcs, mcs, selfID,
-		secureDialOpts, metrics.NewGossipMetrics(&disabled.Provider{}))
+		secureDialOpts, metrics.NewGossipMetrics(&disabled.Provider{}), nil)
 	go func() {
 		gRPCServer.Start()
 	}()
@@ -143,7 +145,6 @@ func newGossipInstanceWithGRPCWithExternalEndpoint(id int, port int, gRPCServer 
 }
 
 func TestMultipleOrgEndpointLeakage(t *testing.T) {
-	t.Parallel()
 	// Scenario: create 2 organizations, each with 5 peers.
 	// Both organizations will have an anchor peer each
 	// The first 2 peers of each org would have an external endpoint, the rest won't.
@@ -271,7 +272,6 @@ func TestMultipleOrgEndpointLeakage(t *testing.T) {
 }
 
 func TestConfidentiality(t *testing.T) {
-	t.Parallel()
 	// Scenario: create 4 organizations: {A, B, C, D}, each with 3 peers.
 	// Make only the first 2 peers have an external endpoint.
 	// Also, add the peers to the following channels:

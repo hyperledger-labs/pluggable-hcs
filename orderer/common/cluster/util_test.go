@@ -28,10 +28,10 @@ import (
 	"github.com/hyperledger/fabric/common/crypto/tlsgen"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/policies"
-	"github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/core/config/configtest"
 	"github.com/hyperledger/fabric/internal/configtxgen/encoder"
 	"github.com/hyperledger/fabric/internal/configtxgen/genesisconfig"
+	"github.com/hyperledger/fabric/internal/pkg/comm"
 	"github.com/hyperledger/fabric/orderer/common/cluster"
 	"github.com/hyperledger/fabric/orderer/common/cluster/mocks"
 	"github.com/hyperledger/fabric/protoutil"
@@ -87,6 +87,7 @@ func TestDialerCustomKeepAliveOptions(t *testing.T) {
 	assert.NoError(t, err)
 
 	clientKeyPair, err := ca.NewClientCertKeyPair()
+	assert.NoError(t, err)
 	clientConfig := comm.ClientConfig{
 		KaOpts: comm.KeepaliveOptions{
 			ClientTimeout: time.Second * 12345,

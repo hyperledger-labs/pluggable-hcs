@@ -89,9 +89,12 @@ var _ = Describe("EndToEnd Crash Fault Tolerance", func() {
 			network.Bootstrap()
 
 			o1Runner := network.OrdererRunner(o1)
+			// Enable debug log for orderer2 so we could assert its content later
+			o2Runner := network.OrdererRunner(o2, "FABRIC_LOGGING_SPEC=orderer.consensus.etcdraft=debug:info")
+			o3Runner := network.OrdererRunner(o3)
 			orderers := grouper.Members{
-				{Name: o2.ID(), Runner: network.OrdererRunner(o2)},
-				{Name: o3.ID(), Runner: network.OrdererRunner(o3)},
+				{Name: o2.ID(), Runner: o2Runner},
+				{Name: o3.ID(), Runner: o3Runner},
 			}
 			ordererGroup := grouper.NewParallel(syscall.SIGTERM, orderers)
 
@@ -114,6 +117,9 @@ var _ = Describe("EndToEnd Crash Fault Tolerance", func() {
 			By("killing orderer1")
 			o1Proc.Signal(syscall.SIGKILL)
 			Eventually(o1Proc.Wait(), network.EventuallyTimeout).Should(Receive(MatchError("exit status 137")))
+
+			By("observing active nodes to shrink")
+			Eventually(o2Runner.Err(), network.EventuallyTimeout).Should(gbytes.Say("Current active nodes in cluster are: \\[2 3\\]"))
 
 			By("broadcasting envelope to running orderer")
 			resp, err = nwo.Broadcast(network, o2, env)
@@ -372,10 +378,10 @@ var _ = Describe("EndToEnd Crash Fault Tolerance", func() {
 			By("Expiring orderer TLS certificates")
 			for filePath, certPEM := range serverTLSCerts {
 				expiredCert, earlyMadeCACert := expireCertificate(certPEM, ordererTLSCACert, ordererTLSCAKey)
-				err = ioutil.WriteFile(filePath, expiredCert, 600)
+				err = ioutil.WriteFile(filePath, expiredCert, 0600)
 				Expect(err).NotTo(HaveOccurred())
 
-				err = ioutil.WriteFile(ordererTLSCACertPath, earlyMadeCACert, 600)
+				err = ioutil.WriteFile(ordererTLSCACertPath, earlyMadeCACert, 0600)
 				Expect(err).NotTo(HaveOccurred())
 			}
 
@@ -470,20 +476,20 @@ var _ = Describe("EndToEnd Crash Fault Tolerance", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			expiredAdminCert, earlyCACert := expireCertificate(originalAdminCert, ordererCACert, ordererCAKey)
-			err = ioutil.WriteFile(adminCertPath, expiredAdminCert, 600)
+			err = ioutil.WriteFile(adminCertPath, expiredAdminCert, 0600)
 			Expect(err).NotTo(HaveOccurred())
 
 			adminPath := filepath.Join(network.RootDir, "crypto", "ordererOrganizations",
 				ordererDomain, "msp", "admincerts", fmt.Sprintf("Admin@%s-cert.pem", ordererDomain))
-			err = ioutil.WriteFile(adminPath, expiredAdminCert, 600)
+			err = ioutil.WriteFile(adminPath, expiredAdminCert, 0600)
 			Expect(err).NotTo(HaveOccurred())
 
-			err = ioutil.WriteFile(ordererCACertPath, earlyCACert, 600)
+			err = ioutil.WriteFile(ordererCACertPath, earlyCACert, 0600)
 			Expect(err).NotTo(HaveOccurred())
 
 			ordererCACertPath = filepath.Join(network.RootDir, "crypto", "ordererOrganizations",
 				ordererDomain, "msp", "cacerts", fmt.Sprintf("ca.%s-cert.pem", ordererDomain))
-			err = ioutil.WriteFile(ordererCACertPath, earlyCACert, 600)
+			err = ioutil.WriteFile(ordererCACertPath, earlyCACert, 0600)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Regenerating config")
@@ -535,7 +541,7 @@ var _ = Describe("EndToEnd Crash Fault Tolerance", func() {
 			Expect(denv).NotTo(BeNil())
 
 			block, err := nwo.Deliver(network, orderer, denv)
-			Expect(denv).NotTo(BeNil())
+			Expect(err).To(HaveOccurred())
 			Expect(block).To(BeNil())
 			Eventually(runner.Err(), time.Minute, time.Second).Should(gbytes.Say("client identity expired"))
 
@@ -561,7 +567,7 @@ var _ = Describe("EndToEnd Crash Fault Tolerance", func() {
 			Expect(block).NotTo(BeNil())
 
 			By("Restore the original admin cert")
-			err = ioutil.WriteFile(adminCertPath, originalAdminCert, 600)
+			err = ioutil.WriteFile(adminCertPath, originalAdminCert, 0600)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Ensure we can fetch the block using our original un-expired admin cert")
@@ -581,7 +587,8 @@ func findLeader(ordererRunners []*ginkgomon.Runner) int {
 		Eventually(runner.Err(), time.Minute, time.Second).Should(gbytes.Say("Raft leader changed: [0-9] -> "))
 
 		idBuff := make([]byte, 1)
-		runner.Err().Read(idBuff)
+		_, err := runner.Err().Read(idBuff)
+		Expect(err).NotTo(HaveOccurred())
 
 		newLeader, err := strconv.ParseInt(string(idBuff), 10, 32)
 		Expect(err).To(BeNil())

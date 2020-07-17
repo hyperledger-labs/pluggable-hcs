@@ -7,8 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package multichannel
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
+	"path"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
@@ -16,6 +18,7 @@ import (
 	ab "github.com/hyperledger/fabric-protos-go/orderer"
 	"github.com/hyperledger/fabric/bccsp/sw"
 	"github.com/hyperledger/fabric/common/channelconfig"
+	"github.com/hyperledger/fabric/common/crypto/tlsgen"
 	"github.com/hyperledger/fabric/common/ledger/blockledger"
 	"github.com/hyperledger/fabric/common/ledger/blockledger/fileledger"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
@@ -27,6 +30,7 @@ import (
 	"github.com/hyperledger/fabric/orderer/common/blockcutter"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/common/multichannel/mocks"
+	"github.com/hyperledger/fabric/orderer/common/types"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
@@ -152,8 +156,8 @@ func TestNewRegistrar(t *testing.T) {
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
 	assert.NoError(t, err)
 
-	// This test checks to make sure the orderer refuses to come up if it cannot find a system channel
-	t.Run("No system chain - failure", func(t *testing.T) {
+	// This test checks to make sure the orderer can come up if it cannot find any chains
+	t.Run("No chains", func(t *testing.T) {
 		tmpdir, err := ioutil.TempDir("", "registrar_test-")
 		require.NoError(t, err)
 		defer os.RemoveAll(tmpdir)
@@ -162,11 +166,19 @@ func TestNewRegistrar(t *testing.T) {
 		require.NoError(t, err)
 
 		consenters := make(map[string]consensus.Consenter)
-		consenters[confSys.Orderer.OrdererType] = &mockConsenter{}
+		consenters["etcdraft"] = &mockConsenter{}
 
+		var manager *Registrar
 		assert.NotPanics(t, func() {
-			NewRegistrar(localconfig.TopLevel{}, lf, mockCrypto(), &disabled.Provider{}, cryptoProvider).Initialize(consenters)
+			manager = NewRegistrar(localconfig.TopLevel{}, lf, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+			manager.Initialize(consenters)
 		}, "Should not panic when starting without a system channel")
+		require.NotNil(t, manager)
+		list := manager.ChannelList()
+		assert.Equal(t, types.ChannelList{}, list)
+		info, err := manager.ChannelInfo("my-channel")
+		assert.EqualError(t, err, types.ErrChannelNotExist.Error())
+		assert.Equal(t, types.ChannelInfo{}, info)
 	})
 
 	// This test checks to make sure that the orderer refuses to come up if there are multiple system channels
@@ -195,7 +207,7 @@ func TestNewRegistrar(t *testing.T) {
 	})
 
 	// This test essentially brings the entire system up and is ultimately what main.go will replicate
-	t.Run("Correct flow", func(t *testing.T) {
+	t.Run("Correct flow with system channel", func(t *testing.T) {
 		tmpdir, err := ioutil.TempDir("", "registrar_test-")
 		require.NoError(t, err)
 		defer os.RemoveAll(tmpdir)
@@ -213,6 +225,24 @@ func TestNewRegistrar(t *testing.T) {
 
 		chainSupport = manager.GetChain("testchannelid")
 		assert.NotNilf(t, chainSupport, "Should have gotten chain which was initialized by ledger")
+
+		list := manager.ChannelList()
+		require.NotNil(t, list.SystemChannel)
+
+		assert.Equal(
+			t,
+			types.ChannelList{
+				SystemChannel: &types.ChannelInfoShort{Name: "testchannelid", URL: ""},
+				Channels:      nil},
+			list,
+		)
+
+		info, err := manager.ChannelInfo("testchannelid")
+		assert.NoError(t, err)
+		assert.Equal(t,
+			types.ChannelInfo{Name: "testchannelid", URL: "", ClusterRelation: "none", Status: "active", Height: 1},
+			info,
+		)
 
 		testMessageOrderAndRetrieval(confSys.Orderer.BatchSize.MaxMessageCount, "testchannelid", chainSupport, rl, t)
 	})
@@ -234,7 +264,7 @@ func TestCreateChain(t *testing.T) {
 		lf, _ := newLedgerAndFactory(tmpdir, "testchannelid", genesisBlockSys)
 
 		consenters := make(map[string]consensus.Consenter)
-		consenters[confSys.Orderer.OrdererType] = &mockConsenter{}
+		consenters[confSys.Orderer.OrdererType] = &mockConsenter{cluster: true}
 
 		manager := NewRegistrar(localconfig.TopLevel{}, lf, mockCrypto(), &disabled.Provider{}, cryptoProvider)
 		manager.Initialize(consenters)
@@ -251,6 +281,30 @@ func TestCreateChain(t *testing.T) {
 		manager.CreateChain("mychannel")
 		chain := manager.GetChain("mychannel")
 		assert.NotNil(t, chain)
+
+		list := manager.ChannelList()
+		assert.Equal(
+			t,
+			types.ChannelList{
+				SystemChannel: &types.ChannelInfoShort{Name: "testchannelid", URL: ""},
+				Channels:      []types.ChannelInfoShort{{Name: "mychannel", URL: ""}}},
+			list,
+		)
+
+		info, err := manager.ChannelInfo("testchannelid")
+		assert.NoError(t, err)
+		assert.Equal(t,
+			types.ChannelInfo{Name: "testchannelid", URL: "", ClusterRelation: types.ClusterRelationMember, Status: types.StatusActive, Height: 1},
+			info,
+		)
+
+		info, err = manager.ChannelInfo("mychannel")
+		assert.NoError(t, err)
+		assert.Equal(t,
+			types.ChannelInfo{Name: "mychannel", URL: "", ClusterRelation: types.ClusterRelationMember, Status: types.StatusActive, Height: 1},
+			info,
+		)
+
 		// A subsequent creation, replaces the chain.
 		manager.CreateChain("mychannel")
 		chain2 := manager.GetChain("mychannel")
@@ -258,10 +312,11 @@ func TestCreateChain(t *testing.T) {
 		// They are not the same
 		assert.NotEqual(t, chain, chain2)
 		// The old chain is halted
-		_, ok := <-chain.Chain.(*mockChain).queue
+		_, ok := <-chain.Chain.(*mockChainCluster).queue
 		assert.False(t, ok)
+
 		// The new chain is not halted: Close the channel to prove that.
-		close(chain2.Chain.(*mockChain).queue)
+		close(chain2.Chain.(*mockChainCluster).queue)
 	})
 
 	// This test brings up the entire system, with the mock consenter, including the broadcasters etc. and creates a new chain
@@ -353,7 +408,8 @@ func TestCreateChain(t *testing.T) {
 
 		cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
 		assert.NoError(t, err)
-		rcs := newChainSupport(manager, chainSupport.ledgerResources, consenters, mockCrypto(), blockcutter.NewMetrics(&disabled.Provider{}), cryptoProvider)
+		rcs, err := newChainSupport(manager, chainSupport.ledgerResources, consenters, mockCrypto(), blockcutter.NewMetrics(&disabled.Provider{}), cryptoProvider)
+		assert.NoError(t, err)
 		assert.Equal(t, expectedLastConfigSeq, rcs.lastConfigSeq, "On restart, incorrect lastConfigSeq")
 	})
 }
@@ -444,7 +500,7 @@ func TestBroadcastChannelSupport(t *testing.T) {
 		defer os.RemoveAll(tmpdir)
 
 		ledgerFactory, _ := newLedgerAndFactory(tmpdir, "", nil)
-		mockConsenters := map[string]consensus.Consenter{confSys.Orderer.OrdererType: &mockConsenter{}}
+		mockConsenters := map[string]consensus.Consenter{confSys.Orderer.OrdererType: &mockConsenter{}, "etcdraft": &mockConsenter{}}
 		config := localconfig.TopLevel{}
 		config.General.BootstrapMethod = "none"
 		config.General.GenesisFile = ""
@@ -453,6 +509,159 @@ func TestBroadcastChannelSupport(t *testing.T) {
 		configTx := makeConfigTxFull("testchannelid", 1)
 		_, _, _, err = registrar.BroadcastChannelSupport(configTx)
 		assert.Error(t, err)
-		assert.Equal(t, "channel creation request not allowed because the orderer system channel is not yet defined", err.Error())
+		assert.Equal(t, "channel creation request not allowed because the orderer system channel is not defined", err.Error())
 	})
+}
+
+func TestRegistrar_JoinChannel(t *testing.T) {
+	// system channel
+	confSys := genesisconfig.Load(genesisconfig.SampleInsecureSoloProfile, configtest.GetDevConfigDir())
+	genesisBlockSys := encoder.New(confSys).GenesisBlockForChannel("sys-channel")
+	confApp := genesisconfig.Load(genesisconfig.SampleInsecureSoloProfile, configtest.GetDevConfigDir())
+	confApp.Consortiums = nil
+	confApp.Consortium = ""
+	genesisBlockApp := encoder.New(confApp).GenesisBlockForChannel("my-channel")
+
+	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
+	assert.NoError(t, err)
+
+	t.Run("Reject join when system channel exists", func(t *testing.T) {
+		tmpdir, err := ioutil.TempDir("", "registrar_test-")
+		require.NoError(t, err)
+		defer os.RemoveAll(tmpdir)
+
+		ledgerFactory, _ := newLedgerAndFactory(tmpdir, "sys-channel", genesisBlockSys)
+		mockConsenters := map[string]consensus.Consenter{confSys.Orderer.OrdererType: &mockConsenter{}}
+		registrar := NewRegistrar(localconfig.TopLevel{}, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+		registrar.Initialize(mockConsenters)
+
+		info, err := registrar.JoinChannel("some-app-channel", &cb.Block{}, true)
+		assert.EqualError(t, err, "system channel exists")
+		assert.Equal(t, types.ChannelInfo{}, info)
+	})
+
+	t.Run("Reject join when channel exists", func(t *testing.T) {
+		tmpdir, err := ioutil.TempDir("", "registrar_test-")
+		require.NoError(t, err)
+		defer os.RemoveAll(tmpdir)
+
+		ledgerFactory, _ := newLedgerAndFactory(tmpdir, "", nil)
+		mockConsenters := map[string]consensus.Consenter{confSys.Orderer.OrdererType: &mockConsenter{}, "etcdraft": &mockConsenter{}}
+		config := localconfig.TopLevel{}
+		config.General.BootstrapMethod = "none"
+		config.General.GenesisFile = ""
+		registrar := NewRegistrar(config, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+		registrar.Initialize(mockConsenters)
+
+		ledger, err := ledgerFactory.GetOrCreate("my-channel")
+		assert.NoError(t, err)
+		ledger.Append(genesisBlockApp)
+
+		// Before creating the chain, it doesn't exist
+		assert.Nil(t, registrar.GetChain("my-channel"))
+		// After creating the chain, it exists
+		registrar.CreateChain("my-channel")
+		assert.NotNil(t, registrar.GetChain("my-channel"))
+
+		info, err := registrar.JoinChannel("my-channel", &cb.Block{}, true)
+		assert.EqualError(t, err, "channel already exists")
+		assert.Equal(t, types.ChannelInfo{}, info)
+	})
+
+	t.Run("Reject system channel join when app channels exist", func(t *testing.T) {
+		tmpdir, err := ioutil.TempDir("", "registrar_test-")
+		require.NoError(t, err)
+		defer os.RemoveAll(tmpdir)
+
+		ledgerFactory, _ := newLedgerAndFactory(tmpdir, "", nil)
+		mockConsenters := map[string]consensus.Consenter{confSys.Orderer.OrdererType: &mockConsenter{}, "etcdraft": &mockConsenter{}}
+		config := localconfig.TopLevel{}
+		config.General.BootstrapMethod = "none"
+		config.General.GenesisFile = ""
+		registrar := NewRegistrar(config, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+		registrar.Initialize(mockConsenters)
+
+		ledger, err := ledgerFactory.GetOrCreate("my-channel")
+		assert.NoError(t, err)
+		ledger.Append(genesisBlockApp)
+
+		// Before creating the chain, it doesn't exist
+		assert.Nil(t, registrar.GetChain("my-channel"))
+		// After creating the chain, it exists
+		registrar.CreateChain("my-channel")
+		assert.NotNil(t, registrar.GetChain("my-channel"))
+
+		info, err := registrar.JoinChannel("sys-channel", &cb.Block{}, false)
+		assert.EqualError(t, err, "application channels already exist")
+		assert.Equal(t, types.ChannelInfo{}, info)
+	})
+
+	t.Run("no etcdraft consenter without system channel", func(t *testing.T) {
+		tmpdir, err := ioutil.TempDir("", "registrar_test-")
+		require.NoError(t, err)
+		defer os.RemoveAll(tmpdir)
+
+		ledgerFactory, _ := newLedgerAndFactory(tmpdir, "", nil)
+		mockConsenters := map[string]consensus.Consenter{"not-raft": &mockConsenter{}}
+
+		config := localconfig.TopLevel{}
+		config.General.BootstrapMethod = "none"
+		config.General.GenesisFile = ""
+		registrar := NewRegistrar(config, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+
+		assert.Panics(t, func() { registrar.Initialize(mockConsenters) })
+	})
+
+	t.Run("Join app channel as member without on boarding", func(t *testing.T) {
+		tmpdir, err := ioutil.TempDir("", "registrar_test-")
+		require.NoError(t, err)
+		defer os.RemoveAll(tmpdir)
+
+		tlsCA, _ := tlsgen.NewCA()
+
+		confAppRaft := genesisconfig.Load(genesisconfig.SampleDevModeEtcdRaftProfile, configtest.GetDevConfigDir())
+		confAppRaft.Consortiums = nil
+		confAppRaft.Consortium = ""
+		generateCertificates(t, confAppRaft, tlsCA, tmpdir)
+		bootstrapper, err := encoder.NewBootstrapper(confAppRaft)
+		require.NoError(t, err, "cannot create bootstrapper")
+		genesisBlockAppRaft := bootstrapper.GenesisBlockForChannel("my-raft-channel")
+		require.NotNil(t, genesisBlockAppRaft)
+
+		ledgerFactory, _ := newLedgerAndFactory(tmpdir, "", nil)
+		mockConsenters := map[string]consensus.Consenter{confAppRaft.Orderer.OrdererType: &mockConsenter{cluster: true}}
+		config := localconfig.TopLevel{}
+		config.General.BootstrapMethod = "none"
+		config.General.GenesisFile = ""
+		registrar := NewRegistrar(config, ledgerFactory, mockCrypto(), &disabled.Provider{}, cryptoProvider)
+		registrar.Initialize(mockConsenters)
+
+		// Before join the chain, it doesn't exist
+		assert.Nil(t, registrar.GetChain("my-raft-channel"))
+
+		info, err := registrar.JoinChannel("my-raft-channel", genesisBlockAppRaft, true)
+		assert.NoError(t, err)
+		assert.Equal(t, types.ChannelInfo{Name: "my-raft-channel", URL: "", ClusterRelation: "member", Status: "active", Height: 0x1}, info)
+		// After creating the chain, it exists
+		assert.NotNil(t, registrar.GetChain("my-raft-channel"))
+	})
+}
+
+func generateCertificates(t *testing.T, confAppRaft *genesisconfig.Profile, tlsCA tlsgen.CA, certDir string) {
+	for i, c := range confAppRaft.Orderer.EtcdRaft.Consenters {
+		srvC, err := tlsCA.NewServerCertKeyPair(c.Host)
+		require.NoError(t, err)
+		srvP := path.Join(certDir, fmt.Sprintf("server%d.crt", i))
+		err = ioutil.WriteFile(srvP, srvC.Cert, 0644)
+		require.NoError(t, err)
+
+		clnC, err := tlsCA.NewClientCertKeyPair()
+		require.NoError(t, err)
+		clnP := path.Join(certDir, fmt.Sprintf("client%d.crt", i))
+		err = ioutil.WriteFile(clnP, clnC.Cert, 0644)
+		require.NoError(t, err)
+
+		c.ServerTlsCert = []byte(srvP)
+		c.ClientTlsCert = []byte(clnP)
+	}
 }

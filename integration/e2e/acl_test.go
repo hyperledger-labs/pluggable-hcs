@@ -242,9 +242,9 @@ var _ = Describe("EndToEndACL", func() {
 		chaincode = nwo.Chaincode{
 			Name:                "mycc",
 			Version:             "0.0",
-			Path:                components.Build("github.com/hyperledger/fabric/integration/chaincode/module"),
+			Path:                components.Build("github.com/hyperledger/fabric/integration/chaincode/simple/cmd"),
 			Lang:                "binary",
-			PackageFile:         filepath.Join(testDir, "modulecc.tar.gz"),
+			PackageFile:         filepath.Join(testDir, "simplecc.tar.gz"),
 			Ctor:                `{"Args":["init","a","100","b","200"]}`,
 			ChannelConfigPolicy: "/Channel/Application/Endorsement",
 			Sequence:            "1",
@@ -349,6 +349,26 @@ var _ = Describe("EndToEndACL", func() {
 		//
 		By("approving a chaincode definition for org1 and org2")
 		nwo.ApproveChaincodeForMyOrg(network, "testchannel", orderer, chaincode, org1Peer0, org2Peer0)
+
+		//
+		// when the ACL policy for _lifecycle/QueryApprovedChaincodeDefinition is not satisfied
+		//
+		By("querying the approved chaincode definition for org1 as an org2 admin")
+		sess, err = network.PeerAdminSession(org2Peer0, commands.ChaincodeQueryApproved{
+			ChannelID:     "testchannel",
+			Name:          chaincode.Name,
+			Sequence:      chaincode.Sequence,
+			PeerAddresses: []string{network.PeerAddress(org1Peer0, nwo.ListenPort)},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Eventually(sess, network.EventuallyTimeout).Should(gexec.Exit())
+		Expect(sess.Err).To(gbytes.Say(`\QError: query failed with status: 500 - Failed to authorize invocation due to failed ACL check: Failed deserializing proposal creator during channelless check policy with policy [Admins]: [expected MSP ID Org1MSP, received Org2MSP]\E`))
+
+		//
+		// when the ACL policy for _lifecycle/QueryApprovedChaincodeDefinition is satisfied
+		//
+		By("querying the approved chaincode definition for org1 as an org1 admin")
+		nwo.EnsureChaincodeApproved(network, org1Peer0, "testchannel", chaincode.Name, chaincode.Sequence)
 
 		//
 		// when the ACL policy for CheckCommitReadiness is not satisified

@@ -1,5 +1,6 @@
 /*
 Copyright IBM Corp. All Rights Reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 
@@ -20,13 +21,16 @@ import (
 // QueryExecutor is a query executor against the LevelDB history DB
 type QueryExecutor struct {
 	levelDB    *leveldbhelper.DBHandle
-	blockStore blkstorage.BlockStore
+	blockStore *blkstorage.BlockStore
 }
 
 // GetHistoryForKey implements method in interface `ledger.HistoryQueryExecutor`
 func (q *QueryExecutor) GetHistoryForKey(namespace string, key string) (commonledger.ResultsIterator, error) {
 	rangeScan := constructRangeScan(namespace, key)
-	dbItr := q.levelDB.GetIterator(rangeScan.startKey, rangeScan.endKey)
+	dbItr, err := q.levelDB.GetIterator(rangeScan.startKey, rangeScan.endKey)
+	if err != nil {
+		return nil, err
+	}
 
 	// By default, dbItr is in the orderer of oldest to newest and its cursor is at the beginning of the entries.
 	// Need to call Last() and Next() to move the cursor to the end of the entries so that we can iterate
@@ -43,7 +47,7 @@ type historyScanner struct {
 	namespace  string
 	key        string
 	dbItr      iterator.Iterator
-	blockStore blkstorage.BlockStore
+	blockStore *blkstorage.BlockStore
 }
 
 // Next iterates to the next key, in the order of newest to oldest, from history scanner.

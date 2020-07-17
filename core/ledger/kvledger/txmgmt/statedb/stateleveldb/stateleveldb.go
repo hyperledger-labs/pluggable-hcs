@@ -12,8 +12,8 @@ import (
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/ledger/dataformat"
 	"github.com/hyperledger/fabric/common/ledger/util/leveldbhelper"
+	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/pkg/errors"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
 )
@@ -21,10 +21,12 @@ import (
 var logger = flogging.MustGetLogger("stateleveldb")
 
 var (
-	dataKeyPrefix    = []byte{'d'}
-	nsKeySep         = []byte{0x00}
-	lastKeyIndicator = byte(0x01)
-	savePointKey     = []byte{'s'}
+	dataKeyPrefix               = []byte{'d'}
+	dataKeyStopper              = []byte{'e'}
+	nsKeySep                    = []byte{0x00}
+	lastKeyIndicator            = byte(0x01)
+	savePointKey                = []byte{'s'}
+	fullScanIteratorValueFormat = byte(1)
 )
 
 // VersionedDBProvider implements interface VersionedDBProvider
@@ -37,8 +39,8 @@ func NewVersionedDBProvider(dbPath string) (*VersionedDBProvider, error) {
 	logger.Debugf("constructing VersionedDBProvider dbPath=%s", dbPath)
 	dbProvider, err := leveldbhelper.NewProvider(
 		&leveldbhelper.Conf{
-			DBPath:                dbPath,
-			ExpectedFormatVersion: dataformat.Version20,
+			DBPath:         dbPath,
+			ExpectedFormat: dataformat.CurrentFormat,
 		})
 	if err != nil {
 		return nil, err
@@ -47,7 +49,7 @@ func NewVersionedDBProvider(dbPath string) (*VersionedDBProvider, error) {
 }
 
 // GetDBHandle gets the handle to a named database
-func (provider *VersionedDBProvider) GetDBHandle(dbName string) (statedb.VersionedDB, error) {
+func (provider *VersionedDBProvider) GetDBHandle(dbName string, namespaceProvider statedb.NamespaceProvider) (statedb.VersionedDB, error) {
 	return newVersionedDB(provider.dbProvider.GetDBHandle(dbName), dbName), nil
 }
 
@@ -130,35 +132,22 @@ func (vdb *versionedDB) GetStateMultipleKeys(namespace string, keys []string) ([
 // startKey is inclusive
 // endKey is exclusive
 func (vdb *versionedDB) GetStateRangeScanIterator(namespace string, startKey string, endKey string) (statedb.ResultsIterator, error) {
-	return vdb.GetStateRangeScanIteratorWithMetadata(namespace, startKey, endKey, nil)
+	// pageSize = 0 denotes unlimited page size
+	return vdb.GetStateRangeScanIteratorWithPagination(namespace, startKey, endKey, 0)
 }
 
-const optionLimit = "limit"
-
-// GetStateRangeScanIteratorWithMetadata implements method in VersionedDB interface
-func (vdb *versionedDB) GetStateRangeScanIteratorWithMetadata(namespace string, startKey string, endKey string, metadata map[string]interface{}) (statedb.QueryResultsIterator, error) {
-
-	requestedLimit := int32(0)
-	// if metadata is provided, validate and apply options
-	if metadata != nil {
-		//validate the metadata
-		err := statedb.ValidateRangeMetadata(metadata)
-		if err != nil {
-			return nil, err
-		}
-		if limitOption, ok := metadata[optionLimit]; ok {
-			requestedLimit = limitOption.(int32)
-		}
-	}
-
-	// Note:  metadata is not used for the goleveldb implementation of the range query
+// GetStateRangeScanIteratorWithPagination implements method in VersionedDB interface
+func (vdb *versionedDB) GetStateRangeScanIteratorWithPagination(namespace string, startKey string, endKey string, pageSize int32) (statedb.QueryResultsIterator, error) {
 	dataStartKey := encodeDataKey(namespace, startKey)
 	dataEndKey := encodeDataKey(namespace, endKey)
 	if endKey == "" {
 		dataEndKey[len(dataEndKey)-1] = lastKeyIndicator
 	}
-	dbItr := vdb.db.GetIterator(dataStartKey, dataEndKey)
-	return newKVScanner(namespace, dbItr, requestedLimit), nil
+	dbItr, err := vdb.db.GetIterator(dataStartKey, dataEndKey)
+	if err != nil {
+		return nil, err
+	}
+	return newKVScanner(namespace, dbItr, pageSize), nil
 }
 
 // ExecuteQuery implements method in VersionedDB interface
@@ -166,8 +155,8 @@ func (vdb *versionedDB) ExecuteQuery(namespace, query string) (statedb.ResultsIt
 	return nil, errors.New("ExecuteQuery not supported for leveldb")
 }
 
-// ExecuteQueryWithMetadata implements method in VersionedDB interface
-func (vdb *versionedDB) ExecuteQueryWithMetadata(namespace, query string, metadata map[string]interface{}) (statedb.QueryResultsIterator, error) {
+// ExecuteQueryWithPagination implements method in VersionedDB interface
+func (vdb *versionedDB) ExecuteQueryWithPagination(namespace, query, bookmark string, pageSize int32) (statedb.QueryResultsIterator, error) {
 	return nil, errors.New("ExecuteQueryWithMetadata not supported for leveldb")
 }
 
@@ -222,6 +211,15 @@ func (vdb *versionedDB) GetLatestSavePoint() (*version.Height, error) {
 	return version, nil
 }
 
+// GetFullScanIterator implements method in VersionedDB interface. 	This function returns a
+// FullScanIterator that can be used to iterate over entire data in the statedb for a channel.
+// `skipNamespace` parameter can be used to control if the consumer wants the FullScanIterator
+// to skip one or more namespaces from the returned results. The intended use of this iterator
+// is to generate the snapshot files for the stateleveldb
+func (vdb *versionedDB) GetFullScanIterator(skipNamespace func(string) bool) (statedb.FullScanIterator, byte, error) {
+	return newFullDBScanner(vdb.db, skipNamespace)
+}
+
 func encodeDataKey(ns, key string) []byte {
 	k := append(dataKeyPrefix, []byte(ns)...)
 	k = append(k, nsKeySep...)
@@ -231,6 +229,11 @@ func encodeDataKey(ns, key string) []byte {
 func decodeDataKey(encodedDataKey []byte) (string, string) {
 	split := bytes.SplitN(encodedDataKey, nsKeySep, 2)
 	return string(split[0][1:]), string(split[1])
+}
+
+func dataKeyStarterForNextNamespace(ns string) []byte {
+	k := append(dataKeyPrefix, []byte(ns)...)
+	return append(k, lastKeyIndicator)
 }
 
 type kvScanner struct {
@@ -283,4 +286,56 @@ func (scanner *kvScanner) GetBookmarkAndClose() string {
 	}
 	scanner.Close()
 	return retval
+}
+
+type fullDBScanner struct {
+	db     *leveldbhelper.DBHandle
+	dbItr  iterator.Iterator
+	toSkip func(namespace string) bool
+}
+
+func newFullDBScanner(db *leveldbhelper.DBHandle, skipNamespace func(namespace string) bool) (*fullDBScanner, byte, error) {
+	dbItr, err := db.GetIterator(dataKeyPrefix, dataKeyStopper)
+	if err != nil {
+		return nil, byte(0), err
+	}
+	return &fullDBScanner{
+			db:     db,
+			dbItr:  dbItr,
+			toSkip: skipNamespace,
+		},
+		fullScanIteratorValueFormat,
+		nil
+}
+
+// Next returns the key-values in the lexical order of <Namespace, key>
+// The bytes returned for the <version, value, metadata> are the same as they are stored in the leveldb.
+// Since, the primary intended use of this function is to generate the snapshot files for the statedb, the same
+// bytes can be consumed back as is. Hence, we do not decode or transform these bytes for the efficiency
+func (s *fullDBScanner) Next() (*statedb.CompositeKey, []byte, error) {
+	for s.dbItr.Next() {
+		dbKey := s.dbItr.Key()
+		dbVal := s.dbItr.Value()
+		ns, key := decodeDataKey(dbKey)
+		compositeKey := &statedb.CompositeKey{
+			Namespace: ns,
+			Key:       key,
+		}
+
+		switch {
+		case !s.toSkip(ns):
+			return compositeKey, dbVal, nil
+		default:
+			s.dbItr.Seek(dataKeyStarterForNextNamespace(ns))
+			s.dbItr.Prev()
+		}
+	}
+	return nil, nil, errors.Wrap(s.dbItr.Error(), "internal leveldb error while retrieving data from db iterator")
+}
+
+func (s *fullDBScanner) Close() {
+	if s == nil {
+		return
+	}
+	s.dbItr.Release()
 }

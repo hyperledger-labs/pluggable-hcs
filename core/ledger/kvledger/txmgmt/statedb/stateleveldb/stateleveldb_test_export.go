@@ -1,17 +1,7 @@
 /*
-Copyright IBM Corp. 2016 All Rights Reserved.
+Copyright IBM Corp. All Rights Reserved.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-		 http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+SPDX-License-Identifier: Apache-2.0
 */
 
 package stateleveldb
@@ -21,15 +11,14 @@ import (
 	"os"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
+	"github.com/stretchr/testify/require"
 )
 
 // TestVDBEnv provides a level db backed versioned db for testing
 type TestVDBEnv struct {
 	t          testing.TB
-	DBProvider statedb.VersionedDBProvider
+	DBProvider *VersionedDBProvider
 	dbPath     string
 }
 
@@ -41,7 +30,7 @@ func NewTestVDBEnv(t testing.TB) *TestVDBEnv {
 		t.Fatalf("Failed to create leveldb directory: %s", err)
 	}
 	dbProvider, err := NewVersionedDBProvider(dbPath)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	return &TestVDBEnv{t, dbProvider, dbPath}
 }
 
@@ -51,3 +40,12 @@ func (env *TestVDBEnv) Cleanup() {
 	env.DBProvider.Close()
 	os.RemoveAll(env.dbPath)
 }
+
+var (
+	// TestEnvDBValueformat exports the constant to be used used for tests
+	TestEnvDBValueformat = fullScanIteratorValueFormat
+	// TestEnvDBValueDecoder exports the function for decoding the dbvalue bytes
+	TestEnvDBValueDecoder = func(dbValue []byte) (*statedb.VersionedValue, error) {
+		return decodeValue(dbValue)
+	}
+)

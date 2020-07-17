@@ -13,6 +13,8 @@ The rest of this topic describes how to configure chaincode as an external servi
 * [Deploying the chaincode](#deploying-the-chaincode)
 * [Running the chaincode as an external service](#running-the-chaincode-as-an-external-service)
 
+**Note:** This is an advanced feature that will likely require custom packaging of the peer image. For example, the following samples use `jq` and `bash`, which are not included in the current official `fabric-peer` image.
+
 ## Packaging chaincode
 
 With the Fabric v2.0 chaincode lifecycle, chaincode is [packaged](./cc_launcher.html#chaincode-packages) and installed in a `.tar.gz` format. The following `myccpackage.tgz` archive  demonstrates the required structure:
@@ -253,7 +255,7 @@ Then build the chaincode as suitable to your GO environment.
 
 ## Deploying the chaincode
 
-When the GO chaincode is ready for deployment, you can package the chaincode as explained in the [Packaging chaincode](#packaging-chaincode) section and deploy the chaincode as explained in the [chaincode lifecycle](./chaincode4noah.html#chaincode-lifecycle) documentation.
+When the GO chaincode is ready for deployment, you can package the chaincode as explained in the [Packaging chaincode](#packaging-chaincode) section and deploy the chaincode as explained in the [Fabric chaincode lifecycle](./chaincode_lifecycle.html) concept topic.
 
 ## Running the chaincode as an external service
 

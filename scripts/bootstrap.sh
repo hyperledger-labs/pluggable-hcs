@@ -6,16 +6,14 @@
 #
 
 # if version not passed in, default to latest released version
-VERSION=2.0.0
+VERSION=2.2.0
 # if ca version not passed in, default to latest released version
-CA_VERSION=1.4.4
-# current version of thirdparty images (couchdb, kafka and zookeeper) released
-THIRDPARTY_IMAGE_VERSION=0.4.18
+CA_VERSION=1.4.7
 ARCH=$(echo "$(uname -s|tr '[:upper:]' '[:lower:]'|sed 's/mingw64_nt.*/windows/')-$(uname -m | sed 's/x86_64/amd64/g')")
 MARCH=$(uname -m)
 
 printHelp() {
-    echo "Usage: bootstrap.sh [version [ca_version [thirdparty_version]]] [options]"
+    echo "Usage: bootstrap.sh [version [ca_version]] [options]"
     echo
     echo "options:"
     echo "-h : this help"
@@ -23,8 +21,8 @@ printHelp() {
     echo "-s : bypass fabric-samples repo clone"
     echo "-b : bypass download of platform-specific binaries"
     echo
-    echo "e.g. bootstrap.sh 2.0.0 1.4.4 0.4.18 -s"
-    echo "would download docker images and binaries for Fabric v2.0.0 and Fabric CA v1.4.4"
+    echo "e.g. bootstrap.sh 2.2.0 1.4.7 -s"
+    echo "will download docker images and binaries for Fabric v2.2.0 and Fabric CA v1.4.7"
 }
 
 # dockerPull() pulls docker images from fabric and chaincode repositories
@@ -32,11 +30,11 @@ printHelp() {
 # be skipped, since this script doesn't terminate upon errors.
 
 dockerPull() {
-    #three_digit_image_tag is passed in, e.g. "1.4.4"
+    #three_digit_image_tag is passed in, e.g. "1.4.7"
     three_digit_image_tag=$1
     shift
     #two_digit_image_tag is derived, e.g. "1.4", especially useful as a local tag for two digit references to most recent baseos, ccenv, javaenv, nodeenv patch releases
-    two_digit_image_tag=$(echo $three_digit_image_tag | cut -d'.' -f1,2)
+    two_digit_image_tag=$(echo "$three_digit_image_tag" | cut -d'.' -f1,2)
     while [[ $# -gt 0 ]]
     do
         image_name="$1"
@@ -71,9 +69,7 @@ download() {
     local BINARY_FILE=$1
     local URL=$2
     echo "===> Downloading: " "${URL}"
-    wget "${URL}" || rc=$?
-    tar xvzf "${BINARY_FILE}" || rc=$?
-    rm "${BINARY_FILE}"
+    curl -L --retry 5 --retry-delay 3 "${URL}" | tar xz || rc=$?
     if [ -n "$rc" ]; then
         echo "==> There was an error downloading the binary file."
         return 22
@@ -123,10 +119,6 @@ pullDockerImages() {
         echo "===> Pulling fabric ca Image"
         CA_IMAGE=(ca)
         dockerPull "${CA_TAG}" "${CA_IMAGE[@]}"
-        echo "===> Pulling thirdparty docker images"
-        THIRDPARTY_IMAGES=(zookeeper kafka couchdb)
-        dockerPull "${THIRDPARTY_TAG}" "${THIRDPARTY_IMAGES[@]}"
-        echo
         echo "===> List out hyperledger docker images"
         docker images | grep hyperledger
     else

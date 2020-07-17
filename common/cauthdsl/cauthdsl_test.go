@@ -15,6 +15,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	mb "github.com/hyperledger/fabric-protos-go/msp"
+	"github.com/hyperledger/fabric/common/policydsl"
 	"github.com/hyperledger/fabric/msp"
 	"github.com/stretchr/testify/assert"
 )
@@ -92,13 +93,10 @@ func (md *mockDeserializer) DeserializeIdentity(serializedIdentity []byte) (msp.
 	return &mockIdentity{idBytes: serializedIdentity}, nil
 }
 
-var validSignature = []byte("signed")
 var signers = [][]byte{[]byte("signer0"), []byte("signer1")}
-var msgs = [][]byte{nil, nil}
-var moreMsgs = [][]byte{nil, nil, nil}
 
 func TestSimpleSignature(t *testing.T) {
-	policy := Envelope(SignedBy(0), signers)
+	policy := policydsl.Envelope(policydsl.SignedBy(0), signers)
 
 	spe, err := compile(policy.Rule, policy.Identities)
 	if err != nil {
@@ -114,7 +112,7 @@ func TestSimpleSignature(t *testing.T) {
 }
 
 func TestMultipleSignature(t *testing.T) {
-	policy := Envelope(And(SignedBy(0), SignedBy(1)), signers)
+	policy := policydsl.Envelope(policydsl.And(policydsl.SignedBy(0), policydsl.SignedBy(1)), signers)
 
 	spe, err := compile(policy.Rule, policy.Identities)
 	if err != nil {
@@ -130,7 +128,7 @@ func TestMultipleSignature(t *testing.T) {
 }
 
 func TestComplexNestedSignature(t *testing.T) {
-	policy := Envelope(And(Or(And(SignedBy(0), SignedBy(1)), And(SignedBy(0), SignedBy(0))), SignedBy(0)), signers)
+	policy := policydsl.Envelope(policydsl.And(policydsl.Or(policydsl.And(policydsl.SignedBy(0), policydsl.SignedBy(1)), policydsl.And(policydsl.SignedBy(0), policydsl.SignedBy(0))), policydsl.SignedBy(0)), signers)
 
 	spe, err := compile(policy.Rule, policy.Identities)
 	if err != nil {
@@ -152,7 +150,7 @@ func TestComplexNestedSignature(t *testing.T) {
 }
 
 func TestNegatively(t *testing.T) {
-	rpolicy := Envelope(And(SignedBy(0), SignedBy(1)), signers)
+	rpolicy := policydsl.Envelope(policydsl.And(policydsl.SignedBy(0), policydsl.SignedBy(1)), signers)
 	rpolicy.Rule.Type = nil
 	b, _ := proto.Marshal(rpolicy)
 	policy := &cb.SignaturePolicyEnvelope{}
@@ -169,7 +167,7 @@ func TestNilSignaturePolicyEnvelope(t *testing.T) {
 }
 
 func TestSignedByMspClient(t *testing.T) {
-	e := SignedByMspClient("A")
+	e := policydsl.SignedByMspClient("A")
 	assert.Equal(t, 1, len(e.Identities))
 
 	role := &mb.MSPRole{}
@@ -179,7 +177,7 @@ func TestSignedByMspClient(t *testing.T) {
 	assert.Equal(t, role.MspIdentifier, "A")
 	assert.Equal(t, role.Role, mb.MSPRole_CLIENT)
 
-	e = SignedByAnyClient([]string{"A"})
+	e = policydsl.SignedByAnyClient([]string{"A"})
 	assert.Equal(t, 1, len(e.Identities))
 
 	role = &mb.MSPRole{}
@@ -191,7 +189,7 @@ func TestSignedByMspClient(t *testing.T) {
 }
 
 func TestSignedByMspPeer(t *testing.T) {
-	e := SignedByMspPeer("A")
+	e := policydsl.SignedByMspPeer("A")
 	assert.Equal(t, 1, len(e.Identities))
 
 	role := &mb.MSPRole{}
@@ -201,7 +199,7 @@ func TestSignedByMspPeer(t *testing.T) {
 	assert.Equal(t, role.MspIdentifier, "A")
 	assert.Equal(t, role.Role, mb.MSPRole_PEER)
 
-	e = SignedByAnyPeer([]string{"A"})
+	e = policydsl.SignedByAnyPeer([]string{"A"})
 	assert.Equal(t, 1, len(e.Identities))
 
 	role = &mb.MSPRole{}
@@ -213,7 +211,7 @@ func TestSignedByMspPeer(t *testing.T) {
 }
 
 func TestReturnNil(t *testing.T) {
-	policy := Envelope(And(SignedBy(-1), SignedBy(-2)), signers)
+	policy := policydsl.Envelope(policydsl.And(policydsl.SignedBy(-1), policydsl.SignedBy(-2)), signers)
 
 	spe, err := compile(policy.Rule, policy.Identities)
 	assert.Nil(t, spe)

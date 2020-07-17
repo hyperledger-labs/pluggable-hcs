@@ -15,12 +15,12 @@ import (
 	"strings"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/hyperledger/fabric-config/protolator"
+	"github.com/hyperledger/fabric-config/protolator/protoext/ordererext"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/bccsp/factory"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
-	"github.com/hyperledger/fabric/common/tools/protolator"
-	"github.com/hyperledger/fabric/common/tools/protolator/protoext/ordererext"
 	"github.com/hyperledger/fabric/internal/configtxgen/encoder"
 	"github.com/hyperledger/fabric/internal/configtxgen/genesisconfig"
 	"github.com/hyperledger/fabric/internal/configtxgen/metadata"
@@ -47,7 +47,7 @@ func doOutputBlock(config *genesisconfig.Profile, channelID string, outputBlock 
 	logger.Info("Writing genesis block")
 	err = writeFile(outputBlock, protoutil.MarshalOrPanic(genesisBlock), 0640)
 	if err != nil {
-		return fmt.Errorf("Error writing genesis block: %s", err)
+		return fmt.Errorf("error writing genesis block: %s", err)
 	}
 	return nil
 }
@@ -69,7 +69,7 @@ func doOutputChannelCreateTx(conf, baseProfile *genesisconfig.Profile, channelID
 	logger.Info("Writing new channel tx")
 	err = writeFile(outputChannelCreateTx, protoutil.MarshalOrPanic(configtx), 0640)
 	if err != nil {
-		return fmt.Errorf("Error writing channel create tx: %s", err)
+		return fmt.Errorf("error writing channel create tx: %s", err)
 	}
 	return nil
 }
@@ -77,11 +77,11 @@ func doOutputChannelCreateTx(conf, baseProfile *genesisconfig.Profile, channelID
 func doOutputAnchorPeersUpdate(conf *genesisconfig.Profile, channelID string, outputAnchorPeersUpdate string, asOrg string) error {
 	logger.Info("Generating anchor peer update")
 	if asOrg == "" {
-		return fmt.Errorf("Must specify an organization to update the anchor peer for")
+		return fmt.Errorf("must specify an organization to update the anchor peer for")
 	}
 
 	if conf.Application == nil {
-		return fmt.Errorf("Cannot update anchor peers without an application section")
+		return fmt.Errorf("cannot update anchor peers without an application section")
 	}
 
 	original, err := encoder.NewChannelGroup(conf)
@@ -114,6 +114,9 @@ func doOutputAnchorPeersUpdate(conf *genesisconfig.Profile, channelID string, ou
 	}
 
 	updateTx, err := protoutil.CreateSignedEnvelope(cb.HeaderType_CONFIG_UPDATE, channelID, nil, newConfigUpdateEnv, 0, 0)
+	if err != nil {
+		return errors.WithMessage(err, "could not create signed envelope")
+	}
 
 	logger.Info("Writing anchor peer update")
 	err = writeFile(outputAnchorPeersUpdate, protoutil.MarshalOrPanic(updateTx), 0640)
@@ -127,7 +130,7 @@ func doInspectBlock(inspectBlock string) error {
 	logger.Info("Inspecting block")
 	data, err := ioutil.ReadFile(inspectBlock)
 	if err != nil {
-		return fmt.Errorf("Could not read block %s", inspectBlock)
+		return fmt.Errorf("could not read block %s", inspectBlock)
 	}
 
 	logger.Info("Parsing genesis block")
@@ -255,7 +258,10 @@ func main() {
 	}()
 
 	logger.Info("Loading configuration")
-	factory.InitFactories(nil)
+	err := factory.InitFactories(nil)
+	if err != nil {
+		logger.Fatalf("Error on initFactories: %s", err)
+	}
 	var profileConfig *genesisconfig.Profile
 	if outputBlock != "" || outputChannelCreateTx != "" || outputAnchorPeersUpdate != "" {
 		if profile == "" {

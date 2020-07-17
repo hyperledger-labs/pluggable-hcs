@@ -54,7 +54,7 @@ func LoadLocalMsp(dir string, bccspConfig *factory.FactoryOpts, mspID string) er
 
 var m sync.Mutex
 var localMsp msp.MSP
-var mspMap map[string]msp.MSPManager = make(map[string]msp.MSPManager)
+var mspMap = make(map[string]msp.MSPManager)
 var mspLogger = flogging.MustGetLogger("msp")
 
 // TODO - this is a temporary solution to allow the peer to track whether the
@@ -139,12 +139,12 @@ func GetLocalMSP(cryptoProvider bccsp.BCCSP) msp.MSP {
 		return localMsp
 	}
 
-	localMsp = loadLocaMSP(cryptoProvider)
+	localMsp = loadLocalMSP(cryptoProvider)
 
 	return localMsp
 }
 
-func loadLocaMSP(bccsp bccsp.BCCSP) msp.MSP {
+func loadLocalMSP(bccsp bccsp.BCCSP) msp.MSP {
 	// determine the type of MSP (by default, we'll use bccspMSP)
 	mspType := viper.GetString("peer.localMspType")
 	if mspType == "" {

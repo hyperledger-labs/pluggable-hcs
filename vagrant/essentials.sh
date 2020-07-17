@@ -21,6 +21,6 @@ apt-get install -y \
     curl \
     g++ \
     git \
-    libtool \
+    jq \
     make \
     unzip

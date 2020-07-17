@@ -1,5 +1,6 @@
 /*
 Copyright IBM Corp. All Rights Reserved.
+
 SPDX-License-Identifier: Apache-2.0
 */
 
@@ -8,8 +9,8 @@ package statecouchdb
 import (
 	"testing"
 
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/fabric/core/ledger/internal/version"
+	"github.com/stretchr/testify/require"
 )
 
 func TestVersionCache(t *testing.T) {
@@ -20,18 +21,18 @@ func TestVersionCache(t *testing.T) {
 	verCache.setVerAndRev("ns2", "key2", version.NewHeight(2, 2), "rev2")
 
 	ver, found := verCache.getVersion("ns1", "key1")
-	assert.True(t, found)
-	assert.Equal(t, ver1, ver)
+	require.True(t, found)
+	require.Equal(t, ver1, ver)
 
 	ver, found = verCache.getVersion("ns2", "key2")
-	assert.True(t, found)
-	assert.Equal(t, ver2, ver)
+	require.True(t, found)
+	require.Equal(t, ver2, ver)
 
 	ver, found = verCache.getVersion("ns1", "key3")
-	assert.False(t, found)
-	assert.Nil(t, ver)
+	require.False(t, found)
+	require.Nil(t, ver)
 
 	ver, found = verCache.getVersion("ns3", "key4")
-	assert.False(t, found)
-	assert.Nil(t, ver)
+	require.False(t, found)
+	require.Nil(t, ver)
 }

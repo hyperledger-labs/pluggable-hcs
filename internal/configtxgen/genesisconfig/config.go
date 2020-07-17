@@ -7,13 +7,15 @@ SPDX-License-Identifier: Apache-2.0
 package genesisconfig
 
 import (
+	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/hashgraph/hedera-sdk-go"
 	"github.com/hyperledger/fabric-protos-go/orderer/etcdraft"
 	"github.com/hyperledger/fabric/common/flogging"
-	"github.com/hyperledger/fabric/common/policies"
 	"github.com/hyperledger/fabric/common/viperutil"
 	cf "github.com/hyperledger/fabric/core/config"
 	"github.com/hyperledger/fabric/msp"
@@ -86,7 +88,6 @@ type TopLevel struct {
 	Application   *Application               `yaml:"Application"`
 	Orderer       *Orderer                   `yaml:"Orderer"`
 	Capabilities  map[string]map[string]bool `yaml:"Capabilities"`
-	Resources     *Resources                 `yaml:"Resources"`
 }
 
 // Profile encodes orderer/application configuration combinations for the
@@ -117,15 +118,8 @@ type Consortium struct {
 type Application struct {
 	Organizations []*Organization    `yaml:"Organizations"`
 	Capabilities  map[string]bool    `yaml:"Capabilities"`
-	Resources     *Resources         `yaml:"Resources"`
 	Policies      map[string]*Policy `yaml:"Policies"`
 	ACLs          map[string]string  `yaml:"ACLs"`
-}
-
-// Resources encodes the application-level resources configuration needed to
-// seed the resource tree
-type Resources struct {
-	DefaultModPolicy string
 }
 
 // Organization encodes the organization-level configuration needed in
@@ -189,7 +183,6 @@ type Kafka struct {
 var genesisDefaults = TopLevel{
 	Orderer: &Orderer{
 		OrdererType:  "solo",
-		Addresses:    []string{"127.0.0.1:7050"},
 		BatchTimeout: 2 * time.Second,
 		BatchSize: BatchSize{
 			MaxMessageCount:   500,
@@ -230,21 +223,18 @@ func LoadTopLevel(configPaths ...string) *TopLevel {
 
 	err := config.ReadInConfig()
 	if err != nil {
-		logger.Panic("Error reading configuration: ", err)
+		logger.Panicf("Error reading configuration: %s", err)
 	}
 	logger.Debugf("Using config file: %s", config.ConfigFileUsed())
 
-	var uconf TopLevel
-	err = viperutil.EnhancedExactUnmarshal(config, &uconf)
+	uconf, err := cache.load(config, config.ConfigFileUsed())
 	if err != nil {
-		logger.Panic("Error unmarshaling config into struct: ", err)
+		logger.Panicf("failed to load configCache: %s", err)
 	}
-
-	(&uconf).completeInitialization(filepath.Dir(config.ConfigFileUsed()))
-
+	uconf.completeInitialization(filepath.Dir(config.ConfigFileUsed()))
 	logger.Infof("Loaded configuration: %s", config.ConfigFileUsed())
 
-	return &uconf
+	return uconf
 }
 
 // Load returns the orderer/application config combination that corresponds to
@@ -263,19 +253,18 @@ func Load(profile string, configPaths ...string) *Profile {
 
 	err := config.ReadInConfig()
 	if err != nil {
-		logger.Panic("Error reading configuration: ", err)
+		logger.Panicf("Error reading configuration: %s", err)
 	}
 	logger.Debugf("Using config file: %s", config.ConfigFileUsed())
 
-	var uconf TopLevel
-	err = viperutil.EnhancedExactUnmarshal(config, &uconf)
+	uconf, err := cache.load(config, config.ConfigFileUsed())
 	if err != nil {
-		logger.Panic("Error unmarshaling config into struct: ", err)
+		logger.Panicf("Error loading config from config cache: %s", err)
 	}
 
 	result, ok := uconf.Profiles[profile]
 	if !ok {
-		logger.Panic("Could not find profile: ", profile)
+		logger.Panicf("Could not find profile: %s", profile)
 	}
 
 	result.completeInitialization(filepath.Dir(config.ConfigFileUsed()))
@@ -300,9 +289,6 @@ func (p *Profile) completeInitialization(configDir string) {
 		for _, org := range p.Application.Organizations {
 			org.completeInitialization(configDir)
 		}
-		if p.Application.Resources != nil {
-			p.Application.Resources.completeInitialization()
-		}
 	}
 
 	if p.Consortiums != nil {
@@ -319,17 +305,6 @@ func (p *Profile) completeInitialization(configDir string) {
 		}
 		// Some profiles will not define orderer parameters
 		p.Orderer.completeInitialization(configDir)
-	}
-}
-
-func (r *Resources) completeInitialization() {
-	for {
-		switch {
-		case r.DefaultModPolicy == "":
-			r.DefaultModPolicy = policies.ChannelApplicationAdmins
-		default:
-			return
-		}
 	}
 }
 
@@ -352,9 +327,6 @@ loop:
 		case ord.OrdererType == "":
 			logger.Infof("Orderer.OrdererType unset, setting to %v", genesisDefaults.Orderer.OrdererType)
 			ord.OrdererType = genesisDefaults.Orderer.OrdererType
-		case ord.Addresses == nil:
-			logger.Infof("Orderer.Addresses unset, setting to %s", genesisDefaults.Orderer.Addresses)
-			ord.Addresses = genesisDefaults.Orderer.Addresses
 		case ord.BatchTimeout == 0:
 			logger.Infof("Orderer.BatchTimeout unset, setting to %s", genesisDefaults.Orderer.BatchTimeout)
 			ord.BatchTimeout = genesisDefaults.Orderer.BatchTimeout
@@ -465,4 +437,45 @@ loop:
 
 func translatePaths(configDir string, org *Organization) {
 	cf.TranslatePathInPlace(configDir, &org.MSPDir)
+}
+
+// configCache stores marshalled bytes of config structures that produced from
+// EnhancedExactUnmarshal. Cache key is the path of the configuration file that was used.
+type configCache struct {
+	mutex sync.Mutex
+	cache map[string][]byte
+}
+
+var cache = &configCache{
+	cache: make(map[string][]byte),
+}
+
+// load loads the TopLevel config structure from configCache.
+// if not successful, it unmarshal a config file, and populate configCache
+// with marshaled TopLevel struct.
+func (c *configCache) load(config *viper.Viper, configPath string) (*TopLevel, error) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	conf := &TopLevel{}
+	serializedConf, ok := c.cache[configPath]
+	logger.Debug("Loading configuration from cache :%v", ok)
+	if !ok {
+		err := viperutil.EnhancedExactUnmarshal(config, conf)
+		if err != nil {
+			return nil, fmt.Errorf("Error unmarshaling config into struct: %s", err)
+		}
+
+		serializedConf, err = json.Marshal(conf)
+		if err != nil {
+			return nil, err
+		}
+		c.cache[configPath] = serializedConf
+	}
+
+	err := json.Unmarshal(serializedConf, conf)
+	if err != nil {
+		return nil, err
+	}
+	return conf, nil
 }

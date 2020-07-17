@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package multichannel
 
 import (
+	"errors"
 	"fmt"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
@@ -18,21 +19,44 @@ import (
 	"github.com/hyperledger/fabric/internal/configtxgen/genesisconfig"
 	"github.com/hyperledger/fabric/orderer/common/blockcutter"
 	"github.com/hyperledger/fabric/orderer/common/msgprocessor"
+	"github.com/hyperledger/fabric/orderer/common/types"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/protoutil"
 )
 
 type mockConsenter struct {
+	cluster bool
 }
 
 func (mc *mockConsenter) HandleChain(support consensus.ConsenterSupport, metadata *cb.Metadata) (consensus.Chain, error) {
-	return &mockChain{
+	chain := &mockChain{
 		queue:    make(chan *cb.Envelope),
 		cutter:   support.BlockCutter(),
 		support:  support,
 		metadata: metadata,
 		done:     make(chan struct{}),
-	}, nil
+	}
+
+	if mc.cluster {
+		clusterChain := &mockChainCluster{}
+		clusterChain.mockChain = chain
+		return clusterChain, nil
+	}
+
+	return chain, nil
+}
+
+func (mc *mockConsenter) JoinChain(support consensus.ConsenterSupport, joinBlock *cb.Block) (consensus.Chain, error) {
+	//TODO
+	return nil, errors.New("not implemented")
+}
+
+type mockChainCluster struct {
+	*mockChain
+}
+
+func (c *mockChainCluster) StatusReport() (types.ClusterRelation, types.Status) {
+	return types.ClusterRelationMember, types.StatusActive
 }
 
 type mockChain struct {

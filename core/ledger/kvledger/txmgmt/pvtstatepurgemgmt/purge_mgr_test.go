@@ -11,10 +11,10 @@ import (
 	"testing"
 
 	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/bookkeeping"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/hyperledger/fabric/core/ledger/pvtdatapolicy"
 	btltestutil "github.com/hyperledger/fabric/core/ledger/pvtdatapolicy/testutil"
 	"github.com/hyperledger/fabric/core/ledger/util"
@@ -29,8 +29,8 @@ const (
 // Tests will be run against each environment in this array
 // For example, to skip CouchDB tests, remove &couchDBLockBasedEnv{}
 var testEnvs = map[string]privacyenabledstate.TestEnv{
-	levelDBtestEnvName: &privacyenabledstate.LevelDBCommonStorageTestEnv{},
-	couchDBtestEnvName: &privacyenabledstate.CouchDBCommonStorageTestEnv{},
+	levelDBtestEnvName: &privacyenabledstate.LevelDBTestEnv{},
+	couchDBtestEnvName: &privacyenabledstate.CouchDBTestEnv{},
 }
 
 func TestMain(m *testing.M) {
@@ -179,7 +179,7 @@ func TestKeyUpdateBeforeExpiryBlock(t *testing.T) {
 	block1Updates := privacyenabledstate.NewUpdateBatch()
 	putHashUpdates(block1Updates, "ns", "coll", "pvtkey", []byte("pvtvalue-1"), version.NewHeight(1, 1))
 	helper.commitUpdatesForTesting(1, block1Updates)
-	expInfo, _ := helper.purgeMgr.(*purgeMgr).expKeeper.retrieve(3)
+	expInfo, _ := helper.purgeMgr.expKeeper.retrieve(3)
 	assert.Len(t, expInfo, 1)
 
 	// block-2 update: Update both hash and pvt data
@@ -285,8 +285,8 @@ type testHelper struct {
 	bookkeepingEnv *bookkeeping.TestEnv
 	dbEnv          privacyenabledstate.TestEnv
 
-	db       privacyenabledstate.DB
-	purgeMgr PurgeMgr
+	db       *privacyenabledstate.DB
+	purgeMgr *PurgeMgr
 }
 
 func (h *testHelper) init(t *testing.T, ledgerid string, btlPolicy pvtdatapolicy.BTLPolicy, dbEnv privacyenabledstate.TestEnv) {
@@ -308,19 +308,19 @@ func (h *testHelper) cleanup() {
 
 func (h *testHelper) commitUpdatesForTesting(blkNum uint64, updates *privacyenabledstate.UpdateBatch) {
 	h.purgeMgr.PrepareForExpiringKeys(blkNum)
-	assert.NoError(h.t, h.purgeMgr.DeleteExpiredAndUpdateBookkeeping(updates.PvtUpdates, updates.HashUpdates))
+	assert.NoError(h.t, h.purgeMgr.UpdateExpiryInfo(updates.PvtUpdates, updates.HashUpdates))
+	assert.NoError(h.t, h.purgeMgr.AddExpiredEntriesToUpdateBatch(updates.PvtUpdates, updates.HashUpdates))
 	assert.NoError(h.t, h.db.ApplyPrivacyAwareUpdates(updates, version.NewHeight(blkNum, 1)))
 	h.db.ClearCachedVersions()
 	h.purgeMgr.BlockCommitDone()
 }
 
 func (h *testHelper) commitPvtDataOfOldBlocksForTesting(updates *privacyenabledstate.UpdateBatch) {
-	assert.NoError(h.t, h.purgeMgr.UpdateBookkeepingForPvtDataOfOldBlocks(updates.PvtUpdates))
+	assert.NoError(h.t, h.purgeMgr.UpdateExpiryInfoOfPvtDataOfOldBlocks(updates.PvtUpdates))
 	assert.NoError(h.t, h.db.ApplyPrivacyAwareUpdates(updates, nil))
 }
 
 func (h *testHelper) checkPvtdataExists(ns, coll, key string, value []byte) {
-	vv, _ := h.fetchPvtdataFronDB(ns, coll, key)
 	vv, hashVersion := h.fetchPvtdataFronDB(ns, coll, key)
 	assert.NotNil(h.t, vv)
 	assert.Equal(h.t, value, vv.Value)
@@ -362,13 +362,13 @@ func (h *testHelper) fetchPvtdataFronDB(ns, coll, key string) (kv *statedb.Versi
 }
 
 func (h *testHelper) checkExpiryEntryExistsForBlockNum(expiringBlk uint64, expectedNumEntries int) {
-	expInfo, err := h.purgeMgr.(*purgeMgr).expKeeper.retrieve(expiringBlk)
+	expInfo, err := h.purgeMgr.expKeeper.retrieve(expiringBlk)
 	assert.NoError(h.t, err)
 	assert.Len(h.t, expInfo, expectedNumEntries)
 }
 
 func (h *testHelper) checkNoExpiryEntryExistsForBlockNum(expiringBlk uint64) {
-	expInfo, err := h.purgeMgr.(*purgeMgr).expKeeper.retrieve(expiringBlk)
+	expInfo, err := h.purgeMgr.expKeeper.retrieve(expiringBlk)
 	assert.NoError(h.t, err)
 	assert.Len(h.t, expInfo, 0)
 }

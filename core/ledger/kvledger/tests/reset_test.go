@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/hyperledger/fabric-protos-go/common"
-	"github.com/hyperledger/fabric/common/ledger/blkstorage/fsblkstorage"
+	"github.com/hyperledger/fabric/common/ledger/blkstorage"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/kvledger"
 	"github.com/stretchr/testify/require"
@@ -29,7 +29,7 @@ func TestResetAllLedgers(t *testing.T) {
 	// create ledgers and pouplate with sample data
 	// Also, retrieve the genesis blocks and blockchain info for matching later
 	numLedgers := 10
-	ledgerIDs := make([]string, numLedgers, numLedgers)
+	ledgerIDs := make([]string, numLedgers)
 	for i := 0; i < numLedgers; i++ {
 		ledgerIDs[i] = fmt.Sprintf("ledger-%d", i)
 		h := env.newTestHelperCreateLgr(ledgerIDs[i], t)
@@ -52,6 +52,7 @@ func TestResetAllLedgers(t *testing.T) {
 	env.verifyRebuilableDoesNotExist(rebuildable)
 	env.initLedgerMgmt()
 	preResetHt, err := kvledger.LoadPreResetHeight(rootFSPath, ledgerIDs)
+	require.NoError(t, err)
 	t.Logf("preResetHt = %#v", preResetHt)
 	// open all the ledgers again and verify that
 	// - initial height==1
@@ -159,6 +160,7 @@ func TestResetAllLedgersWithBTL(t *testing.T) {
 
 	// ensure that the reset is executed correctly
 	preResetHt, err := kvledger.LoadPreResetHeight(env.initializer.Config.RootFSPath, []string{"ledger1"})
+	require.NoError(t, err)
 	t.Logf("preResetHt = %#v", preResetHt)
 	require.Equal(t, uint64(5), preResetHt["ledger1"])
 	h = env.newTestHelperOpenLgr("ledger1", t)
@@ -197,7 +199,7 @@ func TestResetLedgerWithoutDroppingDBs(t *testing.T) {
 
 	// Reset All kv ledgers
 	blockstorePath := kvledger.BlockStorePath(env.initializer.Config.RootFSPath)
-	err := fsblkstorage.ResetBlockStore(blockstorePath)
+	err := blkstorage.ResetBlockStore(blockstorePath)
 	require.NoError(t, err)
 	rebuildable := rebuildableStatedb | rebuildableBookkeeper | rebuildableConfigHistory | rebuildableHistoryDB
 	env.verifyRebuilablesExist(rebuildable)

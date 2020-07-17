@@ -14,10 +14,12 @@ import (
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/ledger/rwset/kvrwset"
 	pb "github.com/hyperledger/fabric-protos-go/peer"
-	"github.com/hyperledger/fabric/common/cauthdsl"
+	"github.com/hyperledger/fabric/common/policydsl"
 	"github.com/hyperledger/fabric/common/util"
 	validationState "github.com/hyperledger/fabric/core/handlers/validation/api/state"
 	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/core/peer"
+	"github.com/hyperledger/fabric/gossip/privdata"
 	"github.com/hyperledger/fabric/protoutil"
 
 	"github.com/pkg/errors"
@@ -42,6 +44,8 @@ var (
 )
 
 type ValidatorCommitter struct {
+	CoreConfig                   *peer.Config
+	PrivdataConfig               *privdata.PrivdataConfig
 	Resources                    *Resources
 	LegacyDeployedCCInfoProvider LegacyDeployedCCInfoProvider
 }
@@ -99,6 +103,44 @@ func (vc *ValidatorCommitter) ChaincodeInfo(channelName, chaincodeName string, q
 	}, nil
 }
 
+// AllChaincodesInfo returns the mapping of chaincode name to DeployedChaincodeInfo for all the deployed chaincodes
+func (vc *ValidatorCommitter) AllChaincodesInfo(channelName string, sqe ledger.SimpleQueryExecutor) (map[string]*ledger.DeployedChaincodeInfo, error) {
+	sqes := &SimpleQueryExecutorShim{
+		Namespace:           LifecycleNamespace,
+		SimpleQueryExecutor: sqe,
+	}
+	ccQuery := &ExternalFunctions{Resources: vc.Resources}
+	namespaceDefs, err := ccQuery.QueryNamespaceDefinitions(sqes)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]*ledger.DeployedChaincodeInfo)
+	for ccName, value := range namespaceDefs {
+		if value != FriendlyChaincodeDefinitionType {
+			continue
+		}
+		deployedccInfo, err := vc.ChaincodeInfo(channelName, ccName, sqe)
+		if err != nil {
+			return nil, err
+		}
+		result[ccName] = deployedccInfo
+	}
+
+	legacyCCs, err := vc.LegacyDeployedCCInfoProvider.AllChaincodesInfo(channelName, sqe)
+	if err != nil {
+		return nil, err
+	}
+
+	for ccName, deployedccInfo := range legacyCCs {
+		if _, ok := result[ccName]; !ok {
+			result[ccName] = deployedccInfo
+		}
+	}
+
+	return result, nil
+}
+
 var ImplicitCollectionMatcher = regexp.MustCompile("^" + ImplicitCollectionNameForOrg("(.+)") + "$")
 
 // AllCollectionsConfigPkg implements function in interface ledger.DeployedChaincodeInfoProvider
@@ -150,7 +192,7 @@ func (vc *ValidatorCommitter) CollectionInfo(channelName, chaincodeName, collect
 
 	matches := ImplicitCollectionMatcher.FindStringSubmatch(collectionName)
 	if len(matches) == 2 {
-		return GenerateImplicitCollectionForOrg(matches[1]), nil
+		return vc.GenerateImplicitCollectionForOrg(matches[1]), nil
 	}
 
 	if definedChaincode.Collections != nil {
@@ -197,22 +239,31 @@ func (vc *ValidatorCommitter) ChaincodeImplicitCollections(channelName string) (
 	orgs := ac.Organizations()
 	implicitCollections := make([]*pb.StaticCollectionConfig, 0, len(orgs))
 	for _, org := range orgs {
-		implicitCollections = append(implicitCollections, GenerateImplicitCollectionForOrg(org.MSPID()))
+		implicitCollections = append(implicitCollections, vc.GenerateImplicitCollectionForOrg(org.MSPID()))
 	}
 
 	return implicitCollections, nil
 }
 
-func GenerateImplicitCollectionForOrg(mspid string) *pb.StaticCollectionConfig {
+// GenerateImplicitCollectionForOrg generates implicit collection for the org
+func (vc *ValidatorCommitter) GenerateImplicitCollectionForOrg(mspid string) *pb.StaticCollectionConfig {
+	// set Required/MaxPeerCount to 0 if it is other org's implicit collection (mspid does not match peer's local mspid)
+	// set Required/MaxPeerCount to the config values if it is the peer org's implicit collection (mspid matches peer's local mspid)
+	requiredPeerCount := 0
+	maxPeerCount := 0
+	if mspid == vc.CoreConfig.LocalMSPID {
+		requiredPeerCount = vc.PrivdataConfig.ImplicitCollDisseminationPolicy.RequiredPeerCount
+		maxPeerCount = vc.PrivdataConfig.ImplicitCollDisseminationPolicy.MaxPeerCount
+	}
 	return &pb.StaticCollectionConfig{
 		Name: ImplicitCollectionNameForOrg(mspid),
 		MemberOrgsPolicy: &pb.CollectionPolicyConfig{
 			Payload: &pb.CollectionPolicyConfig_SignaturePolicy{
-				SignaturePolicy: cauthdsl.SignedByMspMember(mspid),
+				SignaturePolicy: policydsl.SignedByMspMember(mspid),
 			},
 		},
-		RequiredPeerCount: 0,
-		MaximumPeerCount:  1,
+		RequiredPeerCount: int32(requiredPeerCount),
+		MaximumPeerCount:  int32(maxPeerCount),
 	}
 }
 
@@ -261,7 +312,7 @@ func (vc *ValidatorCommitter) ImplicitCollectionEndorsementPolicyAsBytes(channel
 
 	return protoutil.MarshalOrPanic(&cb.ApplicationPolicy{
 		Type: &cb.ApplicationPolicy_SignaturePolicy{
-			SignaturePolicy: cauthdsl.SignedByAnyMember([]string{orgMSPID}),
+			SignaturePolicy: policydsl.SignedByAnyMember([]string{orgMSPID}),
 		},
 	}), nil, nil
 }

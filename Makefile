@@ -7,51 +7,49 @@
 # This makefile defines the following targets
 #
 #   - all (default) - builds all targets and runs all non-integration tests/checks
+#   - basic-checks - performs basic checks like license, spelling, trailing spaces and linter
+#   - check-deps - check for vendored dependencies that are no longer used
 #   - checks - runs all non-integration tests/checks
-#   - desk-check - runs linters and verify to test changed packages
+#   - clean-all - superset of 'clean' that also removes persistent state
+#   - clean - cleans the build area
 #   - configtxgen - builds a native configtxgen binary
 #   - configtxlator - builds a native configtxlator binary
-#   - cryptogen  -  builds a native cryptogen binary
-#   - idemixgen  -  builds a native idemixgen binary
-#   - peer - builds a native fabric peer binary
-#   - orderer - builds a native fabric orderer binary
-#   - release - builds release packages for the host platform
-#   - release-all - builds release packages for all target platforms
-#   - publish-images - publishes release docker images to nexus3 or docker hub.
-#   - unit-test - runs the go-test based unit tests
-#   - verify - runs unit tests for only the changed package tree
-#   - profile - runs unit tests for all packages in coverprofile mode (slow)
-#   - gotools - installs go tools like golint
-#   - linter - runs all code checks
-#   - check-deps - check for vendored dependencies that are no longer used
-#   - license - checks go source files for Apache license header
-#   - native - ensures all native binaries are available
+#   - cryptogen - builds a native cryptogen binary
+#   - desk-check - runs linters and verify to test changed packages
+#   - dist-clean - clean release packages for all target platforms
 #   - docker[-clean] - ensures all docker images are available[/cleaned]
 #   - docker-list - generates a list of docker images that 'make docker' produces
-#   - peer-docker[-clean] - ensures the peer container is available[/cleaned]
-#   - orderer-docker[-clean] - ensures the orderer container is available[/cleaned]
-#   - tools-docker[-clean] - ensures the tools container is available[/cleaned]
-#   - protos - generate all protobuf artifacts based on .proto files
-#   - clean - cleans the build area
-#   - clean-all - superset of 'clean' that also removes persistent state
-#   - dist-clean - clean release packages for all target platforms
-#   - unit-test-clean - cleans unit test state (particularly from docker)
-#   - basic-checks - performs basic checks like license, spelling, trailing spaces and linter
-#   - docker-thirdparty - pulls thirdparty images (kafka,zookeeper,couchdb)
 #   - docker-tag-latest - re-tags the images made by 'make docker' with the :latest tag
 #   - docker-tag-stable - re-tags the images made by 'make docker' with the :stable tag
+#   - docker-thirdparty - pulls thirdparty images (kafka,zookeeper,couchdb)
+#   - gotools - installs go tools like golint
 #   - help-docs - generate the command reference docs
+#   - idemixgen - builds a native idemixgen binary
+#   - integration-test-prereqs - setup prerequisites for integration tests
+#   - integration-test - runs the integration tests
+#   - license - checks go source files for Apache license header
+#   - linter - runs all code checks
+#   - native - ensures all native binaries are available
+#   - orderer - builds a native fabric orderer binary
+#   - orderer-docker[-clean] - ensures the orderer container is available[/cleaned]
+#   - peer - builds a native fabric peer binary
+#   - peer-docker[-clean] - ensures the peer container is available[/cleaned]
+#   - profile - runs unit tests for all packages in coverprofile mode (slow)
+#   - protos - generate all protobuf artifacts based on .proto files
+#   - publish-images - publishes release docker images to nexus3 or docker hub.
+#   - release-all - builds release packages for all target platforms
+#   - release - builds release packages for the host platform
+#   - tools-docker[-clean] - ensures the tools container is available[/cleaned]
+#   - unit-test-clean - cleans unit test state (particularly from docker)
+#   - unit-test - runs the go-test based unit tests
+#   - verify - runs unit tests for only the changed package tree
 
-ALPINE_VER ?= 3.10
-BASE_VERSION = 2.0.0
-PREV_VERSION = 2.0.0-beta
-
-# BASEIMAGE_RELEASE should be removed now
-BASEIMAGE_RELEASE = 0.4.18
+ALPINE_VER ?= 3.12
+BASE_VERSION = 2.2.0
 
 # 3rd party image version
 # These versions are also set in the runners in ./integration/runners/
-COUCHDB_VER ?= 2.3
+COUCHDB_VER ?= 3.1
 KAFKA_VER ?= 5.3.1
 ZOOKEEPER_VER ?= 5.3.1
 
@@ -64,8 +62,9 @@ BUILD_DIR ?= build
 EXTRA_VERSION ?= $(shell git rev-parse --short HEAD)
 PROJECT_VERSION=$(BASE_VERSION)-snapshot-$(EXTRA_VERSION)
 
-#TWO_DIGIT_VERSION is derived, e.g. "2.0", especially useful as a local tag for two digit references to most recent baseos and ccenv patch releases
-TWO_DIGIT_VERSION = $(shell echo $(BASE_VERSION) | cut -d'.' -f1,2)
+# TWO_DIGIT_VERSION is derived, e.g. "2.0", especially useful as a local tag
+# for two digit references to most recent baseos and ccenv patch releases
+TWO_DIGIT_VERSION = $(shell echo $(BASE_VERSION) | cut -d '.' -f 1,2)
 
 PKGNAME = github.com/hyperledger/fabric
 ARCH=$(shell go env GOARCH)
@@ -76,14 +75,13 @@ METADATA_VAR = Version=$(BASE_VERSION)
 METADATA_VAR += CommitSHA=$(EXTRA_VERSION)
 METADATA_VAR += BaseDockerLabel=$(BASE_DOCKER_LABEL)
 METADATA_VAR += DockerNamespace=$(DOCKER_NS)
-METADATA_VAR += BaseDockerNamespace=$(BASE_DOCKER_NS)
 
-GO_VER = $(shell grep "GO_VER" ci.properties |cut -d'=' -f2-)
+GO_VER = 1.14.4
 GO_TAGS ?=
 
 RELEASE_EXES = orderer $(TOOLS_EXES)
 RELEASE_IMAGES = baseos ccenv orderer peer tools
-RELEASE_PLATFORMS = darwin-amd64 linux-amd64 linux-ppc64le linux-s390x windows-amd64
+RELEASE_PLATFORMS = darwin-amd64 linux-amd64 windows-amd64
 TOOLS_EXES = configtxgen configtxlator cryptogen discover idemixgen peer
 
 pkgmap.configtxgen    := $(PKGNAME)/cmd/configtxgen
@@ -116,7 +114,7 @@ help-docs: native
 	@scripts/generateHelpDocs.sh
 
 .PHONY: spelling
-spelling:
+spelling: gotool.misspell
 	@scripts/check_spelling.sh
 
 .PHONY: references
@@ -136,14 +134,17 @@ gotools: gotools-install
 
 .PHONY: check-go-version
 check-go-version:
-	@scripts/check_go_version.sh
+	@scripts/check_go_version.sh $(GO_VER)
 
 .PHONY: integration-test
-integration-test: gotool.ginkgo ccenv-docker baseos-docker docker-thirdparty
+integration-test: integration-test-prereqs
 	./scripts/run-integration-tests.sh
 
+.PHONY: integration-test-prereqs
+integration-test-prereqs: gotool.ginkgo baseos-docker ccenv-docker docker-thirdparty
+
 .PHONY: unit-test
-unit-test: unit-test-clean docker-thirdparty ccenv-docker baseos-docker
+unit-test: unit-test-clean docker-thirdparty-couchdb
 	./scripts/run-unit-tests.sh
 
 .PHONY: unit-tests
@@ -153,11 +154,14 @@ unit-tests: unit-test
 # Also pull ccenv-1.4 for compatibility test to ensure pre-2.0 installed chaincodes
 # can be built by a peer configured to use the ccenv-1.4 as the builder image.
 .PHONY: docker-thirdparty
-docker-thirdparty:
-	docker pull couchdb:${COUCHDB_VER}
+docker-thirdparty: docker-thirdparty-couchdb
 	docker pull confluentinc/cp-zookeeper:${ZOOKEEPER_VER}
 	docker pull confluentinc/cp-kafka:${KAFKA_VER}
 	docker pull hyperledger/fabric-ccenv:1.4
+
+.PHONY: docker-thirdparty-couchdb
+docker-thirdparty-couchdb:
+	docker pull couchdb:${COUCHDB_VER}
 
 .PHONY: verify
 verify: export JOB_TYPE=VERIFY
@@ -168,33 +172,29 @@ profile: export JOB_TYPE=PROFILE
 profile: unit-test
 
 .PHONY: linter
-linter: check-deps gotools
+linter: check-deps gotool.goimports
 	@echo "LINT: Running code checks.."
 	./scripts/golinter.sh
 
 .PHONY: check-deps
-check-deps: gotools
+check-deps:
 	@echo "DEP: Checking for dependency issues.."
 	./scripts/check_deps.sh
 
 .PHONY: check-metrics-docs
-check-metrics-doc: gotools
+check-metrics-doc:
 	@echo "METRICS: Checking for outdated reference documentation.."
 	./scripts/metrics_doc.sh check
 
 .PHONY: generate-metrics-docs
-generate-metrics-doc: gotools
+generate-metrics-doc:
 	@echo "Generating metrics reference documentation..."
 	./scripts/metrics_doc.sh generate
 
 .PHONY: protos
-protos: gotools
+protos: gotool.protoc-gen-go
 	@echo "Compiling non-API protos..."
 	./scripts/compile_protos.sh
-
-.PHONY: changelog
-changelog:
-	./scripts/changelog.sh v$(PREV_VERSION) v$(BASE_VERSION)
 
 .PHONY: native
 native: $(RELEASE_EXES)

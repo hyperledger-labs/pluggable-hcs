@@ -30,17 +30,18 @@ Hyperledger Fabric offers a number of APIs to support developing smart contracts
 in various programming languages. Smart contract APIs are available for Go, Node.js, and Java:
 
   * `Go contract-api <https://github.com/hyperledger/fabric-contract-api-go>`__.
-  * `Node.js contract API <https://github.com/hyperledger/fabric-chaincode-node>`__ and `Node.js contract API documentation <https://fabric-shim.github.io/>`__.
+  * `Node.js contract API <https://github.com/hyperledger/fabric-chaincode-node>`__ and `Node.js contract API documentation <https://hyperledger.github.io/fabric-chaincode-node/>`__.
   * `Java contract API <https://github.com/hyperledger/fabric-chaincode-java>`__ and `Java contract API documentation <https://hyperledger.github.io/fabric-chaincode-java/>`__.
 
 Hyperledger Fabric application SDKs
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Hyperledger Fabric offers a number of SDKs to support developing applications
-in various programming languages. SDKs are available for Node.js and Java:
+Hyperledger Fabric offers a number of SDKs to support developing applications in various programming languages. SDKs are available for Node.js and Java:
 
   * `Node.js SDK <https://github.com/hyperledger/fabric-sdk-node>`__ and `Node.js SDK documentation <https://hyperledger.github.io/fabric-sdk-node/>`__.
   * `Java SDK <https://github.com/hyperledger/fabric-gateway-java>`__ and `Java SDK documentation <https://hyperledger.github.io/fabric-gateway-java/>`__.
+
+  Prerequisites for developing with the SDKs can be found in the Node.js SDK `README <https://github.com/hyperledger/fabric-sdk-node#build-and-test>`__ and Java SDK `README <https://github.com/hyperledger/fabric-gateway-java/blob/master/README.md>`__.
 
 In addition, there are two more application SDKs that have not yet been officially released
 (for Python and Go), but they are still available for downloading and testing:
@@ -48,8 +49,7 @@ In addition, there are two more application SDKs that have not yet been official
   * `Python SDK <https://github.com/hyperledger/fabric-sdk-py>`__.
   * `Go SDK <https://github.com/hyperledger/fabric-sdk-go>`__.
 
-Currently, Node.js and Java support the new application programming model delivered in
-Hyperledger Fabric v1.4. Support for Go is planned to be delivered in a later release.
+Currently, Node.js, Java and Go support the new application programming model delivered in Hyperledger Fabric v1.4.
 
 Hyperledger Fabric CA
 ^^^^^^^^^^^^^^^^^^^^^

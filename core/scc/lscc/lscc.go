@@ -21,6 +21,7 @@ import (
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/policies"
+	"github.com/hyperledger/fabric/common/policydsl"
 	"github.com/hyperledger/fabric/core/aclmgmt"
 	"github.com/hyperledger/fabric/core/aclmgmt/resources"
 	"github.com/hyperledger/fabric/core/chaincode/lifecycle"
@@ -232,8 +233,8 @@ func (ls *LegacySecurity) SecurityCheckLegacyChaincode(cd *ccprovider.ChaincodeD
 			}
 
 			// This is 'the big security check', though it's no clear what's being accomplished
-			// here.  Basically, it seems to try to verify that the chaincode defintion matches
-			// what's on the filesystem, which, might include instanatiation policy, but it's
+			// here.  Basically, it seems to try to verify that the chaincode definition matches
+			// what's on the filesystem, which, might include instantiation policy, but it's
 			// not obvious from the code, and was being checked separately, so we check it
 			// explicitly below.
 			if err = ccpack.ValidateCC(cd); err != nil {
@@ -630,10 +631,7 @@ func (lscc *SCC) getInstalledChaincodes() pb.Response {
 // check validity of channel name
 func (lscc *SCC) isValidChannelName(channel string) bool {
 	// TODO we probably need more checks
-	if channel == "" {
-		return false
-	}
-	return true
+	return channel != ""
 }
 
 // isValidChaincodeName checks the validity of chaincode name. Chaincode names
@@ -721,7 +719,7 @@ func (lscc *SCC) executeInstall(stub shim.ChaincodeStubInterface, ccbytes []byte
 	}
 	<-buildStatus.Done()
 	if err := buildStatus.Err(); err != nil {
-		return errors.WithMessage(err, "could not build chaincode")
+		return errors.WithMessage(err, "chaincode installed to peer but could not build chaincode")
 	}
 
 	md, err := lscc.EbMetadataProvider.PackageMetadata(ccid)
@@ -1031,7 +1029,7 @@ func (lscc *SCC) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 			EP = args[3]
 		} else {
 			mspIDs := lscc.GetMSPIDs(channel)
-			p := cauthdsl.SignedByAnyMember(mspIDs)
+			p := policydsl.SignedByAnyMember(mspIDs)
 			EP, err = protoutil.Marshal(p)
 			if err != nil {
 				return shim.Error(err.Error())

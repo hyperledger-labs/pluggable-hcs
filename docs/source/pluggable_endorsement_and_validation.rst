@@ -25,10 +25,15 @@ Pluggable endorsement and validation logic
 ------------------------------------------
 
 Fabric allows for the implementation and deployment of custom endorsement and
-validation logic into the peer to be associated with chaincode handling in a
-pluggable manner. This logic can be either compiled into the peer as built in
-selectable logic, or compiled and deployed alongside the peer as a
-`Golang plugin <https://golang.org/pkg/plugin/>`_.
+validation logic into the peer to be associated with chaincode handling. This
+logic can be compiled into the peer or built with the peer and deployed
+alongside it as a `Go plugin <https://golang.org/pkg/plugin/>`_.
+
+.. note:: Go plugins have a number of practical restrictions that require them
+   to be compiled and linked in the same build environment as the peer.
+   Differences in Go package versions, compiler versions, tags, and even GOPATH
+   values will result in runtime failures when loading or executing the plugin
+   logic.
 
 By default, A chaincode will use the built in endorsement and validation logic.
 However, users have the option of selecting custom endorsement and validation
@@ -66,9 +71,8 @@ The function is an instance method of the ``HandlerLibrary`` construct under
 validation logic to be added, this construct needs to be extended with any
 additional methods.
 
-Since this is cumbersome and poses a deployment challenge, one can also deploy
-custom endorsement and validation as a Golang plugin by adding another property
-under the ``name`` called ``library``.
+If the custom code is built as a Go plugin, the ``library`` property must be
+provided and set to the location of the shared library.
 
 For example, if we have custom endorsement and validation logic which is
 implemented as a plugin, we would have the following entries in the configuration
@@ -96,8 +100,8 @@ The name of the custom plugin needs to be referenced by the chaincode definition
 to be used by the chaincode. If you are using the peer CLI to approve the
 chaincode definition, use the ``--escc`` and ``--vscc`` flag to select the name
 of the custom endorsement or validation library. If you are using the
-Fabric SDK for Node.js, visit `How to install and start your chaincode <https://hyperledger.github.io/fabric-sdk-node/master/tutorial-chaincode-lifecycle.html>`__.
-For more information, see :doc:`chaincode4noah`.
+Fabric SDK for Node.js, visit `How to install and start your chaincode <https://hyperledger.github.io/fabric-sdk-node/{BRANCH}/tutorial-chaincode-lifecycle.html>`__.
+For more information, see :doc:`chaincode_lifecycle`.
 
 .. note:: Hereafter, custom endorsement or validation logic implementation is
           going to be referred to as "plugins", even if they are compiled into
@@ -304,8 +308,8 @@ Important notes
 
 - **Error handling for private metadata retrieval**: In case a plugin retrieves
   metadata for private data by making use of the ``StateFetcher`` interface,
-  it is important that errors are handled as follows: ``CollConfigNotDefinedError''
-  and ``InvalidCollNameError'', signalling that the specified collection does
+  it is important that errors are handled as follows: ``CollConfigNotDefinedError``
+  and ``InvalidCollNameError``, signalling that the specified collection does
   not exist, should be handled as deterministic errors and should not lead the
   plugin to return an ``ExecutionFailureError``.
 

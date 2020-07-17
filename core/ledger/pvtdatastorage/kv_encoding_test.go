@@ -11,14 +11,14 @@ import (
 	math "math"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDataKeyEncoding(t *testing.T) {
 	dataKey1 := &dataKey{nsCollBlk: nsCollBlk{ns: "ns1", coll: "coll1", blkNum: 2}, txNum: 5}
 	datakey2, err := decodeDatakey(encodeDataKey(dataKey1))
-	assert.NoError(t, err)
-	assert.Equal(t, dataKey1, datakey2)
+	require.NoError(t, err)
+	require.Equal(t, dataKey1, datakey2)
 }
 
 func TestDatakeyRange(t *testing.T) {
@@ -44,10 +44,10 @@ func TestDatakeyRange(t *testing.T) {
 				txNum:     txNum,
 			},
 		)
-		assert.Equal(t, bytes.Compare(keyOfPreviousBlock, startKey), -1)
-		assert.Equal(t, bytes.Compare(keyOfBlock, startKey), 1)
-		assert.Equal(t, bytes.Compare(keyOfBlock, endKey), -1)
-		assert.Equal(t, bytes.Compare(keyOfNextBlock, endKey), 1)
+		require.Equal(t, bytes.Compare(keyOfPreviousBlock, startKey), -1)
+		require.Equal(t, bytes.Compare(keyOfBlock, startKey), 1)
+		require.Equal(t, bytes.Compare(keyOfBlock, endKey), -1)
+		require.Equal(t, bytes.Compare(keyOfNextBlock, endKey), 1)
 	}
 }
 
@@ -74,10 +74,10 @@ func TestEligibleMissingdataRange(t *testing.T) {
 				isEligible: true,
 			},
 		)
-		assert.Equal(t, bytes.Compare(keyOfNextBlock, startKey), -1)
-		assert.Equal(t, bytes.Compare(keyOfBlock, startKey), 1)
-		assert.Equal(t, bytes.Compare(keyOfBlock, endKey), -1)
-		assert.Equal(t, bytes.Compare(keyOfPreviousBlock, endKey), 1)
+		require.Equal(t, bytes.Compare(keyOfNextBlock, startKey), -1)
+		require.Equal(t, bytes.Compare(keyOfBlock, startKey), 1)
+		require.Equal(t, bytes.Compare(keyOfBlock, endKey), -1)
+		require.Equal(t, bytes.Compare(keyOfPreviousBlock, endKey), 1)
 	}
 }
 
@@ -103,7 +103,7 @@ func testEncodeDecodeMissingdataKey(t *testing.T, blkNum uint64) {
 			decodedKey := decodeMissingDataKey(
 				encodeMissingDataKey(key),
 			)
-			assert.Equal(t, key, decodedKey)
+			require.Equal(t, key, decodedKey)
 		},
 	)
 
@@ -113,7 +113,39 @@ func testEncodeDecodeMissingdataKey(t *testing.T, blkNum uint64) {
 			decodedKey := decodeMissingDataKey(
 				encodeMissingDataKey(key),
 			)
-			assert.Equal(t, key, decodedKey)
+			require.Equal(t, key, decodedKey)
 		},
 	)
+}
+
+func TestBasicEncodingDecoding(t *testing.T) {
+	for i := 0; i < 10000; i++ {
+		value := encodeReverseOrderVarUint64(uint64(i))
+		nextValue := encodeReverseOrderVarUint64(uint64(i + 1))
+		if !(bytes.Compare(value, nextValue) > 0) {
+			t.Fatalf("A smaller integer should result into greater bytes. Encoded bytes for [%d] is [%x] and for [%d] is [%x]",
+				i, i+1, value, nextValue)
+		}
+		decodedValue, _ := decodeReverseOrderVarUint64(value)
+		if decodedValue != uint64(i) {
+			t.Fatalf("Value not same after decoding. Original value = [%d], decode value = [%d]", i, decodedValue)
+		}
+	}
+}
+
+func TestDecodingAppendedValues(t *testing.T) {
+	appendedValues := []byte{}
+	for i := 0; i < 1000; i++ {
+		appendedValues = append(appendedValues, encodeReverseOrderVarUint64(uint64(i))...)
+	}
+
+	len := 0
+	value := uint64(0)
+	for i := 0; i < 1000; i++ {
+		appendedValues = appendedValues[len:]
+		value, len = decodeReverseOrderVarUint64(appendedValues)
+		if value != uint64(i) {
+			t.Fatalf("expected value = [%d], decode value = [%d]", i, value)
+		}
+	}
 }

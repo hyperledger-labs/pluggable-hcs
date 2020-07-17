@@ -9,7 +9,7 @@ package protoext_test
 import (
 	"testing"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric-protos-go/discovery"
 	"github.com/hyperledger/fabric/discovery/protoext"
 	"github.com/stretchr/testify/assert"
@@ -19,13 +19,13 @@ func TestSignedRequestToRequest(t *testing.T) {
 	sr := &discovery.SignedRequest{
 		Payload: []byte{0},
 	}
-	r, err := protoext.SignedRequestToRequest(sr)
+	_, err := protoext.SignedRequestToRequest(sr)
 	assert.Error(t, err)
 
 	req := &discovery.Request{}
 	b, _ := proto.Marshal(req)
 	sr.Payload = b
-	r, err = protoext.SignedRequestToRequest(sr)
+	r, err := protoext.SignedRequestToRequest(sr)
 	assert.NoError(t, err)
 	assert.NotNil(t, r)
 }

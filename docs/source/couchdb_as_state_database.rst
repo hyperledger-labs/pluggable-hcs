@@ -7,8 +7,8 @@ State Database options
 The current options for the peer state database are LevelDB and CouchDB. LevelDB is the default
 key-value state database embedded in the peer process. CouchDB is an alternative external state database.
 Like the LevelDB key-value store, CouchDB can store any binary data that is modeled in chaincode
-(CouchDB attachment functionality is used internally for non-JSON binary data). But as a document
-object store, CouchDB allows you to store data in JSON format, issue rich queries against your data,
+(CouchDB attachments are used internally for non-JSON data). As a document object store,
+CouchDB allows you to store data in JSON format, issue rich queries against your data,
 and use indexes to support your queries.
 
 Both LevelDB and CouchDB support core chaincode operations such as getting and setting a key
@@ -55,7 +55,7 @@ the state database and model assets as JSON in chaincode, you can perform rich q
 the JSON in the state database by using the ``GetQueryResult`` API and passing a CouchDB query string.
 The query string follows the `CouchDB JSON query syntax <http://docs.couchdb.org/en/2.1.1/api/database/find.html>`__.
 
-The `marbles02 fabric sample <https://github.com/hyperledger/fabric-samples/blob/master/chaincode/marbles02/go/marbles_chaincode.go>`__
+The `marbles02 fabric sample <https://github.com/hyperledger/fabric-samples/blob/{BRANCH}/chaincode/marbles02/go/marbles_chaincode.go>`__
 demonstrates use of CouchDB queries from chaincode. It includes a ``queryMarblesByOwner()`` function
 that demonstrates parameterized queries by passing an owner id into chaincode. It then queries the
 state data for JSON documents matching the docType of “marble” and the owner id using the JSON query
@@ -126,13 +126,13 @@ fields is provided:
 
   {"index":{"fields":["docType","owner"]},"ddoc":"indexOwnerDoc", "name":"indexOwner","type":"json"}
 
-The sample index can be found `here <https://github.com/hyperledger/fabric-samples/blob/master/chaincode/marbles02/go/META-INF/statedb/couchdb/indexes/indexOwner.json>`__.
+The sample index can be found `here <https://github.com/hyperledger/fabric-samples/blob/{BRANCH}/chaincode/marbles02/go/META-INF/statedb/couchdb/indexes/indexOwner.json>`__.
 
 Any index in the chaincode’s ``META-INF/statedb/couchdb/indexes`` directory
 will be packaged up with the chaincode for deployment. The index will be deployed
 to a peers channel and chaincode specific database when the chaincode package is
 installed on the peer and the chaincode definition is committed to the channel. If you
-install the chaincode first and then commit the the chaincode definition to the
+install the chaincode first and then commit the chaincode definition to the
 channel, the index will be deployed at commit time. If the chaincode has already
 been defined on the channel and the chaincode package subsequently installed on
 a peer joined to the channel, the index will be deployed at chaincode

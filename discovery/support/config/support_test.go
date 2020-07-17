@@ -116,6 +116,7 @@ func TestMSPIDMapping(t *testing.T) {
 
 	cs := config.NewDiscoverySupport(fakeBlockGetter)
 	res, err := cs.Config("mychannel")
+	assert.NoError(t, err)
 
 	actualKeys := make(map[string]struct{})
 	for key := range res.Orderers {
@@ -390,7 +391,10 @@ func injectGlobalOrdererEndpoint(t *testing.T, block *common.Block, endpoint str
 	confEnv, err := configtx.UnmarshalConfigEnvelope(payload.Data)
 	assert.NoError(t, err)
 	// Replace the orderer addresses
-	confEnv.Config.ChannelGroup.Values[ordererAddresses.Key()].Value = protoutil.MarshalOrPanic(ordererAddresses.Value())
+	confEnv.Config.ChannelGroup.Values[ordererAddresses.Key()] = &common.ConfigValue{
+		Value:     protoutil.MarshalOrPanic(ordererAddresses.Value()),
+		ModPolicy: "/Channel/Orderer/Admins",
+	}
 	// Remove the per org addresses, if applicable
 	ordererGrps := confEnv.Config.ChannelGroup.Groups[channelconfig.OrdererGroupKey].Groups
 	for _, grp := range ordererGrps {

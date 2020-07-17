@@ -26,7 +26,6 @@ import (
 	"github.com/hyperledger/fabric/common/policies"
 	"github.com/hyperledger/fabric/core/aclmgmt"
 	"github.com/hyperledger/fabric/core/chaincode"
-	"github.com/hyperledger/fabric/core/comm"
 	"github.com/hyperledger/fabric/core/config/configtest"
 	"github.com/hyperledger/fabric/core/deliverservice"
 	"github.com/hyperledger/fabric/core/ledger"
@@ -38,10 +37,12 @@ import (
 	"github.com/hyperledger/fabric/core/transientstore"
 	"github.com/hyperledger/fabric/gossip/gossip"
 	gossipmetrics "github.com/hyperledger/fabric/gossip/metrics"
+	"github.com/hyperledger/fabric/gossip/privdata"
 	"github.com/hyperledger/fabric/gossip/service"
 	"github.com/hyperledger/fabric/internal/configtxgen/encoder"
 	"github.com/hyperledger/fabric/internal/configtxgen/genesisconfig"
 	peergossip "github.com/hyperledger/fabric/internal/peer/gossip"
+	"github.com/hyperledger/fabric/internal/pkg/comm"
 	"github.com/hyperledger/fabric/msp/mgmt"
 	msptesttools "github.com/hyperledger/fabric/msp/mgmt/testtools"
 	"github.com/hyperledger/fabric/protoutil"
@@ -135,7 +136,7 @@ func TestConfigerInvokeInvalidParameters(t *testing.T) {
 	assert.Equal(t, "access denied for [GetChannels]: Failed authorization", res.Message)
 
 	mockACLProvider.CheckACLReturns(nil)
-	args = [][]byte{[]byte("fooFunction"), []byte("testChainID")}
+	args = [][]byte{[]byte("fooFunction"), []byte("testChannelID")}
 	mockStub.GetArgsReturns(args)
 	res = cscc.Invoke(mockStub)
 	assert.NotEqual(
@@ -147,7 +148,7 @@ func TestConfigerInvokeInvalidParameters(t *testing.T) {
 	assert.Equal(t, "Requested function fooFunction not found.", res.Message)
 
 	mockACLProvider.CheckACLReturns(nil)
-	args = [][]byte{[]byte("GetConfigBlock"), []byte("testChainID")}
+	args = [][]byte{[]byte("GetConfigBlock"), []byte("testChannelID")}
 	mockStub.GetArgsReturns(args)
 	mockStub.GetSignedProposalReturns(&pb.SignedProposal{
 		ProposalBytes: []byte("garbage"),
@@ -166,7 +167,7 @@ func TestConfigerInvokeInvalidParameters(t *testing.T) {
 	)
 
 	mockACLProvider.CheckACLReturns(nil)
-	args = [][]byte{[]byte("GetConfigBlock"), []byte("testChainID")}
+	args = [][]byte{[]byte("GetConfigBlock"), []byte("testChannelID")}
 	mockStub.GetArgsReturns(args)
 	mockStub.GetSignedProposalReturns(&pb.SignedProposal{
 		ProposalBytes: protoutil.MarshalOrPanic(&pb.Proposal{
@@ -196,7 +197,7 @@ func TestConfigerInvokeInvalidParameters(t *testing.T) {
 
 	mockACLProvider.CheckACLReturns(errors.New("Failed authorization"))
 	mockStub.GetSignedProposalReturns(validSignedProposal(), nil)
-	args = [][]byte{[]byte("GetConfigBlock"), []byte("testChainID")}
+	args = [][]byte{[]byte("GetConfigBlock"), []byte("testChannelID")}
 	mockStub.GetArgsReturns(args)
 	res = cscc.Invoke(mockStub)
 	assert.NotEqual(
@@ -207,7 +208,7 @@ func TestConfigerInvokeInvalidParameters(t *testing.T) {
 	)
 	assert.Equal(
 		t,
-		"access denied for [GetConfigBlock][testChainID]: Failed authorization",
+		"access denied for [GetConfigBlock][testChannelID]: Failed authorization",
 		res.Message,
 	)
 }
@@ -280,16 +281,14 @@ func TestConfigerInvokeJoinChainCorrectParams(t *testing.T) {
 	messageCryptoService := peergossip.NewMCS(&mocks.ChannelPolicyManagerGetter{}, signer, mgmt.NewDeserializersManager(cryptoProvider), cryptoProvider)
 	secAdv := peergossip.NewSecurityAdvisor(mgmt.NewDeserializersManager(cryptoProvider))
 	var defaultSecureDialOpts = func() []grpc.DialOption {
-		var dialOpts []grpc.DialOption
-		dialOpts = append(dialOpts, grpc.WithInsecure())
-		return dialOpts
+		return []grpc.DialOption{grpc.WithInsecure()}
 	}
-	defaultDeliverClientDialOpts := []grpc.DialOption{grpc.WithBlock()}
+	var defaultDeliverClientDialOpts []grpc.DialOption
 	defaultDeliverClientDialOpts = append(
 		defaultDeliverClientDialOpts,
-		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(comm.MaxRecvMsgSize),
-			grpc.MaxCallSendMsgSize(comm.MaxSendMsgSize)))
+		grpc.WithBlock(),
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(comm.MaxRecvMsgSize), grpc.MaxCallSendMsgSize(comm.MaxSendMsgSize)),
+	)
 	defaultDeliverClientDialOpts = append(
 		defaultDeliverClientDialOpts,
 		comm.ClientKeepaliveOptions(comm.DefaultKeepaliveOptions)...,
@@ -309,6 +308,7 @@ func TestConfigerInvokeJoinChainCorrectParams(t *testing.T) {
 		nil,
 		gossipConfig,
 		&service.ServiceConfig{},
+		&privdata.PrivdataConfig{},
 		&deliverservice.DeliverServiceConfig{
 			ReConnectBackoffThreshold:   deliverservice.DefaultReConnectBackoffThreshold,
 			ReconnectTotalTimeThreshold: deliverservice.DefaultReConnectTotalTimeThreshold,
@@ -382,19 +382,19 @@ func TestConfigerInvokeJoinChainCorrectParams(t *testing.T) {
 
 	res = cscc.Invoke(mockStub)
 	assert.Equal(t, int32(shim.ERROR), res.Status)
-	assert.Contains(t, res.Message, "access denied for [JoinChain][mytestchainid]")
+	assert.Contains(t, res.Message, "access denied for [JoinChain][mytestchannelid]")
 	sProp.Signature = sProp.ProposalBytes
 
 	// Query the configuration block
-	//chainID := []byte{143, 222, 22, 192, 73, 145, 76, 110, 167, 154, 118, 66, 132, 204, 113, 168}
-	chainID, err := protoutil.GetChainIDFromBlockBytes(blockBytes)
+	//channelID := []byte{143, 222, 22, 192, 73, 145, 76, 110, 167, 154, 118, 66, 132, 204, 113, 168}
+	channelID, err := protoutil.GetChannelIDFromBlockBytes(blockBytes)
 	if err != nil {
 		t.Fatalf("cscc invoke JoinChain failed with: %v", err)
 	}
 
 	// Test an ACL failure on GetConfigBlock
 	mockACLProvider.CheckACLReturns(errors.New("Failed authorization"))
-	args = [][]byte{[]byte("GetConfigBlock"), []byte(chainID)}
+	args = [][]byte{[]byte("GetConfigBlock"), []byte(channelID)}
 	mockStub.GetArgsReturns(args)
 	mockStub.GetSignedProposalReturns(sProp, nil)
 	res = cscc.Invoke(mockStub)
@@ -432,7 +432,7 @@ func TestPeerConfiger_SubmittingOrdererGenesis(t *testing.T) {
 	conf.Application = nil
 	cg, err := encoder.NewChannelGroup(conf)
 	assert.NoError(t, err)
-	block := genesis.NewFactoryImpl(cg).Block("mytestchainid")
+	block := genesis.NewFactoryImpl(cg).Block("mytestchannelid")
 	blockBytes := protoutil.MarshalOrPanic(block)
 
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
@@ -460,7 +460,7 @@ func TestPeerConfiger_SubmittingOrdererGenesis(t *testing.T) {
 
 func mockConfigBlock() []byte {
 	var blockBytes []byte = nil
-	block, err := configtxtest.MakeGenesisBlock("mytestchainid")
+	block, err := configtxtest.MakeGenesisBlock("mytestchannelid")
 	if err == nil {
 		blockBytes = protoutil.MarshalOrPanic(block)
 	}

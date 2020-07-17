@@ -123,7 +123,7 @@ peer:
     # The privateKey to be used by this peer
     # privateKey: 794ef087680e2494fa4918fd8fb80fb284b50b57d321a31423fe42b9ccf6216047cea0b66fe8365a8e3f2a8140c6866cc45852e63124668bee1daa9c97da0c2a
 
-    # The networkId allows for logical seperation of networks
+    # The networkId allows for logical separation of networks
     # networkId: dev
     # networkId: test
     networkId: dev
@@ -344,14 +344,13 @@ chaincode:
     # the image
     installpath: /opt/gopath/bin/
 
-    #keepalive in seconds. In situations where the communiction goes through a
+    #keepalive in seconds. In situations where the communication goes through a
     #proxy that does not support keep-alive, this parameter will maintain connection
     #between peer and chaincode.
     #A value <= 0 turns keepalive off
     keepalive: 1
 
-    # system chaincodes whitelist. To add system chaincode "myscc" to the
-    # whitelist, add "myscc: enable" to the list
+    # enabled system chaincodes
     system:
         cscc: enable
         lscc: enable
@@ -369,7 +368,7 @@ chaincode:
 
 ###############################################################################
 #
-#    Ledger section - ledger configuration encompases both the blockchain
+#    Ledger section - ledger configuration encompasses both the blockchain
 #    and the state
 #
 ###############################################################################

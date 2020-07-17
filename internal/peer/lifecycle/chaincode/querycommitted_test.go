@@ -117,6 +117,7 @@ var _ = Describe("QueryCommitted", func() {
 					},
 				}
 				json, err := json.MarshalIndent(expectedOutput, "", "\t")
+				Expect(err).NotTo(HaveOccurred())
 				Eventually(committedQuerier.Writer).Should(gbytes.Say(fmt.Sprintf(`\Q%s\E`, string(json))))
 			})
 		})
@@ -190,6 +191,7 @@ var _ = Describe("QueryCommitted", func() {
 						},
 					}
 					json, err := json.MarshalIndent(expectedOutput, "", "\t")
+					Expect(err).NotTo(HaveOccurred())
 					Eventually(committedQuerier.Writer).Should(gbytes.Say(fmt.Sprintf(`\Q%s\E`, string(json))))
 				})
 			})
@@ -311,14 +313,14 @@ var _ = Describe("QueryCommitted", func() {
 	})
 
 	Describe("QueryCommittedCmd", func() {
-		var (
-			queryCommittedCmd *cobra.Command
-		)
+		var queryCommittedCmd *cobra.Command
 
 		BeforeEach(func() {
 			cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
 			Expect(err).To(BeNil())
 			queryCommittedCmd = chaincode.QueryCommittedCmd(nil, cryptoProvider)
+			queryCommittedCmd.SilenceErrors = true
+			queryCommittedCmd.SilenceUsage = true
 			queryCommittedCmd.SetArgs([]string{
 				"--name=testcc",
 				"--channelID=testchannel",

@@ -977,9 +977,8 @@ func TestRetryFetchFromPeer(t *testing.T) {
 
 	_, err = pdp.RetrievePvtdata(pvtdataToRetrieve)
 	assert.NoError(t, err)
-	var maxRetries int
 
-	maxRetries = int(testConfig.PullRetryThreshold / pullRetrySleepInterval)
+	maxRetries := int(testConfig.PullRetryThreshold / pullRetrySleepInterval)
 	assert.Equal(t, fakeSleeper.SleepCallCount() <= maxRetries, true)
 	assert.Equal(t, fakeSleeper.SleepArgsForCall(0), pullRetrySleepInterval)
 }
@@ -1152,8 +1151,8 @@ func TestRetrievedPvtdataPurgeBelowHeight(t *testing.T) {
 		func() {
 			txID := fmt.Sprintf("tx%d", i)
 			iterator, err := store.GetTxPvtRWSetByTxid(txID, nil)
-			defer iterator.Close()
 			require.NoError(t, err, fmt.Sprintf("Failed obtaining iterator from transient store, got err %s", err))
+			defer iterator.Close()
 			res, err := iterator.Next()
 			require.NoError(t, err, fmt.Sprintf("Failed iterating, got err %s", err))
 			assert.NotNil(t, res)
@@ -1200,8 +1199,8 @@ func TestRetrievedPvtdataPurgeBelowHeight(t *testing.T) {
 		func() {
 			txID := fmt.Sprintf("tx%d", i)
 			iterator, err := store.GetTxPvtRWSetByTxid(txID, nil)
-			defer iterator.Close()
 			require.NoError(t, err, fmt.Sprintf("Failed obtaining iterator from transient store, got err %s", err))
+			defer iterator.Close()
 			res, err := iterator.Next()
 			require.NoError(t, err, fmt.Sprintf("Failed iterating, got err %s", err))
 			// Check that only the fetched private write set was purged because we haven't reached a blockNum that's a multiple of 5 yet
@@ -1224,8 +1223,8 @@ func TestRetrievedPvtdataPurgeBelowHeight(t *testing.T) {
 		func() {
 			txID := fmt.Sprintf("tx%d", i)
 			iterator, err := store.GetTxPvtRWSetByTxid(txID, nil)
-			defer iterator.Close()
 			require.NoError(t, err, fmt.Sprintf("Failed obtaining iterator from transient store, got err %s", err))
+			defer iterator.Close()
 			res, err := iterator.Next()
 			require.NoError(t, err, fmt.Sprintf("Failed iterating, got err %s", err))
 			// Check that the first 5 sets have been purged alongside the 9th set purged earlier
@@ -1236,6 +1235,15 @@ func TestRetrievedPvtdataPurgeBelowHeight(t *testing.T) {
 			}
 		}()
 	}
+}
+
+func TestFetchStats(t *testing.T) {
+	fetchStats := fetchStats{
+		fromLocalCache:     1,
+		fromTransientStore: 2,
+		fromRemotePeer:     3,
+	}
+	assert.Equal(t, "(1 from local cache, 2 from transient store, 3 from other peers)", fetchStats.String())
 }
 
 func testRetrievePvtdataSuccess(t *testing.T,
@@ -1331,6 +1339,7 @@ func setupPrivateDataProvider(t *testing.T,
 	storePvtdataInPeer(rwSetsInPeer, expectedDigKeys, fetcher, ts, skipPullingInvalidTransactions)
 
 	pdp := &PvtdataProvider{
+		mspID:                                   "Org1MSP",
 		selfSignedData:                          ts.peerSelfSignedData,
 		logger:                                  logger,
 		listMissingPrivateDataDurationHistogram: metrics.ListMissingPrivateDataDuration.With("channel", ts.channelID),
@@ -1364,8 +1373,8 @@ func testPurged(t *testing.T,
 			require.NotEqual(t, txID, "", fmt.Sprintf("Could not find txID for SeqInBlock %d", pvtdata.SeqInBlock), scenario)
 
 			iterator, err := store.GetTxPvtRWSetByTxid(txID, nil)
-			defer iterator.Close()
 			require.NoError(t, err, fmt.Sprintf("Failed obtaining iterator from transient store, got err %s", err))
+			defer iterator.Close()
 
 			res, err := iterator.Next()
 			require.NoError(t, err, fmt.Sprintf("Failed iterating, got err %s", err))

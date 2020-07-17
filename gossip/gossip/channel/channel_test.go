@@ -307,8 +307,6 @@ func TestBadInput(t *testing.T) {
 }
 
 func TestSelf(t *testing.T) {
-	t.Parallel()
-
 	cs := &cryptoService{}
 	pkiID1 := common.PKIidType("1")
 	jcm := &joinChanMsg{
@@ -330,8 +328,6 @@ func TestSelf(t *testing.T) {
 }
 
 func TestMsgStoreNotExpire(t *testing.T) {
-	t.Parallel()
-
 	cs := &cryptoService{}
 
 	pkiID1 := common.PKIidType("1")
@@ -431,8 +427,6 @@ func TestLeaveChannel(t *testing.T) {
 	// 1) It doesn't return any members of the channel when queried
 	// 2) It doesn't send anymore pull for blocks
 	// 3) When asked for pull for blocks, it ignores the request
-	t.Parallel()
-
 	jcm := &joinChanMsg{
 		members2AnchorPeers: map[string][]api.AnchorPeer{
 			"ORG1": {},
@@ -500,7 +494,6 @@ func TestLeaveChannel(t *testing.T) {
 }
 
 func TestChannelPeriodicalPublishStateInfo(t *testing.T) {
-	t.Parallel()
 	ledgerHeight := 5
 	receivedMsg := int32(0)
 	stateInfoReceptionChan := make(chan *protoext.SignedGossipMessage, 1)
@@ -537,7 +530,6 @@ func TestChannelPeriodicalPublishStateInfo(t *testing.T) {
 }
 
 func TestChannelMsgStoreEviction(t *testing.T) {
-	t.Parallel()
 	// Scenario: Create 4 phases in which the pull mediator of the channel would receive blocks
 	// via pull.
 	// The total amount of blocks should be restricted by the capacity of the message store.
@@ -635,7 +627,6 @@ func TestChannelMsgStoreEviction(t *testing.T) {
 }
 
 func TestChannelPull(t *testing.T) {
-	t.Parallel()
 	cs := &cryptoService{}
 	cs.On("VerifyBlock", mock.Anything).Return(nil)
 	receivedBlocksChan := make(chan *protoext.SignedGossipMessage, 2)
@@ -672,7 +663,6 @@ func TestChannelPull(t *testing.T) {
 }
 
 func TestChannelPullAccessControl(t *testing.T) {
-	t.Parallel()
 	// Scenario: We have 2 organizations in the channel: ORG1, ORG2
 	// The "acting peer" is from ORG1 and peers "1", "2", "3" are from
 	// the following organizations:
@@ -764,8 +754,6 @@ func TestChannelPullAccessControl(t *testing.T) {
 }
 
 func TestChannelPeerNotInChannel(t *testing.T) {
-	t.Parallel()
-
 	cs := &cryptoService{}
 	cs.On("VerifyBlock", mock.Anything).Return(nil)
 	gossipMessagesSentFromChannel := make(chan *proto.GossipMessage, 1)
@@ -878,8 +866,6 @@ func TestChannelPeerNotInChannel(t *testing.T) {
 }
 
 func TestChannelIsInChannel(t *testing.T) {
-	t.Parallel()
-
 	cs := &cryptoService{}
 	cs.On("VerifyBlock", mock.Anything).Return(nil)
 	adapter := new(gossipAdapterMock)
@@ -897,8 +883,6 @@ func TestChannelIsInChannel(t *testing.T) {
 }
 
 func TestChannelIsSubscribed(t *testing.T) {
-	t.Parallel()
-
 	cs := &cryptoService{}
 	cs.On("VerifyBlock", mock.Anything).Return(nil)
 	adapter := new(gossipAdapterMock)
@@ -913,8 +897,6 @@ func TestChannelIsSubscribed(t *testing.T) {
 }
 
 func TestChannelAddToMessageStore(t *testing.T) {
-	t.Parallel()
-
 	cs := &cryptoService{}
 	cs.On("VerifyBlock", mock.Anything).Return(nil)
 	demuxedMsgs := make(chan *protoext.SignedGossipMessage, 1)
@@ -966,8 +948,6 @@ func TestChannelAddToMessageStore(t *testing.T) {
 }
 
 func TestChannelBlockExpiration(t *testing.T) {
-	t.Parallel()
-
 	cs := &cryptoService{}
 	cs.On("VerifyBlock", mock.Anything).Return(nil)
 	demuxedMsgs := make(chan *protoext.SignedGossipMessage, 1)
@@ -1059,7 +1039,6 @@ func TestChannelBlockExpiration(t *testing.T) {
 }
 
 func TestChannelBadBlocks(t *testing.T) {
-	t.Parallel()
 	receivedMessages := make(chan *protoext.SignedGossipMessage, 1)
 	cs := &cryptoService{}
 	cs.On("VerifyBlock", mock.Anything).Return(nil)
@@ -1096,8 +1075,6 @@ func TestChannelBadBlocks(t *testing.T) {
 }
 
 func TestChannelPulledBadBlocks(t *testing.T) {
-	t.Parallel()
-
 	// Test a pull with a block of a bad channel
 	cs := &cryptoService{}
 	cs.On("VerifyBlock", mock.Anything).Return(nil)
@@ -1198,8 +1175,6 @@ func TestChannelPulledBadBlocks(t *testing.T) {
 }
 
 func TestChannelStateInfoSnapshot(t *testing.T) {
-	t.Parallel()
-
 	cs := &cryptoService{}
 	cs.On("VerifyBlock", mock.Anything).Return(nil)
 	adapter := new(gossipAdapterMock)
@@ -1307,7 +1282,6 @@ func TestChannelStateInfoSnapshot(t *testing.T) {
 }
 
 func TestInterOrgExternalEndpointDisclosure(t *testing.T) {
-	t.Parallel()
 	cs := &cryptoService{}
 	adapter := new(gossipAdapterMock)
 	pkiID1 := common.PKIidType("withExternalEndpoint")
@@ -1404,8 +1378,6 @@ func TestInterOrgExternalEndpointDisclosure(t *testing.T) {
 }
 
 func TestChannelStop(t *testing.T) {
-	t.Parallel()
-
 	cs := &cryptoService{}
 	cs.On("VerifyBlock", mock.Anything).Return(nil)
 	adapter := new(gossipAdapterMock)
@@ -1433,8 +1405,6 @@ func TestChannelStop(t *testing.T) {
 }
 
 func TestChannelReconfigureChannel(t *testing.T) {
-	t.Parallel()
-
 	// Scenario: We test the following things:
 	// Updating a channel with an outdated JoinChannel message doesn't work
 	// Removing an organization from a channel is indeed reflected in that
@@ -1530,8 +1500,6 @@ func TestChannelReconfigureChannel(t *testing.T) {
 }
 
 func TestChannelNoAnchorPeers(t *testing.T) {
-	t.Parallel()
-
 	// Scenario: We got a join channel message with no anchor peers
 	// In this case, we should be in the channel
 
@@ -1557,8 +1525,6 @@ func TestChannelNoAnchorPeers(t *testing.T) {
 }
 
 func TestGossipChannelEligibility(t *testing.T) {
-	t.Parallel()
-
 	// Scenario: We have a peer in an org that joins a channel with org1 and org2.
 	// and it receives StateInfo messages of other peers and the eligibility
 	// of these peers of being in the channel is checked.
@@ -1684,8 +1650,6 @@ func TestGossipChannelEligibility(t *testing.T) {
 }
 
 func TestChannelGetPeers(t *testing.T) {
-	t.Parallel()
-
 	// Scenario: We have a peer in an org, and the peer is notified that several peers
 	// exist, and some of them:
 	// (1) Join its channel, and are eligible for receiving blocks.
@@ -1732,8 +1696,6 @@ func TestChannelGetPeers(t *testing.T) {
 }
 
 func TestOnDemandGossip(t *testing.T) {
-	t.Parallel()
-
 	// Scenario: update the metadata and ensure only 1 dissemination
 	// takes place when membership is not empty
 
@@ -1809,7 +1771,6 @@ func TestOnDemandGossip(t *testing.T) {
 }
 
 func TestChannelPullWithDigestsFilter(t *testing.T) {
-	t.Parallel()
 	cs := &cryptoService{}
 	cs.On("VerifyBlock", mock.Anything).Return(nil)
 	receivedBlocksChan := make(chan *protoext.SignedGossipMessage, 2)
@@ -1848,8 +1809,6 @@ func TestChannelPullWithDigestsFilter(t *testing.T) {
 }
 
 func TestFilterForeignOrgLeadershipMessages(t *testing.T) {
-	t.Parallel()
-
 	org1 := api.OrgIdentityType("org1")
 	org2 := api.OrgIdentityType("org2")
 
@@ -2095,13 +2054,12 @@ func TestChangesInPeers(t *testing.T) {
 	// Scenario6: a peer was deleted and no new peers were added
 	// Scenario7: one peer was deleted and all other peers stayed with no change
 	type testCase struct {
-		name                     string
-		oldMembers               map[string]struct{}
-		newMembers               map[string]struct{}
-		expected                 []string
-		entryInChannel           func(chan string)
-		expectedReportInvocation bool
-		expectedTotal            float64
+		name           string
+		oldMembers     map[string]struct{}
+		newMembers     map[string]struct{}
+		expected       []string
+		entryInChannel func(chan string)
+		expectedTotal  float64
 	}
 	var cases = []testCase{
 		{
@@ -2112,8 +2070,7 @@ func TestChangesInPeers(t *testing.T) {
 			entryInChannel: func(chStr chan string) {
 				chStr <- ""
 			},
-			expectedReportInvocation: false,
-			expectedTotal:            3,
+			expectedTotal: 3,
 		},
 		{
 			name:       "newPeerWasAdded",
@@ -2121,20 +2078,17 @@ func TestChangesInPeers(t *testing.T) {
 			newMembers: map[string]struct{}{"pkiID1": {}, "pkiID3": {}},
 			expected: []string{"Membership view has changed. peers went online: [[pkiID3]], current view: [[pkiID1] [pkiID3]]",
 				"Membership view has changed. peers went online: [[pkiID3]], current view: [[pkiID3] [pkiID1]]"},
-			entryInChannel:           func(chStr chan string) {},
-			expectedReportInvocation: true,
-			expectedTotal:            2,
+			entryInChannel: func(chStr chan string) {},
+			expectedTotal:  2,
 		},
-
 		{
 			name:       "newPeerAddedOldPeerDeleted",
 			oldMembers: map[string]struct{}{"pkiID1": {}, "pkiID2": {}},
 			newMembers: map[string]struct{}{"pkiID1": {}, "pkiID3": {}},
 			expected: []string{"Membership view has changed. peers went offline: [[pkiID2]], peers went online: [[pkiID3]], current view: [[pkiID1] [pkiID3]]",
 				"Membership view has changed. peers went offline: [[pkiID2]], peers went online: [[pkiID3]], current view: [[pkiID3] [pkiID1]]"},
-			entryInChannel:           func(chStr chan string) {},
-			expectedReportInvocation: true,
-			expectedTotal:            2,
+			entryInChannel: func(chStr chan string) {},
+			expectedTotal:  2,
 		},
 		{
 			name:       "newPeersAddedOldPeerStayed",
@@ -2142,27 +2096,24 @@ func TestChangesInPeers(t *testing.T) {
 			newMembers: map[string]struct{}{"pkiID2": {}},
 			expected: []string{"Membership view has changed. peers went offline: [[pkiID1]], peers went online: [[pkiID2]], current view: [[pkiID2]]",
 				"Membership view has changed. peers went offline: [[pkiID1]], peers went online: [[pkiID2]], current view: [[pkiID2]]"},
-			entryInChannel:           func(chStr chan string) {},
-			expectedReportInvocation: true,
-			expectedTotal:            1,
+			entryInChannel: func(chStr chan string) {},
+			expectedTotal:  1,
 		},
 		{
-			name:                     "newPeersAddedNoOldPeers",
-			oldMembers:               map[string]struct{}{},
-			newMembers:               map[string]struct{}{"pkiID1": {}},
-			expected:                 []string{"Membership view has changed. peers went online: [[pkiID1]], current view: [[pkiID1]]"},
-			entryInChannel:           func(chStr chan string) {},
-			expectedReportInvocation: true,
-			expectedTotal:            1,
+			name:           "newPeersAddedNoOldPeers",
+			oldMembers:     map[string]struct{}{},
+			newMembers:     map[string]struct{}{"pkiID1": {}},
+			expected:       []string{"Membership view has changed. peers went online: [[pkiID1]], current view: [[pkiID1]]"},
+			entryInChannel: func(chStr chan string) {},
+			expectedTotal:  1,
 		},
 		{
-			name:                     "PeerWasDeletedNoNewPeers",
-			oldMembers:               map[string]struct{}{"pkiID1": {}},
-			newMembers:               map[string]struct{}{},
-			expected:                 []string{"Membership view has changed. peers went offline: [[pkiID1]], current view: []"},
-			entryInChannel:           func(chStr chan string) {},
-			expectedReportInvocation: true,
-			expectedTotal:            0,
+			name:           "PeerWasDeletedNoNewPeers",
+			oldMembers:     map[string]struct{}{"pkiID1": {}},
+			newMembers:     map[string]struct{}{},
+			expected:       []string{"Membership view has changed. peers went offline: [[pkiID1]], current view: []"},
+			entryInChannel: func(chStr chan string) {},
+			expectedTotal:  0,
 		},
 		{
 			name:       "onePeerWasDeletedRestStayed",
@@ -2170,16 +2121,14 @@ func TestChangesInPeers(t *testing.T) {
 			newMembers: map[string]struct{}{"pkiID01": {}, "pkiID02": {}},
 			expected: []string{"Membership view has changed. peers went offline: [[pkiID03]], current view: [[pkiID01] [pkiID02]]",
 				"Membership view has changed. peers went offline: [[pkiID03]], current view: [[pkiID02] [pkiID01]]"},
-			entryInChannel:           func(chStr chan string) {},
-			expectedReportInvocation: true,
-			expectedTotal:            2,
+			entryInChannel: func(chStr chan string) {},
+			expectedTotal:  2,
 		},
 	}
 
 	for _, test := range cases {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
 
 			//channel for holding the output of report
 			chForString := make(chan string, 1)
@@ -2267,7 +2216,6 @@ func TestMembershiptrackerStopWhenGCStops(t *testing.T) {
 	// membershipTracker, as long as gossip channel was not stopped, has printed the right thing
 	// membershipTracker does not print after gossip channel was stopped
 	// membershipTracker stops running after gossip channel was stopped
-	t.Parallel()
 	membershipReported := make(chan struct{}, 1)
 	cs := &cryptoService{}
 	pkiID1 := common.PKIidType("1")

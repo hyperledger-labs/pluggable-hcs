@@ -53,7 +53,7 @@ func New(opts PKCS11Opts, keyStore bccsp.KeyStore) (bccsp.BCCSP, error) {
 	}
 
 	sessions := make(chan pkcs11.SessionHandle, sessionCacheSize)
-	csp := &impl{swCSP, conf, ctx, sessions, slot, lib, opts.SoftVerify, opts.Immutable}
+	csp := &impl{swCSP, conf, ctx, sessions, slot, pin, lib, opts.SoftVerify, opts.Immutable}
 	csp.returnSession(*session)
 	return csp, nil
 }
@@ -66,6 +66,7 @@ type impl struct {
 	ctx      *pkcs11.Ctx
 	sessions chan pkcs11.SessionHandle
 	slot     uint
+	pin      string
 
 	lib        string
 	softVerify bool
@@ -225,17 +226,13 @@ func (csp *impl) Decrypt(k bccsp.Key, ciphertext []byte, opts bccsp.DecrypterOpt
 // This is a convenience function. Useful to self-configure, for tests where usual configuration is not
 // available
 func FindPKCS11Lib() (lib, pin, label string) {
-	//FIXME: Till we workout the configuration piece, look for the libraries in the familiar places
 	lib = os.Getenv("PKCS11_LIB")
 	if lib == "" {
 		pin = "98765432"
 		label = "ForFabric"
 		possibilities := []string{
-			"/usr/lib/softhsm/libsofthsm2.so",                            //Debian
-			"/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so",           //Ubuntu
-			"/usr/lib/s390x-linux-gnu/softhsm/libsofthsm2.so",            //Ubuntu
-			"/usr/lib/powerpc64le-linux-gnu/softhsm/libsofthsm2.so",      //Power
-			"/usr/local/Cellar/softhsm/2.5.0/lib/softhsm/libsofthsm2.so", //MacOS
+			"/usr/lib/softhsm/libsofthsm2.so",                  //Debian
+			"/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so", //Ubuntu
 		}
 		for _, path := range possibilities {
 			if _, err := os.Stat(path); !os.IsNotExist(err) {

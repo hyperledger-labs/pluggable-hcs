@@ -39,9 +39,7 @@ func (tr TestReceiver) NotPointerParameter(foo string) (*timestamp.Timestamp, er
 	return ptypes.TimestampProto(time.Unix(0, 0))
 }
 
-func (tr TestReceiver) NoReturnValues(ts *timestamp.Timestamp) {
-	return
-}
+func (tr TestReceiver) NoReturnValues(ts *timestamp.Timestamp) {}
 
 func (tr TestReceiver) NotProtoReturn(ts *timestamp.Timestamp) (string, error) {
 	return "", nil
@@ -133,7 +131,7 @@ var _ = Describe("Dispatcher", func() {
 			})
 		})
 
-		Context("when the receiver does not return the right number of paramters", func() {
+		Context("when the receiver does not return the right number of parameters", func() {
 			It("returns an error", func() {
 				_, err := d.Dispatch(inputBytes, "NoReturnValues", testReceiver)
 				Expect(err).To(MatchError("receiver dispatcher_test.TestReceiver.NoReturnValues returns 0 values but expected 2"))

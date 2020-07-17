@@ -5,7 +5,6 @@ SPDX-License-Identifier: Apache-2.0
 package hcs
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
+	"github.com/pkg/errors"
 )
 
 var logger = flogging.MustGetLogger("orderer.consensus.hcs")
@@ -74,13 +74,13 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 
 	configMetadata := &hb.HcsConfigMetadata{}
 	if proto.Unmarshal(support.SharedConfig().ConsensusMetadata(), configMetadata) != nil {
-		return nil, fmt.Errorf("cannot unmarshal config metadata = %v", err)
+		return nil, errors.Errorf("cannot unmarshal config metadata: %s", err)
 	}
 	if topicID, err = hedera.TopicIDFromString(configMetadata.TopicId); err != nil {
-		return nil, fmt.Errorf("invalid HCS Topic ID = %v", err)
+		return nil, errors.Errorf("invalid HCS Topic ID: %s", err)
 	}
 	if channelID, ok := consenter.topicChannelMap[configMetadata.TopicId]; ok {
-		return nil, fmt.Errorf("HCS Topic ID %s is already used for channel %s", configMetadata.TopicId, channelID)
+		return nil, errors.Errorf("HCS Topic ID %s is already used for channel %s", configMetadata.TopicId, channelID)
 	}
 
 	lastConsensusTimestampPersisted, lastOriginalSequenceProcessed, lastResubmittedConfigSequence, lastChunkFreeConsensusTimestamp, lastChunkFreeSequenceProcessed := getStateFromMetadata(metadata.Value, support.ChannelID())
@@ -95,6 +95,10 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 		lastChunkFreeConsensusTimestamp,
 		lastChunkFreeSequenceProcessed,
 	)
+}
+
+func (c *consenterImpl) JoinChain(support consensus.ConsenterSupport, joinBlock *cb.Block) (consensus.Chain, error) {
+	return nil, errors.New("the HCS orderer does not support JoinChain")
 }
 
 // commonConsenter allows us to retrieve the configuration options set on the
