@@ -40,20 +40,16 @@ const (
 	// KafkaBrokersKey is the cb.ConfigItem type key name for the KafkaBrokers message.
 	KafkaBrokersKey = "KafkaBrokers"
 
-	// HcsKey is the cb.ConfigItem type key name for the Hcs message.
-	HcsKey = "Hcs"
-
 	// EndpointsKey is the cb.COnfigValue key name for the Endpoints message in the OrdererOrgGroup.
 	EndpointsKey = "Endpoints"
 )
 
 // OrdererProtos is used as the source of the OrdererConfig.
 type OrdererProtos struct {
-	ConsensusType *ab.ConsensusType
-	BatchSize     *ab.BatchSize
-	BatchTimeout  *ab.BatchTimeout
-	KafkaBrokers  *ab.KafkaBrokers
-	//Hcs                 *ab.Hcs
+	ConsensusType       *ab.ConsensusType
+	BatchSize           *ab.BatchSize
+	BatchTimeout        *ab.BatchTimeout
+	KafkaBrokers        *ab.KafkaBrokers
 	ChannelRestrictions *ab.ChannelRestrictions
 	Capabilities        *cb.Capabilities
 }
