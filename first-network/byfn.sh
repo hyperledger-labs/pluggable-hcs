@@ -172,14 +172,19 @@ function generateChannelsForHCS() {
 }
 
 function installHCSCli() {
-    HCSCLI_VERSION="v0.2.0"
+    HCSCLI_VERSION="v0.3.1"
     LOCAL_VERSION=
-    if [ -x ../build/bin/hcscli ]; then
+    BINDIR=$PWD/../build/bin
+    if [ -x $BINDIR/hcscli ]; then
       LOCAL_VERSION=$(../build/bin/hcscli version 2>&1 | grep -o 'v[0-9]\+\.[0-9]\+\.[0-9]\+')
     fi
     if [ "$LOCAL_VERSION" != "$HCSCLI_VERSION" ]; then
         echo "installing hcscli ..."
-        GO111MODULE=on GOBIN=$PWD/../build/bin go get github.com/hashgraph/hcscli@v0.2.0
+        TMPDIR=$(mktemp -d)
+        cd $TMPDIR &&
+            GO111MODULE=on GOBIN=$BINDIR go get github.com/hashgraph/hcscli@${HCSCLI_VERSION} &&
+            cd - &&
+            rm -fr $TMPDIR
     fi
 }
 
