@@ -5,14 +5,13 @@ in this guide have been validated on Mac OSX (Catalina) and Ubuntu 18.04 LTS. Th
 
 ### Prerequisites
 
-1. Toolchain: git, make, gcc, go, docker, and docker-compose. Please refer to [Prerequsites for Hyperledger Fabric v2.0](https://hyperledger-fabric.readthedocs.io/en/release-2.0/prereqs.html)
+1. Toolchain: git, make, gcc, go, docker, and docker-compose. Please refer to [Prerequsites for Hyperledger Fabric v2.2](https://hyperledger-fabric.readthedocs.io/en/release-2.2/prereqs.html)
 for the complete list with detailed instructions to set up the build environment for Hyperledger Fabric.
 1. The pluggable-hcs repo. Please follow the instructions below to get the source, and hereafter
 the repo directory will be referred to as FABRIC_REPO_DIR.
    ```
-   $ mkdir -p $GOPATH/src/github.com/hyperledger && cd $GOPATH/src/github.com/hyperledger
-   $ git clone https://github.com/hyperledger-labs/pluggable-hcs fabric
-   $ cd fabric
+   $ git clone https://github.com/hyperledger-labs/pluggable-hcs
+   $ cd pluggable-hcs
    ```
 1. A Hedera testnet account. Please go to [Hedera Portal](https://portal.hedera.com) to register an account if you don't
 have one. Please note down your account id and private key.
