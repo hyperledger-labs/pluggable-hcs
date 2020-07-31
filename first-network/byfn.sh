@@ -176,7 +176,7 @@ function installHCSCli() {
     LOCAL_VERSION=
     BINDIR=$PWD/../build/bin
     if [ -x $BINDIR/hcscli ]; then
-      LOCAL_VERSION=$(../build/bin/hcscli version 2>&1 | grep -o 'v[0-9]\+\.[0-9]\+\.[0-9]\+')
+      LOCAL_VERSION=$(../build/bin/hcscli --version 2>&1 | grep -o 'v[0-9]\+\.[0-9]\+\.[0-9]\+')
     fi
     if [ "$LOCAL_VERSION" != "$HCSCLI_VERSION" ]; then
         echo "installing hcscli ..."
