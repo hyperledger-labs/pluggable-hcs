@@ -148,16 +148,6 @@ function checkPrereqs() {
   done
 }
 
-function generateAESKey() {
-  echo "##########################################################"
-  echo "#########     Generating 256-bit AES Key    ##############"
-  echo "##########################################################"
-
-  set -e
-  dd bs=32 count=1 if=/dev/urandom 2>/dev/null | base64 > ./aes.key
-  set +e
-}
-
 function generateChannelsForHCS() {
   echo "##########################################################"
   echo "#########  Creating Topic IDs for Channels  ##############"
@@ -191,7 +181,6 @@ function installHCSCli() {
 # Generate the needed certificates, the genesis block and start the network.
 function networkUp() {
   checkPrereqs
-  generateAESKey
   generateChannelsForHCS
   # generate artifacts if they don't exist
   if [ ! -d "crypto-config" ]; then
@@ -318,8 +307,6 @@ function networkDown() {
     rm -rf channel-artifacts/*.block channel-artifacts/*.tx crypto-config ./org3-artifacts/crypto-config/ channel-artifacts/org3.json
     # remove configtx.yaml
     rm -f configtx.yaml
-    # remove aes.key
-    rm -f aes.key
   fi
 }
 
