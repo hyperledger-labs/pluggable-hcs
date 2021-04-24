@@ -47,6 +47,5 @@ services:
       - ORDERER_GENERAL_CLUSTER_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
     volumes:
         - ../orderer.yaml:/etc/hyperledger/fabric/orderer.yaml
-        - ../aes.key:/var/hyperledger/orderer/aes.key
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric
     command: orderer
