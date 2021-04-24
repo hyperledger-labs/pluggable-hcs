@@ -42,7 +42,7 @@ var (
 )
 
 const (
-	maxConsensusMessageSize    = 5600 // the max message size HCS supports is 6kB, including header
+	maxConsensusMessageSize    = 960 // the max message size HCS supports is 1024, including header
 	subscriptionRetryBaseDelay = 100 * time.Millisecond
 	subscriptionRetryMax       = 8
 )
@@ -552,7 +552,7 @@ func (chain *chainImpl) processMessages() error {
 			if !resp.ConsensusTimeStamp.After(chain.lastConsensusTimestamp) {
 				logger.Panicf("[channel: %s] resp.ConsensusTimestamp(%d) not after lastConsensusTimestamp(%d)", chain.ChannelID(), resp.ConsensusTimeStamp.UnixNano(), chain.lastConsensusTimestamp.UnixNano())
 			}
-			chain.lastSequenceProcessed += 1
+			chain.lastSequenceProcessed++
 			chain.lastConsensusTimestamp = resp.ConsensusTimeStamp
 			chunk := new(hb.ApplicationMessageChunk)
 			if err := proto.Unmarshal(resp.Message, chunk); err != nil {
