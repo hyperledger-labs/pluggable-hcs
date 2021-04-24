@@ -304,7 +304,6 @@ Hcs:
         Type: aes-256-gcm
         # base64 encoded block cipher key or path to the key file
         Key:
-            File: /var/hyperledger/orderer/aes.key
 
 ################################################################################
 #
