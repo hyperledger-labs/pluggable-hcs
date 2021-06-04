@@ -1,6 +1,6 @@
 {
-    "operatorId": "put your testnet account id here",
-    "operatorKey": "put your account private key here",
+    "operatorId": "0.0.1861449",
+    "operatorKey": "302e020100300506032b65700422042038d8ffef17422b565ca0554c567ffa6205206cbe6b2accfb6c41e8e158323440",
     "nodeId": "",
     "nodeAddress": "",
     "network": {
