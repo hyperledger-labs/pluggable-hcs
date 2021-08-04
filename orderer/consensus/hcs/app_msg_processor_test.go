@@ -6,12 +6,13 @@ package hcs
 
 import (
 	"fmt"
-	"github.com/golang/protobuf/ptypes/any"
-	"github.com/golang/protobuf/ptypes/timestamp"
-	"github.com/hashgraph/hedera-sdk-go"
 	"math/rand"
 	"testing"
 	"time"
+
+	"github.com/golang/protobuf/ptypes/any"
+	"github.com/golang/protobuf/ptypes/timestamp"
+	"github.com/hashgraph/hedera-sdk-go"
 
 	"github.com/golang/protobuf/proto"
 	mockhcs "github.com/hyperledger/fabric/orderer/consensus/hcs/mock"
@@ -22,11 +23,6 @@ import (
 //go:generate counterfeiter -o mock/signer.go --fake-name Signer . mockSigner
 type mockSigner interface {
 	signer
-}
-
-//go:generate counterfeiter -o mock/block_cipher.go --fake-name BlockCipher . mockBlockCipher
-type mockBlockCipher interface {
-	blockCipher
 }
 
 const (
@@ -44,10 +40,9 @@ var (
 
 func TestNewEmptyAppMsgProcessor(t *testing.T) {
 	type args struct {
-		appID       []byte
-		chunkSize   int
-		signer      signer
-		blockCipher blockCipher
+		appID     []byte
+		chunkSize int
+		signer    signer
 	}
 	var tests = []struct {
 		name    string
@@ -57,70 +52,63 @@ func TestNewEmptyAppMsgProcessor(t *testing.T) {
 		{
 			name: "Proper",
 			args: args{
-				appID:       []byte("sample app id"),
-				chunkSize:   maxConsensusMessageSize,
-				signer:      &mockhcs.Signer{},
-				blockCipher: &mockhcs.BlockCipher{},
+				appID:     []byte("sample app id"),
+				chunkSize: maxConsensusMessageSize,
+				signer:    &mockhcs.Signer{},
 			},
 			wantErr: false,
 		},
 		{
 			name: "ProperWithNilSignerNilBlockCipher",
 			args: args{
-				appID:       []byte("sample app id"),
-				chunkSize:   maxConsensusMessageSize,
-				signer:      &mockhcs.Signer{},
-				blockCipher: nil,
+				appID:     []byte("sample app id"),
+				chunkSize: maxConsensusMessageSize,
+				signer:    &mockhcs.Signer{},
 			},
 			wantErr: false,
 		},
 		{
 			name: "WithNilAppID",
 			args: args{
-				appID:       nil,
-				chunkSize:   maxConsensusMessageSize,
-				signer:      &mockhcs.Signer{},
-				blockCipher: &mockhcs.BlockCipher{},
+				appID:     nil,
+				chunkSize: maxConsensusMessageSize,
+				signer:    &mockhcs.Signer{},
 			},
 			wantErr: true,
 		},
 		{
 			name: "WithEmptyAppID",
 			args: args{
-				appID:       []byte{},
-				chunkSize:   maxConsensusMessageSize,
-				signer:      &mockhcs.Signer{},
-				blockCipher: &mockhcs.BlockCipher{},
+				appID:     []byte{},
+				chunkSize: maxConsensusMessageSize,
+				signer:    &mockhcs.Signer{},
 			},
 			wantErr: true,
 		},
 		{
 			name: "WithZeroChunkSize",
 			args: args{
-				appID:       []byte("sample app id"),
-				chunkSize:   0,
-				signer:      &mockhcs.Signer{},
-				blockCipher: &mockhcs.BlockCipher{},
+				appID:     []byte("sample app id"),
+				chunkSize: 0,
+				signer:    &mockhcs.Signer{},
 			},
 			wantErr: true,
 		},
 		{
 			name: "WithNegativeChunkSize",
 			args: args{
-				appID:       []byte("sample app id"),
-				chunkSize:   -10,
-				signer:      &mockhcs.Signer{},
-				blockCipher: &mockhcs.BlockCipher{},
+				appID:     []byte("sample app id"),
+				chunkSize: -10,
+				signer:    &mockhcs.Signer{},
 			},
 			wantErr: true,
 		},
 		{
 			name: "WithNilSigner",
 			args: args{
-				appID:       []byte("sample app id"),
-				chunkSize:   maxConsensusMessageSize,
-				signer:      nil,
-				blockCipher: &mockhcs.BlockCipher{},
+				appID:     []byte("sample app id"),
+				chunkSize: maxConsensusMessageSize,
+				signer:    nil,
 			},
 			wantErr: true,
 		},
@@ -128,7 +116,7 @@ func TestNewEmptyAppMsgProcessor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			amp, err := newAppMsgProcessor(testAccountID, tt.args.appID, tt.args.chunkSize, normalReassembleTimeout, tt.args.signer, tt.args.blockCipher)
+			amp, err := newAppMsgProcessor(testAccountID, tt.args.appID, tt.args.chunkSize, normalReassembleTimeout, tt.args.signer)
 			if !tt.wantErr {
 				assert.NoError(t, err, "Expected newAppMsgProcessor returns no error")
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor returns non-nil value")
@@ -149,19 +137,10 @@ func TestAppMsgProcessor(t *testing.T) {
 		fakeSigner.SignReturns([]byte("fake public key"), []byte("fake signature"), nil)
 		badSigner := &mockhcs.Signer{}
 		badSigner.SignReturns(nil, nil, fmt.Errorf("can't sign message"))
-		fakeBlockCipher := &mockhcs.BlockCipher{}
-		fakeBlockCipher.EncryptStub = func(plaintext []byte) (iv, ciphertext []byte, err error) {
-			iv = []byte("iv")
-			ciphertext = plaintext
-			return
-		}
-		badBlockCipher := &mockhcs.BlockCipher{}
-		badBlockCipher.EncryptReturns(nil, nil, fmt.Errorf("can't encrypt data"))
 
 		var tests = []struct {
 			name           string
 			signer         *mockhcs.Signer
-			blockCipher    *mockhcs.BlockCipher
 			message        []byte
 			wantErr        bool
 			wantChunkCount int
@@ -169,15 +148,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:           "ProperOneChunk",
 				signer:         fakeSigner,
-				blockCipher:    fakeBlockCipher,
-				message:        make([]byte, maxConsensusMessageSize-400),
-				wantErr:        false,
-				wantChunkCount: 1,
-			},
-			{
-				name:           "ProperOneChunkWithoutBlockCipher",
-				signer:         fakeSigner,
-				blockCipher:    nil,
 				message:        make([]byte, maxConsensusMessageSize-400),
 				wantErr:        false,
 				wantChunkCount: 1,
@@ -185,51 +155,36 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:           "ProperMultipleChunks",
 				signer:         fakeSigner,
-				blockCipher:    fakeBlockCipher,
 				message:        make([]byte, maxConsensusMessageSize*5),
 				wantErr:        false,
 				wantChunkCount: 6,
 			},
 			{
-				name:        "WithNilMessage",
-				signer:      fakeSigner,
-				blockCipher: fakeBlockCipher,
-				message:     nil,
-				wantErr:     true,
+				name:    "WithNilMessage",
+				signer:  fakeSigner,
+				message: nil,
+				wantErr: true,
 			},
 			{
-				name:        "WithEmptyMessage",
-				signer:      fakeSigner,
-				blockCipher: fakeBlockCipher,
-				message:     []byte{},
-				wantErr:     true,
+				name:    "WithEmptyMessage",
+				signer:  fakeSigner,
+				message: []byte{},
+				wantErr: true,
 			},
 			{
-				name:        "WithSignerError",
-				signer:      badSigner,
-				blockCipher: fakeBlockCipher,
-				message:     make([]byte, maxConsensusMessageSize*5),
-				wantErr:     true,
-			},
-			{
-				name:        "WithEncryptError",
-				signer:      fakeSigner,
-				blockCipher: badBlockCipher,
-				message:     make([]byte, maxConsensusMessageSize*5),
-				wantErr:     true,
+				name:    "WithSignerError",
+				signer:  badSigner,
+				message: make([]byte, maxConsensusMessageSize*5),
+				wantErr: true,
 			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, tt.signer, tt.blockCipher)
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, tt.signer)
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no err")
 
 				prevSignCallCount := tt.signer.SignCallCount()
-				prevEncryptCallCount := 0
-				if tt.blockCipher != nil {
-					prevEncryptCallCount = tt.blockCipher.EncryptCallCount()
-				}
 
 				chunks, _, err := amp.Split(tt.message, time.Now())
 				if tt.wantErr {
@@ -247,9 +202,6 @@ func TestAppMsgProcessor(t *testing.T) {
 						assert.Equal(t, tt.wantChunkCount, int(chunk.ChunksCount), "Expected correct ChunksCount")
 						assert.Equal(t, index, int(chunk.ChunkIndex), "Expected correct ChunkIndex")
 						assert.Equal(t, 1, tt.signer.SignCallCount()-prevSignCallCount, "Expected Sign called one time")
-						if tt.blockCipher != nil {
-							assert.Equal(t, 1, tt.blockCipher.EncryptCallCount()-prevEncryptCallCount, "Expected Encrypt called one time")
-						}
 					}
 				}
 			})
@@ -271,25 +223,9 @@ func TestAppMsgProcessor(t *testing.T) {
 		badSigner.SignStub = fakeSigner.SignStub
 		badSigner.VerifyReturns(false)
 
-		fakeBlockCipher := &mockhcs.BlockCipher{}
-		fakeIV := []byte("iv")
-		fakeBlockCipher.EncryptStub = func(plaintext []byte) (iv, ciphertext []byte, err error) {
-			ivCopy := make([]byte, len(fakeIV))
-			copy(ivCopy, fakeIV)
-			return ivCopy, plaintext, nil
-		}
-		fakeBlockCipher.DecryptStub = func(iv, ciphertext []byte) ([]byte, error) {
-			return ciphertext, nil
-		}
-
-		badBlockCipher := &mockhcs.BlockCipher{}
-		badBlockCipher.EncryptStub = fakeBlockCipher.EncryptStub
-		badBlockCipher.DecryptReturns(nil, fmt.Errorf("failed to decrypt data"))
-
 		var tests = []struct {
 			name                string
 			signer              *mockhcs.Signer
-			blockCipher         *mockhcs.BlockCipher
 			messageSize         int
 			expectedChunksCount int32
 			chunksModifyFunc    func(t *testing.T, chunks []*hb.ApplicationMessageChunk)
@@ -298,7 +234,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "ProperOneChunk",
 				signer:              fakeSigner,
-				blockCipher:         fakeBlockCipher,
 				messageSize:         maxConsensusMessageSize - 400,
 				expectedChunksCount: 1,
 				wantErr:             false,
@@ -306,7 +241,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "ProperMultipleChunks",
 				signer:              fakeSigner,
-				blockCipher:         fakeBlockCipher,
 				messageSize:         maxConsensusMessageSize * 5,
 				expectedChunksCount: 6,
 				wantErr:             false,
@@ -314,7 +248,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "ProperMultipleChunksOutOfOrder",
 				signer:              fakeSigner,
-				blockCipher:         fakeBlockCipher,
 				messageSize:         maxConsensusMessageSize * 5,
 				expectedChunksCount: 6,
 				chunksModifyFunc: func(t *testing.T, chunks []*hb.ApplicationMessageChunk) {
@@ -326,25 +259,8 @@ func TestAppMsgProcessor(t *testing.T) {
 				wantErr: false,
 			},
 			{
-				name:                "ProperMultipleChunksNoBlockCipher",
-				signer:              fakeSigner,
-				blockCipher:         nil,
-				messageSize:         maxConsensusMessageSize * 5,
-				expectedChunksCount: 6,
-				wantErr:             false,
-			},
-			{
 				name:                "WithSignerVerifyFailed",
 				signer:              badSigner,
-				blockCipher:         fakeBlockCipher,
-				messageSize:         maxConsensusMessageSize * 5,
-				expectedChunksCount: 6,
-				wantErr:             true,
-			},
-			{
-				name:                "WithBlockCipherDecryptFailed",
-				signer:              fakeSigner,
-				blockCipher:         badBlockCipher,
 				messageSize:         maxConsensusMessageSize * 5,
 				expectedChunksCount: 6,
 				wantErr:             true,
@@ -352,7 +268,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "WithOutOfBoundChunk",
 				signer:              fakeSigner,
-				blockCipher:         fakeBlockCipher,
 				messageSize:         maxConsensusMessageSize * 5,
 				expectedChunksCount: 6,
 				chunksModifyFunc: func(t *testing.T, chunks []*hb.ApplicationMessageChunk) {
@@ -363,7 +278,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "WithInvalidChunksCount",
 				signer:              fakeSigner,
-				blockCipher:         fakeBlockCipher,
 				messageSize:         maxConsensusMessageSize - 400,
 				expectedChunksCount: 1,
 				chunksModifyFunc: func(t *testing.T, chunks []*hb.ApplicationMessageChunk) {
@@ -374,7 +288,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "WithNegativeChunkIndex",
 				signer:              fakeSigner,
-				blockCipher:         fakeBlockCipher,
 				messageSize:         maxConsensusMessageSize - 400,
 				expectedChunksCount: 1,
 				chunksModifyFunc: func(t *testing.T, chunks []*hb.ApplicationMessageChunk) {
@@ -385,7 +298,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "WithDuplicateChunk",
 				signer:              fakeSigner,
-				blockCipher:         fakeBlockCipher,
 				messageSize:         maxConsensusMessageSize * 5,
 				expectedChunksCount: 6,
 				chunksModifyFunc: func(t *testing.T, chunks []*hb.ApplicationMessageChunk) {
@@ -396,7 +308,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "WithCorruptedData",
 				signer:              fakeSigner,
-				blockCipher:         fakeBlockCipher,
 				messageSize:         maxConsensusMessageSize * 5,
 				expectedChunksCount: 6,
 				chunksModifyFunc: func(t *testing.T, chunks []*hb.ApplicationMessageChunk) {
@@ -410,7 +321,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "WithIncorrectChunksCount",
 				signer:              fakeSigner,
-				blockCipher:         fakeBlockCipher,
 				messageSize:         maxConsensusMessageSize * 5,
 				expectedChunksCount: 6,
 				chunksModifyFunc: func(t *testing.T, chunks []*hb.ApplicationMessageChunk) {
@@ -421,7 +331,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "WithCorruptedBusinessMessage",
 				signer:              fakeSigner,
-				blockCipher:         nil,
 				messageSize:         maxConsensusMessageSize - 400,
 				expectedChunksCount: 1,
 				chunksModifyFunc: func(t *testing.T, chunks []*hb.ApplicationMessageChunk) {
@@ -437,7 +346,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "WithCorruptedSignature",
 				signer:              fakeSigner,
-				blockCipher:         nil,
 				messageSize:         maxConsensusMessageSize - 400,
 				expectedChunksCount: 1,
 				chunksModifyFunc: func(t *testing.T, chunks []*hb.ApplicationMessageChunk) {
@@ -455,7 +363,6 @@ func TestAppMsgProcessor(t *testing.T) {
 			{
 				name:                "WithEncryptedDataAndNoBlockCipher",
 				signer:              fakeSigner,
-				blockCipher:         nil,
 				messageSize:         maxConsensusMessageSize - 400,
 				expectedChunksCount: 1,
 				chunksModifyFunc: func(t *testing.T, chunks []*hb.ApplicationMessageChunk) {
@@ -472,7 +379,7 @@ func TestAppMsgProcessor(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, tt.signer, tt.blockCipher)
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, tt.signer)
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
@@ -487,10 +394,7 @@ func TestAppMsgProcessor(t *testing.T) {
 				}
 
 				prevVerifyCallCount := tt.signer.VerifyCallCount()
-				prevDecryptCallCount := 0
-				if tt.blockCipher != nil {
-					prevDecryptCallCount = tt.blockCipher.DecryptCallCount()
-				}
+
 				var reassembled []byte
 				for index, chunk := range chunks {
 					reassembled, _, _, _, err = amp.Reassemble(chunk, time.Now())
@@ -515,10 +419,6 @@ func TestAppMsgProcessor(t *testing.T) {
 					assert.Equal(t, signData, verifyData, "Expected signData and verifyData are the same")
 					assert.Equal(t, fakePublicKey, verifyPublicKey, "Expected public keys match")
 					assert.Equal(t, fakeSignature, verifySignature, "Expected signatures match")
-
-					if tt.blockCipher != nil {
-						assert.Equal(t, 1, tt.blockCipher.DecryptCallCount()-prevDecryptCallCount, "Expected Decrypt called one time")
-					}
 				}
 			})
 		}
@@ -530,14 +430,14 @@ func TestAppMsgProcessor(t *testing.T) {
 		mockSigner.VerifyReturns(true)
 
 		t.Run("ProperEmpty", func(t *testing.T) {
-			amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, mockSigner, nil)
+			amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, mockSigner)
 			assert.NotNil(t, amp, "Expected newAppMsgProcessor returns non-nil value")
 			assert.NoError(t, err, "Expected newAppMsgProcessor returns no error")
 			assert.False(t, amp.IsPending(), "Expected new amp IsPending = false")
 		})
 
 		t.Run("ProperWithData", func(t *testing.T) {
-			amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, mockSigner, nil)
+			amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, mockSigner)
 			assert.NotNil(t, amp, "Expected newAppMsgProcessor returns non-nil value")
 			assert.NoError(t, err, "Expected newAppMsgProcessor returns no error")
 
@@ -564,7 +464,7 @@ func TestAppMsgProcessor(t *testing.T) {
 		fakesSigner.SignReturns([]byte("fake public key"), []byte("fake signature"), nil)
 		fakesSigner.VerifyReturns(true)
 
-		amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, shortReassembleTimeout, fakesSigner, nil)
+		amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, shortReassembleTimeout, fakesSigner)
 		assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
@@ -663,7 +563,7 @@ func TestAppMsgProcessor(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, fakesSigner, nil)
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, fakesSigner)
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
@@ -728,11 +628,11 @@ func TestAppMsgProcessor(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, fakesSigner, nil)
+				amp, err := newAppMsgProcessor(testAccountID, fakeAppID, maxConsensusMessageSize, normalReassembleTimeout, fakesSigner)
 				assert.NotNil(t, amp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
-				otherAmp, err := newAppMsgProcessor(testAccountID, fakeOtherAppID, maxConsensusMessageSize, normalReassembleTimeout, fakesSigner, nil)
+				otherAmp, err := newAppMsgProcessor(testAccountID, fakeOtherAppID, maxConsensusMessageSize, normalReassembleTimeout, fakesSigner)
 				assert.NotNil(t, otherAmp, "Expected newAppMsgProcessor return non-nil value")
 				assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 

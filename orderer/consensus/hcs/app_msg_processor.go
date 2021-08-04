@@ -25,11 +25,6 @@ type signer interface {
 	Verify(message, signerPublicKey, signature []byte) bool
 }
 
-type blockCipher interface {
-	Encrypt(plaintext []byte) (iv, ciphertext []byte, err error)
-	Decrypt(iv, ciphertext []byte) (plaintext []byte, err error)
-}
-
 type appMsgProcessor interface {
 	Split(message []byte, validStart time.Time) ([]*hb.ApplicationMessageChunk, []byte, error)
 	Reassemble(chunk *hb.ApplicationMessageChunk, timestamp time.Time) ([]byte, []byte, int, int, error)
@@ -37,7 +32,7 @@ type appMsgProcessor interface {
 	ExpireByAppID(appID []byte) (int, int, error)
 }
 
-func newAppMsgProcessor(accountID hedera.AccountID, appID []byte, chunkSize int, reassembleTimeout time.Duration, signer signer, blockCipher blockCipher) (appMsgProcessor, error) {
+func newAppMsgProcessor(accountID hedera.AccountID, appID []byte, chunkSize int, reassembleTimeout time.Duration, signer signer) (appMsgProcessor, error) {
 	if chunkSize <= 0 {
 		return nil, fmt.Errorf("invalid chunkSize - %d", chunkSize)
 	}
@@ -56,8 +51,6 @@ func newAppMsgProcessor(accountID hedera.AccountID, appID []byte, chunkSize int,
 		chunkSize:         chunkSize,
 		reassembleTimeout: reassembleTimeout,
 		signer:            signer,
-		blockCipher:       blockCipher,
-		noBlockCipher:     isNil(blockCipher),
 		holders:           map[string]*chunkHolder{},
 		holdersByAppID:    map[string]map[string]struct{}{},
 		holderListByAge:   list.New(),
@@ -70,8 +63,6 @@ type appMsgProcessorImpl struct {
 	chunkSize         int
 	reassembleTimeout time.Duration
 	signer            signer
-	blockCipher       blockCipher
-	noBlockCipher     bool
 
 	holders         map[string]*chunkHolder
 	holdersByAppID  map[string]map[string]struct{} // holder keys organized by appID
@@ -111,14 +102,6 @@ func (processor *appMsgProcessorImpl) Split(message []byte, validStart time.Time
 		Signature: signature,
 	}
 	appMsg.BusinessProcessSignatureOnHash = protoutil.MarshalOrPanic(appSig)
-	if !processor.noBlockCipher {
-		iv, ciphertext, err := processor.blockCipher.Encrypt(message)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to encrypt message - %v", err)
-		}
-		appMsg.BusinessProcessMessage = ciphertext
-		appMsg.EncryptionRandom = iv
-	}
 
 	data := protoutil.MarshalOrPanic(appMsg)
 	chunkSize := processor.chunkSize
@@ -208,14 +191,14 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 				holder.el = processor.holderListByAge.PushBack(holder)
 			}
 			return
-		} else {
-			reassembled := make([]byte, 0, holder.size)
-			for _, f := range holder.chunks {
-				reassembled = append(reassembled, f.MessageChunk...)
-			}
-			processor.removeHolder(holder, true)
-			protoMsg = reassembled
 		}
+
+		reassembled := make([]byte, 0, holder.size)
+		for _, f := range holder.chunks {
+			reassembled = append(reassembled, f.MessageChunk...)
+		}
+		processor.removeHolder(holder, true)
+		protoMsg = reassembled
 	}
 
 	appMsg := &hb.ApplicationMessage{}
@@ -224,15 +207,10 @@ func (processor *appMsgProcessorImpl) Reassemble(chunk *hb.ApplicationMessageChu
 	}
 	plaintext := appMsg.BusinessProcessMessage
 	if appMsg.EncryptionRandom != nil {
-		if processor.noBlockCipher {
-			err = fmt.Errorf("application message is encrypted but appMsgProcessor is configured without a blockciper")
-			return
-		}
-		if plaintext, err = processor.blockCipher.Decrypt(appMsg.EncryptionRandom, appMsg.BusinessProcessMessage); err != nil {
-			err = fmt.Errorf("failed  to decrypt business process message - %v", err)
-			return
-		}
+		err = fmt.Errorf("encrypted payload support is deprecated")
+		return
 	}
+
 	msgHash := sha256.Sum256(plaintext)
 	if !bytes.Equal(msgHash[:], appMsg.UnencryptedBusinessProcessMessageHash) {
 		err = fmt.Errorf("hash on unecnrypted business process message does not match, corrupted or malicious data")

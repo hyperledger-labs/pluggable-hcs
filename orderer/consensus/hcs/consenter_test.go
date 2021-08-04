@@ -6,11 +6,11 @@ package hcs
 
 import (
 	"crypto/rand"
-	"encoding/base64"
 	"fmt"
-	"github.com/hyperledger/fabric/common/metrics/disabled"
 	"strings"
 	"testing"
+
+	"github.com/hyperledger/fabric/common/metrics/disabled"
 
 	"github.com/hyperledger/fabric/msp"
 
@@ -249,10 +249,6 @@ func newMockLocalConfig(enableTLS bool) *localconfig.TopLevel {
 					Type: "ed25519",
 					Key:  testOperatorPrivateKey,
 				},
-			},
-			BlockCipher: localconfig.HcsTypeKey{
-				Type: "aes-256-gcm",
-				Key:  base64.StdEncoding.EncodeToString(key),
 			},
 		},
 	}

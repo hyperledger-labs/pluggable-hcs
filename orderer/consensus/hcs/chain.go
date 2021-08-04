@@ -6,11 +6,8 @@ package hcs
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/md5"
 	crand "crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -112,22 +109,6 @@ func newChain(
 	}
 
 	appID := md5.Sum(consenter.identity())
-	var gcmCipher cipher.AEAD
-	if localHcsConfig.BlockCipher.Key != "" {
-		if localHcsConfig.BlockCipher.Type != "aes-256-gcm" {
-			logger.Errorf("[channel: %s] unsupported block cipher type - %s", support.ChannelID(), localHcsConfig.BlockCipher.Type)
-			return nil, fmt.Errorf("unsupported block cipher type - %s", localHcsConfig.BlockCipher.Type)
-		}
-		key, err := base64.StdEncoding.DecodeString(localHcsConfig.BlockCipher.Key)
-		if err != nil {
-			logger.Errorf("[channel: %s] EncryptionKey is not a valid base64 string = %v", support.ChannelID(), err)
-			return nil, err
-		}
-		if gcmCipher, err = makeGCMCipher(key); err != nil {
-			logger.Errorf("[channel: %s] failed to create gcm cipher = %v", support.ChannelID(), err)
-			return nil, err
-		}
-	}
 
 	consenter.Metrics().NumberNodes.With("channel", support.ChannelID()).Set(float64(len(support.ChannelConfig().OrdererAddresses())))
 	consenter.Metrics().CommittedBlockNumber.With("channel", support.ChannelID()).Set(float64(lastCutBlockNumber))
@@ -160,16 +141,11 @@ func newChain(
 		doneReprocessingMsgInFlight:     doneReprocessingMsgInFlight,
 		timeToCutRequestChan:            make(chan timeToCutRequest),
 		messageHashes:                   make(map[string]struct{}),
-		gcmCipher:                       gcmCipher,
 		nonceReader:                     crand.Reader,
 		appID:                           appID[:],
 	}
 
-	var blkCipher blockCipher
-	if gcmCipher != nil {
-		blkCipher = chain
-	}
-	if chain.appMsgProcessor, err = newAppMsgProcessor(*chain.operatorID, chain.appID, maxConsensusMessageSize, reassembleTimeout, chain, blkCipher); err != nil {
+	if chain.appMsgProcessor, err = newAppMsgProcessor(*chain.operatorID, chain.appID, maxConsensusMessageSize, reassembleTimeout, chain); err != nil {
 		logger.Errorf("[channel: %s] failed to create appMsgProcessor with chunk size %d bytes", chain.ChannelID(), maxConsensusMessageSize)
 		return nil, fmt.Errorf("failed to create appMsgProcessor with chunk size %d bytes - %v", maxConsensusMessageSize, err)
 	}
@@ -231,7 +207,6 @@ type chainImpl struct {
 	appMsgProcessor appMsgProcessor
 	appID           []byte
 
-	gcmCipher   cipher.AEAD
 	nonceReader io.Reader
 }
 
@@ -325,35 +300,6 @@ func (chain *chainImpl) Verify(message, signerPublicKey, signature []byte) bool 
 		return false
 	}
 	return ed25519.Verify(signerPublicKey, message, signature)
-}
-
-func (chain *chainImpl) Encrypt(plaintext []byte) (iv []byte, ciphertext []byte, err error) {
-	if chain.gcmCipher == nil {
-		logger.Errorf("[channel: %s] Encrypt is called with nil gcmCipher", chain.ChannelID())
-		return nil, nil, fmt.Errorf("cipher is not initialized")
-	}
-
-	iv = make([]byte, chain.gcmCipher.NonceSize())
-	if _, err := io.ReadFull(chain.nonceReader, iv); err != nil {
-		logger.Errorf("[channel: %s] failed to read nonce from secure random source - err", err)
-		return nil, nil, err
-	}
-
-	ciphertext = chain.gcmCipher.Seal(nil, iv, plaintext, nil)
-	return iv, ciphertext, nil
-}
-
-func (chain *chainImpl) Decrypt(iv []byte, ciphertext []byte) (plaintext []byte, err error) {
-	if chain.gcmCipher == nil {
-		logger.Errorf("[channel: %s] Encrypt is called with nil gcmCipher", chain.ChannelID())
-		return nil, fmt.Errorf("cipher is not initialized")
-	}
-
-	if plaintext, err = chain.gcmCipher.Open(nil, iv, ciphertext, nil); err != nil {
-		logger.Errorf("[channel: %s] failed to decrypt ciphertext - %v", chain.ChannelID(), err)
-		return nil, err
-	}
-	return
 }
 
 func (chain *chainImpl) processTimeToCutRequests() {
@@ -948,23 +894,6 @@ func (chain *chainImpl) order(env *cb.Envelope, configSeq uint64, originalOffset
 		return errors.Errorf("[channel: %s] cannot enqueue", chain.ChannelID())
 	}
 	return nil
-}
-
-func makeGCMCipher(key []byte) (cipher.AEAD, error) {
-	if len(key) != 32 {
-		return nil, fmt.Errorf("failed to create the cipher, key size is not 256 bit")
-	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create the AES block cipher, err = %v", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create the GCM cipher, err = %v", err)
-	}
-	return gcm, nil
 }
 
 func (chain *chainImpl) configure(config *cb.Envelope, configSeq uint64, originalOffset uint64) error {

@@ -6,18 +6,17 @@ package hcs
 
 import (
 	"context"
-	crand "crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"math/rand"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
@@ -172,41 +171,6 @@ func TestChain(t *testing.T) {
 					mockOrderer := newMockOrderer(shortTimeout, goodHcsTopicIDStr, publicKeys)
 					mockOrderer.ConsensusMetadataReturns([]byte("corrupted data"))
 					mockSupport.SharedConfigVal = mockOrderer
-					return mockConsenter, mockSupport
-				},
-				wantErr: true,
-			},
-			{
-				name: "WithInvalidBlockCipherType",
-				newMocksFunc: func(t *testing.T) (*consenterImpl, *mockmultichannel.ConsenterSupport) {
-					mockConsenter, mockSupport := newMocks(t)
-					mockLocalConfigHcs := *mockConsenter.sharedHcsConfigVal
-					mockLocalConfigHcs.BlockCipher.Type = "unknown"
-					mockConsenter.sharedHcsConfigVal = &mockLocalConfigHcs
-					return mockConsenter, mockSupport
-				},
-				wantErr: true,
-			},
-			{
-				name: "WithInvalidAESKeyString",
-				newMocksFunc: func(t *testing.T) (*consenterImpl, *mockmultichannel.ConsenterSupport) {
-					mockConsenter, mockSupport := newMocks(t)
-					mockLocalConfigHcs := *mockConsenter.sharedHcsConfigVal
-					mockLocalConfigHcs.BlockCipher.Key = "not base64 string"
-					mockConsenter.sharedHcsConfigVal = &mockLocalConfigHcs
-					return mockConsenter, mockSupport
-				},
-				wantErr: true,
-			},
-			{
-				name: "WithInvalidSizeAESKey",
-				newMocksFunc: func(t *testing.T) (*consenterImpl, *mockmultichannel.ConsenterSupport) {
-					mockConsenter, mockSupport := newMocks(t)
-					mockLocalConfigHcs := *mockConsenter.sharedHcsConfigVal
-					key := make([]byte, 9)
-					rand.Read(key)
-					mockLocalConfigHcs.BlockCipher.Key = base64.StdEncoding.EncodeToString(key)
-					mockConsenter.sharedHcsConfigVal = &mockLocalConfigHcs
 					return mockConsenter, mockSupport
 				},
 				wantErr: true,
@@ -1489,72 +1453,6 @@ func TestChain(t *testing.T) {
 	})
 }
 
-func TestBlockCipher(t *testing.T) {
-	newBareMinimumChainForBlockCipher := func(noBlockCipher bool) *chainImpl {
-		chain := &chainImpl{
-			ConsenterSupport: &mockmultichannel.ConsenterSupport{
-				ChannelIDVal: channelNameForTest(t),
-			},
-			nonceReader: crand.Reader,
-		}
-		if noBlockCipher {
-			return chain
-		}
-
-		// 256-bit aes key
-		key := make([]byte, 32)
-		rand.Read(key)
-		cipher, err := makeGCMCipher(key)
-		assert.NoError(t, err, "Expected gcm cipher created successfully")
-		chain.gcmCipher = cipher
-		return chain
-	}
-
-	t.Run("Proper", func(t *testing.T) {
-		chain := newBareMinimumChainForBlockCipher(false)
-
-		message := make([]byte, 1000)
-		rand.Read(message)
-		iv, encrypted, err := chain.Encrypt(message)
-		assert.NoError(t, err, "Expected message encrypted successfully")
-		assert.NotNil(t, iv, "Expected non-nil IV")
-		assert.NotNil(t, encrypted, "Expected non-nil encrypted data")
-
-		decrypted, err := chain.Decrypt(iv, encrypted)
-		assert.NoError(t, err, "Expected Descrypt resturns no error")
-		assert.Equal(t, message, decrypted, "Expected data successfully decrypted")
-	})
-
-	t.Run("WithNoBlockCipher", func(t *testing.T) {
-		chain := newBareMinimumChainForBlockCipher(true)
-
-		_, _, err := chain.Encrypt([]byte("sample data"))
-		assert.Errorf(t, err, "Expected Encrypt returns error")
-
-		_, err = chain.Decrypt([]byte("iv"), []byte("sample data"))
-		assert.Errorf(t, err, "Expected Decrypt returns error")
-	})
-
-	t.Run("WithCorruptedData", func(t *testing.T) {
-		chain := newBareMinimumChainForBlockCipher(false)
-
-		iv, encrypted, err := chain.Encrypt([]byte("sample data"))
-		assert.NoError(t, err, "Expected Encrypt returns no error")
-
-		badIV := make([]byte, len(iv))
-		copy(badIV, iv)
-		badIV[0] = ^badIV[0]
-		_, err = chain.Decrypt(badIV, encrypted)
-		assert.Errorf(t, err, "Expected Decrypt returns error with corrupted IV")
-
-		badEncrypted := make([]byte, len(encrypted))
-		copy(badEncrypted, encrypted)
-		badEncrypted[0] = ^badEncrypted[0]
-		_, err = chain.Decrypt(iv, badEncrypted)
-		assert.Errorf(t, err, "Expected Decrypt returns error with corrupted encrypted data")
-	})
-}
-
 func TestSigner(t *testing.T) {
 	newBareMinimumChainForSigner := func(privateKeyStr string, publicKeyStrs []string) *chainImpl {
 		privateKey, err := hedera.Ed25519PrivateKeyFromString(privateKeyStr)
@@ -1763,7 +1661,7 @@ func TestProcessTimeToCutRequests(t *testing.T) {
 
 			appID: []byte("bare-minimum appID"),
 		}
-		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, normalReassembleTimeout, chain, nil)
+		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, normalReassembleTimeout, chain)
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
 		return chain
@@ -2037,7 +1935,7 @@ func TestProcessMessages(t *testing.T) {
 			messageHashes:          make(map[string]struct{}),
 			appID:                  []byte("bare-minimum appID"),
 		}
-		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, normalReassembleTimeout, chain, nil)
+		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, normalReassembleTimeout, chain)
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 
 		if lastConsensusTimestampPersisted != nil {
@@ -2671,7 +2569,7 @@ func TestResubmission(t *testing.T) {
 			doneReprocessingMsgInFlight: doneReprocessingMsgInFlight,
 			appID:                       []byte("bare-minimum appID"),
 		}
-		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, normalReassembleTimeout, chain, nil)
+		chain.appMsgProcessor, err = newAppMsgProcessor(testAccountID, chain.appID, maxConsensusMessageSize, normalReassembleTimeout, chain)
 		assert.NoError(t, err, "Expected newAppMsgProcessor return no error")
 		return chain
 	}
@@ -3673,41 +3571,6 @@ func TestTimestampProtoOrPanic(t *testing.T) {
 		invalidTime := time.Time{}.Add(-100 * time.Hour)
 		assert.Panics(t, func() { timestampProtoOrPanic(invalidTime) }, "Expected panic with nil passed in")
 	})
-}
-
-func TestMakeGCMCipher(t *testing.T) {
-	var tests = []struct {
-		name    string
-		key     []byte
-		wantErr bool
-	}{
-		{
-			name:    "Proper",
-			key:     make([]byte, 32),
-			wantErr: false,
-		},
-		{
-			name:    "WithInvalidKeySize",
-			key:     []byte("short"),
-			wantErr: true,
-		},
-		{
-			name:    "WithEmptyKeyString",
-			key:     []byte{},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		cipher, err := makeGCMCipher(tt.key)
-		if tt.wantErr {
-			assert.Error(t, err, "Expected makeGCMCipher returns error")
-			assert.Nil(t, cipher, "Expected makeGCMCipher returns nil value")
-		} else {
-			assert.NoError(t, err, "Expected makeGCMCipher returns no error")
-			assert.NotNil(t, cipher, "Expected makeGCMCipher returns non-nil value")
-		}
-	}
 }
 
 // Test helper functions
