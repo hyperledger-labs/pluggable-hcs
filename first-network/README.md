@@ -53,8 +53,7 @@ that HCS has a larger consensus delay than raft/kafka based ordering service.
 The sample is almost identical with the upstream first-network sample as of 2.0.0 release. In summary, the modifications are:
 
 1. Updated docker compose files to use hcs-based orderers.
-2. Added a function in ```byfn.sh``` to generate a 256-bit AES key for data encryption/decryption between fabric orderers and hedera testnet.
-3. Added a function in ```byfn.sh``` to use the hcscli tool for HCS topic creation and mapping topics to fabric channels.
+2. Added a function in ```byfn.sh``` to use the hcscli tool for HCS topic creation and mapping topics to fabric channels.
 
 A successful run will end with the following message:
 
