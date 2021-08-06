@@ -1,122 +1,129 @@
+/*
+SPDX-License-Identifier: Apache-2.0
+*/
+
 package hcs
 
 import (
-	"github.com/hashgraph/hedera-sdk-go"
+	"time"
+
+	"github.com/hashgraph/hedera-sdk-go/v2"
 	"github.com/hyperledger/fabric/orderer/consensus/hcs/factory"
 	"github.com/pkg/errors"
-	"time"
+	"google.golang.org/grpc/status"
 )
 
 // implements factory.HcsClientFactory
 type hcsClientFactoryImpl struct{}
 
-func (f *hcsClientFactoryImpl) GetConsensusClient(
+func (f *hcsClientFactoryImpl) GetHcsClient(
 	network map[string]hedera.AccountID,
+	mirrorEndpoint string,
 	operator *hedera.AccountID,
-	privateKey *hedera.Ed25519PrivateKey,
-) (factory.ConsensusClient, error) {
+	privateKey *hedera.PrivateKey,
+) (factory.HcsClient, error) {
 	if network == nil || len(network) == 0 {
 		return nil, errors.Errorf("invalid network")
 	}
-	client := hedera.NewClient(network)
-	client.SetOperator(*operator, *privateKey)
-	return &consensusClientImpl{client}, nil
-}
 
-func (f *hcsClientFactoryImpl) GetMirrorClient(endpoint string) (factory.MirrorClient, error) {
-	if client, err := hedera.NewMirrorClient(endpoint); err != nil {
-		return nil, err
-	} else {
-		return &mirrorClientImpl{&client}, nil
+	if mirrorEndpoint == "" {
+		return nil, errors.Errorf("empty mirror endpoint")
 	}
+
+	client := hedera.ClientForNetwork(network)
+	client.SetMirrorNetwork([]string{mirrorEndpoint})
+	client.SetOperator(*operator, *privateKey)
+	return &hcsClientImpl{client}, nil
 }
 
-// implements factory.ConsensusClient
-type consensusClientImpl struct {
+// implements factory.HcsClient
+type hcsClientImpl struct {
 	client *hedera.Client
 }
 
-func (c *consensusClientImpl) Close() error {
+func (c *hcsClientImpl) Close() error {
 	return c.client.Close()
 }
 
-func (c *consensusClientImpl) SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID, txID *hedera.TransactionID) (*hedera.TransactionID, error) {
-	tx := hedera.NewConsensusMessageSubmitTransaction().
+func (c *hcsClientImpl) SubmitConsensusMessage(
+	message []byte,
+	topicID *hedera.TopicID,
+	txID *hedera.TransactionID,
+) (*hedera.TransactionID, error) {
+	tx := hedera.NewTopicMessageSubmitTransaction().
 		SetTopicID(*topicID).
 		SetMessage(message)
 	if txID != nil {
 		tx.SetTransactionID(*txID)
 	}
-	retTxID, err := tx.Execute(c.client)
+
+	resp, err := tx.Execute(c.client)
 	if err != nil {
 		return nil, err
 	}
-	return &retTxID, nil
+
+	return &resp.TransactionID, nil
 }
 
-func (c *consensusClientImpl) GetConsensusTopicInfo(topicID *hedera.ConsensusTopicID) (*hedera.ConsensusTopicInfo, error) {
-	info, err := hedera.NewConsensusTopicInfoQuery().SetTopicID(*topicID).Execute(c.client)
+func (c *hcsClientImpl) GetConsensusTopicInfo(topicID *hedera.TopicID) (*hedera.TopicInfo, error) {
+	info, err := hedera.NewTopicInfoQuery().
+		SetTopicID(*topicID).
+		Execute(c.client)
 	return &info, err
 }
 
-func (c *consensusClientImpl) GetTransactionReceipt(txID *hedera.TransactionID) (*hedera.TransactionReceipt, error) {
+func (c *hcsClientImpl) GetTransactionReceipt(txID *hedera.TransactionID) (*hedera.TransactionReceipt, error) {
 	receipt, err := txID.GetReceipt(c.client)
 	return &receipt, err
 }
 
-func (c *consensusClientImpl) Ping(nodeID *hedera.AccountID) error {
+func (c *hcsClientImpl) Ping(nodeID *hedera.AccountID) error {
 	return c.client.Ping(*nodeID)
 }
 
-// implements factory.MirrorClient
-type mirrorClientImpl struct {
-	mc *hedera.MirrorClient
-}
-
-func (c *mirrorClientImpl) Close() error {
-	return c.mc.Close()
-}
-
-func (c *mirrorClientImpl) SubscribeTopic(
-	topicID *hedera.ConsensusTopicID,
+func (c *hcsClientImpl) SubscribeTopic(
+	topicID *hedera.TopicID,
 	startTime *time.Time,
 	endTime *time.Time,
 ) (factory.MirrorSubscriptionHandle, error) {
 	handle := newMirrorSubscriptionHandle()
-	onNext := func(resp hedera.MirrorConsensusTopicResponse) {
-		handle.onNext(&resp)
-	}
-	onError := func(err error) {
-		handle.onError(err)
-	}
 
-	query := hedera.NewMirrorConsensusTopicQuery().SetTopicID(*topicID)
+	// disable SDK retry
+	retryHandler := func(err error) bool {
+		return false
+	}
+	query := hedera.NewTopicMessageQuery().
+		SetErrorHandler(handle.onError).
+		SetTopicID(*topicID).
+		SetRetryHandler(retryHandler)
 	if startTime != nil {
 		query.SetStartTime(*startTime)
 	}
 	if endTime != nil {
 		query.SetEndTime(*endTime)
 	}
+
 	var err error
-	if handle.MirrorSubscriptionHandle, err = query.Subscribe(*c.mc, onNext, onError); err != nil {
+	if handle.SubscriptionHandle, err = query.Subscribe(c.client, handle.onNext); err != nil {
 		return nil, err
 	}
+
 	return handle, nil
 }
 
 // implements factory.MirrorSubscriptionHandle
 type mirrorSubscriptionHandleImpl struct {
-	hedera.MirrorSubscriptionHandle
-	errChan  chan error
-	respChan chan *hedera.MirrorConsensusTopicResponse
-	done     chan struct{}
+	hedera.SubscriptionHandle
+	errChan chan status.Status
+	msgChan chan *hedera.TopicMessage
+	done    chan struct{}
 }
 
 func newMirrorSubscriptionHandle() *mirrorSubscriptionHandleImpl {
 	return &mirrorSubscriptionHandleImpl{
-		errChan:  make(chan error),
-		respChan: make(chan *hedera.MirrorConsensusTopicResponse),
-		done:     make(chan struct{}),
+		errChan: make(chan status.Status),
+		msgChan: make(chan *hedera.TopicMessage),
+		done:    make(chan struct{}),
 	}
 }
 
@@ -124,25 +131,25 @@ func (h *mirrorSubscriptionHandleImpl) Unsubscribe() {
 	select {
 	case <-h.done:
 	default:
-		h.MirrorSubscriptionHandle.Unsubscribe()
-		close(h.respChan)
+		h.SubscriptionHandle.Unsubscribe()
+		close(h.msgChan)
 		close(h.errChan)
 		close(h.done)
 	}
 }
 
-func (h *mirrorSubscriptionHandleImpl) Responses() <-chan *hedera.MirrorConsensusTopicResponse {
-	return h.respChan
+func (h *mirrorSubscriptionHandleImpl) Messages() <-chan *hedera.TopicMessage {
+	return h.msgChan
 }
 
-func (h *mirrorSubscriptionHandleImpl) Errors() <-chan error {
+func (h *mirrorSubscriptionHandleImpl) Errors() <-chan status.Status {
 	return h.errChan
 }
 
-func (h *mirrorSubscriptionHandleImpl) onNext(resp *hedera.MirrorConsensusTopicResponse) {
-	h.respChan <- resp
+func (h *mirrorSubscriptionHandleImpl) onNext(message hedera.TopicMessage) {
+	h.msgChan <- &message
 }
 
-func (h *mirrorSubscriptionHandleImpl) onError(err error) {
-	h.errChan <- err
+func (h *mirrorSubscriptionHandleImpl) onError(status status.Status) {
+	h.errChan <- status
 }

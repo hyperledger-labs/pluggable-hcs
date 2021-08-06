@@ -49,6 +49,7 @@ var (
 	}
 )
 
+// Metrics hcs orderer metrics
 type Metrics struct {
 	NumberNodes                     metrics.Gauge
 	CommittedBlockNumber            metrics.Gauge
@@ -57,6 +58,7 @@ type Metrics struct {
 	NumberChunksDropped             metrics.Counter
 }
 
+// NewMetrics create new metrics for HCS orderer
 func NewMetrics(p metrics.Provider) *Metrics {
 	return &Metrics{
 		NumberNodes:                     p.NewGauge(numberNodesOpts),

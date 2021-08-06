@@ -6,18 +6,16 @@ package hcs
 
 import (
 	"crypto/rand"
-	"encoding/base64"
 	"fmt"
-	"github.com/hyperledger/fabric/common/metrics/disabled"
 	"strings"
 	"testing"
-
-	"github.com/hyperledger/fabric/msp"
 
 	"github.com/golang/protobuf/ptypes/timestamp"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/hyperledger/fabric/common/metrics/disabled"
+	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/orderer/consensus/hcs/mock"
@@ -249,10 +247,6 @@ func newMockLocalConfig(enableTLS bool) *localconfig.TopLevel {
 					Type: "ed25519",
 					Key:  testOperatorPrivateKey,
 				},
-			},
-			BlockCipher: localconfig.HcsTypeKey{
-				Type: "aes-256-gcm",
-				Key:  base64.StdEncoding.EncodeToString(key),
 			},
 		},
 	}
