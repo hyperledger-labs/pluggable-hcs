@@ -1,35 +1,39 @@
+/*
+SPDX-License-Identifier: Apache-2.0
+*/
+
 package factory
 
 import (
-	"github.com/hashgraph/hedera-sdk-go"
 	"time"
+
+	"github.com/hashgraph/hedera-sdk-go/v2"
+	"google.golang.org/grpc/status"
 )
 
-// hcs abstraction layer
+// HcsClientFactory factory to create HcsClient
 type HcsClientFactory interface {
-	GetConsensusClient(network map[string]hedera.AccountID, operator *hedera.AccountID, privateKey *hedera.Ed25519PrivateKey) (ConsensusClient, error)
-	GetMirrorClient(address string) (MirrorClient, error)
+	GetHcsClient(
+		network map[string]hedera.AccountID,
+		mirrorEndpoint string,
+		operator *hedera.AccountID,
+		privateKey *hedera.PrivateKey,
+	) (HcsClient, error)
 }
 
-type ConsensusClient interface {
+// HcsClient abstracts the methods for Hedera Consensus Service
+type HcsClient interface {
 	Close() error
-	SubmitConsensusMessage(message []byte, topicID *hedera.ConsensusTopicID, txID *hedera.TransactionID) (*hedera.TransactionID, error)
-	GetConsensusTopicInfo(topicID *hedera.ConsensusTopicID) (*hedera.ConsensusTopicInfo, error)
+	GetConsensusTopicInfo(topicID *hedera.TopicID) (*hedera.TopicInfo, error)
 	GetTransactionReceipt(txID *hedera.TransactionID) (*hedera.TransactionReceipt, error)
 	Ping(nodeID *hedera.AccountID) error
+	SubmitConsensusMessage(message []byte, topicID *hedera.TopicID, txID *hedera.TransactionID) (*hedera.TransactionID, error)
+	SubscribeTopic(topicID *hedera.TopicID, startTime *time.Time, endTime *time.Time) (MirrorSubscriptionHandle, error)
 }
 
-type MirrorClient interface {
-	Close() error
-	SubscribeTopic(
-		topicID *hedera.ConsensusTopicID,
-		startTime *time.Time,
-		endTime *time.Time,
-	) (MirrorSubscriptionHandle, error)
-}
-
+// MirrorSubscriptionHandle abstracts the methods for mirror node HCS subscription handle
 type MirrorSubscriptionHandle interface {
 	Unsubscribe()
-	Responses() <-chan *hedera.MirrorConsensusTopicResponse
-	Errors() <-chan error
+	Messages() <-chan *hedera.TopicMessage
+	Errors() <-chan status.Status
 }

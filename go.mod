@@ -2,9 +2,6 @@ module github.com/hyperledger/fabric
 
 go 1.14
 
-// https://github.com/golang/go/issues/34610
-replace golang.org/x/sys => golang.org/x/sys v0.0.0-20190920190810-ef0ce1748380
-
 require (
 	code.cloudfoundry.org/clock v1.0.0
 	github.com/DataDog/zstd v1.4.0 // indirect
@@ -27,12 +24,11 @@ require (
 	github.com/frankban/quicktest v1.9.0 // indirect
 	github.com/fsouza/go-dockerclient v1.4.1
 	github.com/go-kit/kit v0.8.0
-	github.com/golang/protobuf v1.3.5
-	github.com/google/go-cmp v0.5.0 // indirect
+	github.com/golang/protobuf v1.5.1
 	github.com/gorilla/handlers v1.4.0
 	github.com/gorilla/mux v1.7.2
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
-	github.com/hashgraph/hedera-sdk-go v0.8.0
+	github.com/hashgraph/hedera-sdk-go/v2 v2.1.12
 	github.com/hashicorp/go-version v1.2.0
 	github.com/hyperledger/fabric-amcl v0.0.0-20200128223036-d1aa2665426a
 	github.com/hyperledger/fabric-chaincode-go v0.0.0-20200128192331-2d899240a7ed
@@ -49,7 +45,7 @@ require (
 	github.com/onsi/gomega v1.9.0
 	github.com/opencontainers/runc v1.0.0-rc8 // indirect
 	github.com/pierrec/lz4 v2.5.0+incompatible // indirect
-	github.com/pkg/errors v0.8.1
+	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.1.0
 	github.com/rcrowley/go-metrics v0.0.0-20181016184325-3113b8401b8a
 	github.com/spf13/cast v1.3.1 // indirect
@@ -64,9 +60,9 @@ require (
 	github.com/willf/bitset v1.1.10
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20181228115726-23731bf9ba55
 	go.uber.org/zap v1.14.1
-	golang.org/x/crypto v0.0.0-20200323165209-0ec3e9974c59
-	golang.org/x/tools v0.0.0-20200131233409-575de47986ce
-	google.golang.org/grpc v1.29.1
+	golang.org/x/crypto v0.0.0-20210322153248-0c34fe9e7dc2
+	golang.org/x/tools v0.1.0
+	google.golang.org/grpc v1.36.0
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
 	gopkg.in/yaml.v2 v2.2.8

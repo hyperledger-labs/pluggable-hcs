@@ -7,11 +7,10 @@ package hcs
 import (
 	"context"
 	"crypto/md5"
-	crand "crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"math"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +18,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/timestamp"
-	"github.com/hashgraph/hedera-sdk-go"
+	"github.com/hashgraph/hedera-sdk-go/v2"
 	"github.com/hyperledger/fabric-protos-go/common"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/orderer/common/localconfig"
@@ -34,8 +33,9 @@ import (
 )
 
 var (
-	unixEpoch               = time.Unix(0, 0)
 	defaultHcsClientFactory = &hcsClientFactoryImpl{}
+	rstStreamRegex          = regexp.MustCompile("/\brst[^0-9a-zA-Z]stream\b/gi")
+	unixEpoch               = time.Unix(0, 0)
 )
 
 const (
@@ -141,7 +141,6 @@ func newChain(
 		doneReprocessingMsgInFlight:     doneReprocessingMsgInFlight,
 		timeToCutRequestChan:            make(chan timeToCutRequest),
 		messageHashes:                   make(map[string]struct{}),
-		nonceReader:                     crand.Reader,
 		appID:                           appID[:],
 	}
 
@@ -193,21 +192,18 @@ type chainImpl struct {
 	messageHashes        map[string]struct{}
 	senderWaitGroup      sync.WaitGroup
 
+	hcsClient               factory.HcsClient
 	network                 map[string]hedera.AccountID
 	operatorID              *hedera.AccountID
-	operatorPrivateKey      *hedera.Ed25519PrivateKey
+	operatorPrivateKey      *hedera.PrivateKey
 	operatorPublicKeyBytes  []byte
-	publicKeys              map[string]*hedera.Ed25519PublicKey
-	topicID                 *hedera.ConsensusTopicID
-	topicProducer           factory.ConsensusClient
-	topicConsumer           factory.MirrorClient
-	topicSubscriptionHandle factory.MirrorSubscriptionHandle
+	publicKeys              map[string]*hedera.PublicKey
 	subscriptionRetryTimer  *time.Timer
+	topicID                 *hedera.TopicID
+	topicSubscriptionHandle factory.MirrorSubscriptionHandle
 
 	appMsgProcessor appMsgProcessor
 	appID           []byte
-
-	nonceReader io.Reader
 }
 
 type timeToCutRequest struct {
@@ -348,8 +344,8 @@ func (chain *chainImpl) processTimeToCutRequests() {
 			}
 		}
 
-		if err := chain.topicProducer.Close(); err != nil {
-			logger.Errorf("[channel: %s] error when closing topicProducer = %v", chain.ChannelID(), err)
+		if err := chain.hcsClient.Close(); err != nil {
+			logger.Errorf("[channel: %s] error when closing hcsClient = %v", chain.ChannelID(), err)
 		}
 	}()
 
@@ -401,9 +397,6 @@ func (chain *chainImpl) processTimeToCutRequests() {
 func (chain *chainImpl) processMessages() error {
 	defer func() {
 		chain.topicSubscriptionHandle.Unsubscribe()
-		if err := chain.topicConsumer.Close(); err != nil {
-			logger.Errorf("[channel: %s] error when closing topicConsumer = %v", chain.ChannelID(), err)
-		}
 		close(chain.doneProcessingMessages)
 
 		select {
@@ -429,27 +422,31 @@ func (chain *chainImpl) processMessages() error {
 	} else {
 		logger.Infof("[channel: %s] going into the normal message processing loop", chain.ChannelID())
 	}
+
 	subscriptionRetryCount := 0
 	scheduleSubscriptionRetry := func() {
 		delay := time.Duration(float64(subscriptionRetryBaseDelay) * math.Pow(2, float64(subscriptionRetryCount)))
 		chain.subscriptionRetryTimer.Reset(delay)
 		logger.Infof("[channel: %s] retry topic subscription in %dms", chain.ChannelID(), delay.Milliseconds())
 	}
+
 	for {
 		select {
 		case <-chain.haltChan:
 			logger.Warningf("[channel: %s] consenter for channel exiting", chain.ChannelID())
 			return nil
 		case hcsErr := <-chain.topicSubscriptionHandle.Errors():
-			logger.Errorf("[channel: %s] error received during subscription streaming: %s", chain.ChannelID(), hcsErr)
+			logger.Errorf("[channel: %s] error received during subscription streaming: %s",
+				chain.ChannelID(),
+				hcsErr.Err())
 			select {
 			case <-chain.errorChan: // don't do anything if already closed
 			default:
 				logger.Errorf("[channel: %s] closing errorChan due to subscription streaming error", chain.ChannelID())
 				close(chain.errorChan)
 			}
-			st, ok := status.FromError(hcsErr)
-			if ok && isSubscriptionErrorRecoverable(st.Code()) && subscriptionRetryCount < subscriptionRetryMax {
+
+			if subscriptionRetryCount < subscriptionRetryMax && isSubscriptionErrorRecoverable(hcsErr) {
 				// the error is recoverable and the max retry isn't reached yet
 				scheduleSubscriptionRetry()
 			} else {
@@ -472,16 +469,18 @@ func (chain *chainImpl) processMessages() error {
 				// only unsubscribe when new subscription handle is created successfully
 				failedSubscriptionHandle.Unsubscribe()
 				logger.Infof("[channel: %s] new subscription created, send a stale time-to-cut message to trigger response just in case none is pending", chain.ChannelID())
-				// send a stale ttc to resume response handling, in case of no other pending responses
+				// send a stale ttc to resume response handling, in case of no other pending responses, so the error
+				// will be cleared when the stale ttc is received and the orderer can resume sending messages to HCS
 				if err := chain.sendTimeToCut(newTimeToCutMessageWithBlockNumber(chain.lastCutBlockNumber)); err != nil {
 					logger.Errorf("[channel: %s] failed to send a stale time-to-cut message with block number %d: %s", chain.ChannelID(), chain.lastCutBlockNumber, err)
 				}
 			}
-		case resp, ok := <-chain.topicSubscriptionHandle.Responses():
+		case resp, ok := <-chain.topicSubscriptionHandle.Messages():
 			if !ok {
 				logger.Criticalf("[channel: %s] hcs topic subscription closed", chain.ChannelID())
 				return nil
 			}
+
 			subscriptionRetryCount = 0
 			select {
 			case <-chain.errorChan:
@@ -495,18 +494,18 @@ func (chain *chainImpl) processMessages() error {
 			if resp.SequenceNumber != chain.lastSequenceProcessed+1 {
 				logger.Panicf("[channel: %s] incorrect sequence number (%d), expect (%d), exiting...", chain.ChannelID(), resp.SequenceNumber, chain.lastSequenceProcessed+1)
 			}
-			if !resp.ConsensusTimeStamp.After(chain.lastConsensusTimestamp) {
-				logger.Panicf("[channel: %s] resp.ConsensusTimestamp(%d) not after lastConsensusTimestamp(%d)", chain.ChannelID(), resp.ConsensusTimeStamp.UnixNano(), chain.lastConsensusTimestamp.UnixNano())
+			if !resp.ConsensusTimestamp.After(chain.lastConsensusTimestamp) {
+				logger.Panicf("[channel: %s] resp.ConsensusTimestamp(%d) not after lastConsensusTimestamp(%d)", chain.ChannelID(), resp.ConsensusTimestamp.UnixNano(), chain.lastConsensusTimestamp.UnixNano())
 			}
 			chain.lastSequenceProcessed++
-			chain.lastConsensusTimestamp = resp.ConsensusTimeStamp
+			chain.lastConsensusTimestamp = resp.ConsensusTimestamp
 			chunk := new(hb.ApplicationMessageChunk)
-			if err := proto.Unmarshal(resp.Message, chunk); err != nil {
+			if err := proto.Unmarshal(resp.Contents, chunk); err != nil {
 				logger.Errorf("[channel: %s] failed to unmarshal ordered message into ApplicationMessageChunk = %v", chain.ChannelID(), err)
 				continue
 			}
-			logger.Debugf("[channel: %s] processing a chunk with consensus timestamp = %d, sequence = %d", chain.ChannelID(), resp.ConsensusTimeStamp.UnixNano(), resp.SequenceNumber)
-			payload, msgHash, expiredMessages, expiredChunks, err := chain.appMsgProcessor.Reassemble(chunk, resp.ConsensusTimeStamp)
+			logger.Debugf("[channel: %s] processing a chunk with consensus timestamp = %d, sequence = %d", chain.ChannelID(), resp.ConsensusTimestamp.UnixNano(), resp.SequenceNumber)
+			payload, msgHash, expiredMessages, expiredChunks, err := chain.appMsgProcessor.Reassemble(chunk, resp.ConsensusTimestamp)
 			if !chain.appMsgProcessor.IsPending() {
 				chain.lastChunkFreeConsensusTimestamp = chain.lastConsensusTimestamp
 				chain.lastChunkFreeSequenceProcessed = chain.lastSequenceProcessed
@@ -531,16 +530,16 @@ func (chain *chainImpl) processMessages() error {
 				continue
 			}
 			logger.Debugf("[channel %s] successfully unmarshaled ordered message, consensus timestamp %d",
-				chain.ChannelID(), resp.ConsensusTimeStamp.UnixNano())
+				chain.ChannelID(), resp.ConsensusTimestamp.UnixNano())
 			if !recollectPendingChunks {
 				// use ConsenusTimestamp and SequenceNumber of the last received chunk for that of a message
 				switch msg.Type.(type) {
 				case *hb.HcsMessage_Regular:
-					if err := chain.processRegularMessage(msg.GetRegular(), resp.ConsensusTimeStamp, resp.SequenceNumber, msgHash); err != nil {
+					if err := chain.processRegularMessage(msg.GetRegular(), resp.ConsensusTimestamp, resp.SequenceNumber, msgHash); err != nil {
 						logger.Warningf("[channel: %s] error when processing incoming message of type REGULAR = %s", chain.ChannelID(), err)
 					}
 				case *hb.HcsMessage_TimeToCut:
-					if err := chain.processTimeToCutMessage(msg.GetTimeToCut(), resp.ConsensusTimeStamp, resp.SequenceNumber); err != nil {
+					if err := chain.processTimeToCutMessage(msg.GetTimeToCut(), resp.ConsensusTimestamp, resp.SequenceNumber); err != nil {
 						logger.Criticalf("[channel: %s] consenter for channel exiting, %s", chain.ChannelID(), err)
 						return err
 					}
@@ -548,7 +547,7 @@ func (chain *chainImpl) processMessages() error {
 					chain.processOrdererStartedMessage(msg.GetOrdererStarted())
 				}
 			} else {
-				if resp.ConsensusTimeStamp.Equal(chain.lastConsensusTimestampPersisted) {
+				if resp.ConsensusTimestamp.Equal(chain.lastConsensusTimestampPersisted) {
 					recollectPendingChunks = false
 					logger.Debugf("[channel: %s] switching to the normal message processing loop", chain.ChannelID())
 					if chain.lastResubmittedConfigSequence == 0 || chain.lastResubmittedConfigSequence <= chain.lastOriginalSequenceProcessed {
@@ -556,9 +555,9 @@ func (chain *chainImpl) processMessages() error {
 						logger.Debugf("[channel: %s] unblock ingress", chain.ChannelID())
 						chain.reprocessComplete()
 					}
-				} else if resp.ConsensusTimeStamp.After(chain.lastConsensusTimestampPersisted) {
+				} else if resp.ConsensusTimestamp.After(chain.lastConsensusTimestampPersisted) {
 					logger.Panicf("[channel: %s] consensus timestamp (%d) of last processed message is later "+
-						"than chain.lastConsensusTimestampPersisted (%d)", chain.ChannelID(), resp.ConsensusTimeStamp.UnixNano(),
+						"than chain.lastConsensusTimestampPersisted (%d)", chain.ChannelID(), resp.ConsensusTimestamp.UnixNano(),
 						chain.lastConsensusTimestampPersisted.UnixNano())
 				}
 			}
@@ -596,11 +595,9 @@ func (chain *chainImpl) commitNormalMessage(message *cb.Envelope, curConsensusTi
 	defer func() {
 		if pending {
 			// if pending, request to send time-to-cut message
-			chain.timeToCutRequestChan <- timeToCutRequest{
-				start:           true,
-				nextBlockNumber: chain.lastCutBlockNumber + 1,
-			}
-			logger.Debugf("[channel: %s] request to send time-to-cut with block number %d", chain.ChannelID(), chain.lastCutBlockNumber+1)
+			nextBlockNumber := chain.lastCutBlockNumber + 1
+			chain.timeToCutRequestChan <- timeToCutRequest{start: true, nextBlockNumber: nextBlockNumber}
+			logger.Debugf("[channel: %s] request to send time-to-cut with block number %d", chain.ChannelID(), nextBlockNumber)
 
 			// record hash as the message is pending in blockcutter
 			chain.messageHashes[string(messageHash)] = struct{}{}
@@ -942,11 +939,9 @@ func (chain *chainImpl) enqueueChecked(message *hb.HcsMessage, isResubmission bo
 		chain.ChannelID(), len(payload), len(chunks), isResubmission)
 	for _, chunk := range chunks {
 		for attempt := 0; attempt < 3; attempt++ {
-			txID := hedera.TransactionID{
-				AccountID:  *chain.operatorID,
-				ValidStart: chain.consenter.getUniqueValidStart(time.Now().Add(-10 * time.Second)),
-			}
-			_, err = chain.topicProducer.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunk), chain.topicID, &txID)
+			validStart := chain.consenter.getUniqueValidStart(time.Now().Add(-10 * time.Second))
+			txID := hedera.TransactionID{AccountID: chain.operatorID, ValidStart: &validStart}
+			_, err = chain.hcsClient.SubmitConsensusMessage(protoutil.MarshalOrPanic(chunk), chain.topicID, &txID)
 			if err != nil {
 				switch e := err.(type) {
 				case hedera.ErrHederaPreCheckStatus:
@@ -996,7 +991,7 @@ func (chain *chainImpl) reprocessPending() {
 func (chain *chainImpl) HealthCheck(ctx context.Context) error {
 	failed := make([]string, 0, len(chain.network))
 	for address, nodeID := range chain.network {
-		if err := chain.topicProducer.Ping(&nodeID); err != nil {
+		if err := chain.hcsClient.Ping(&nodeID); err != nil {
 			failed = append(failed, address)
 		}
 	}
@@ -1009,19 +1004,15 @@ func (chain *chainImpl) HealthCheck(ctx context.Context) error {
 func startThread(chain *chainImpl) {
 	var err error
 
-	// create topicProducer
-	chain.topicProducer, err = chain.hcf.GetConsensusClient(chain.network, chain.operatorID, chain.operatorPrivateKey)
-	if err != nil {
-		logger.Panicf("[channel: %s] failed to set up topic producer, %s", chain.ChannelID(), err)
+	// create hcsClient
+	if chain.hcsClient, err = chain.hcf.GetHcsClient(
+		chain.network,
+		chain.consenter.sharedHcsConfig().MirrorNodeAddress,
+		chain.operatorID,
+		chain.operatorPrivateKey,
+	); err != nil {
+		logger.Panicf("[channel: %s] failed to create hcsClient, %s", chain.ChannelID(), err)
 	}
-
-	// create topicConsumer and start subscription
-	chain.topicConsumer, err = chain.hcf.GetMirrorClient(chain.consenter.sharedHcsConfig().MirrorNodeAddress)
-	if err != nil {
-		logger.Panicf("[channel: %s] failed to set up topic consumer, %s", chain.ChannelID(), err)
-	}
-	logger.Debugf("[channel: %s] created topic consumer with mirror node address %s",
-		chain.ChannelID(), chain.consenter.sharedHcsConfig().MirrorNodeAddress)
 
 	// subscribe to the hcs topic
 	logger.Infof("[channel: %s] the HCS topic ID is %v", chain.ChannelID(), chain.topicID)
@@ -1058,15 +1049,15 @@ func startThread(chain *chainImpl) {
 	}
 }
 
-func getPublicKeys(publicKeysIn []*hb.HcsConfigPublicKey, extra hedera.Ed25519PublicKey) (map[string]*hedera.Ed25519PublicKey, error) {
-	publicKeys := map[string]*hedera.Ed25519PublicKey{
+func getPublicKeys(publicKeysIn []*hb.HcsConfigPublicKey, extra hedera.PublicKey) (map[string]*hedera.PublicKey, error) {
+	publicKeys := map[string]*hedera.PublicKey{
 		string(extra.Bytes()): &extra,
 	}
 	for _, publicKeyIn := range publicKeysIn {
 		if publicKeyIn.Type != "ed25519" {
 			return nil, fmt.Errorf("unsupported public key type %s", publicKeyIn.Type)
 		}
-		publicKey, err := hedera.Ed25519PublicKeyFromString(publicKeyIn.Key)
+		publicKey, err := hedera.PublicKeyFromString(publicKeyIn.Key)
 		if err != nil {
 			return nil, err
 		}
@@ -1075,10 +1066,15 @@ func getPublicKeys(publicKeysIn []*hb.HcsConfigPublicKey, extra hedera.Ed25519Pu
 	return publicKeys, nil
 }
 
-func parseConfig(
-	configMetaData []byte,
-	config *localconfig.Hcs,
-) (topicID hedera.ConsensusTopicID, publicKeys map[string]*hedera.Ed25519PublicKey, reassembleTimeout time.Duration, network map[string]hedera.AccountID, operatorID *hedera.AccountID, privateKey *hedera.Ed25519PrivateKey, err error) {
+func parseConfig(configMetaData []byte, config *localconfig.Hcs) (
+	topicID hedera.TopicID,
+	publicKeys map[string]*hedera.PublicKey,
+	reassembleTimeout time.Duration,
+	network map[string]hedera.AccountID,
+	operatorID *hedera.AccountID,
+	privateKey *hedera.PrivateKey,
+	err error,
+) {
 	hcsConfigMetadata := &hb.HcsConfigMetadata{}
 	if config.Operator.PrivateKey.Type != "ed25519" {
 		err = fmt.Errorf("private key type \"%s\" is not supported", config.Operator.PrivateKey.Type)
@@ -1144,10 +1140,10 @@ func parseConfig(
 	return
 }
 
-func parseEd25519PrivateKey(str string) (hedera.Ed25519PrivateKey, error) {
-	privateKey, err := hedera.Ed25519PrivateKeyFromString(str)
+func parseEd25519PrivateKey(str string) (hedera.PrivateKey, error) {
+	privateKey, err := hedera.PrivateKeyFromString(str)
 	if err != nil {
-		privateKey, err = hedera.Ed25519PrivateKeyFromPem([]byte(str), "")
+		privateKey, err = hedera.PrivateKeyFromPem([]byte(str), "")
 	}
 	return privateKey, err
 }
@@ -1156,7 +1152,7 @@ func startSubscription(chain *chainImpl, startTime time.Time) error {
 	if !startTime.Equal(unixEpoch) {
 		startTime = startTime.Add(time.Nanosecond)
 	}
-	handle, err := chain.topicConsumer.SubscribeTopic(chain.topicID, &startTime, nil)
+	handle, err := chain.hcsClient.SubscribeTopic(chain.topicID, &startTime, nil)
 	if err != nil {
 		return err
 	}
@@ -1249,17 +1245,15 @@ func timestampProtoOrPanic(t time.Time) *timestamp.Timestamp {
 	return ts
 }
 
-func isSubscriptionErrorRecoverable(code codes.Code) bool {
-	recoverable := true
-	switch code {
-	// prior to mirror node v0.6.0, InvalidArgument is returned when a topic does not exist
-	case codes.InvalidArgument:
-	// as of v0.6.0, mirror node will return NotFound when a topic does not exist
-	case codes.NotFound:
-	// as of v0.6.0, Unavailable is returned when the connection to the database is down
-	case codes.Unavailable:
+func isSubscriptionErrorRecoverable(status status.Status) bool {
+	switch status.Code() {
+	case codes.NotFound, codes.ResourceExhausted, codes.Unavailable:
+		// NotFound is returned when a topic does not exist
+		// Unavailable is returned when the connection to the database is down
+		return true
+	case codes.Internal:
+		return rstStreamRegex.FindIndex([]byte(status.Message())) != nil
 	default:
-		recoverable = false
+		return false
 	}
-	return recoverable
 }

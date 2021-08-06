@@ -4,167 +4,93 @@ package mock
 import (
 	"sync"
 
-	hedera "github.com/hashgraph/hedera-sdk-go"
+	hedera "github.com/hashgraph/hedera-sdk-go/v2"
 	"github.com/hyperledger/fabric/orderer/consensus/hcs/factory"
 )
 
 type HcsClientFactory struct {
-	GetConsensusClientStub        func(map[string]hedera.AccountID, *hedera.AccountID, *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error)
-	getConsensusClientMutex       sync.RWMutex
-	getConsensusClientArgsForCall []struct {
+	GetHcsClientStub        func(map[string]hedera.AccountID, string, *hedera.AccountID, *hedera.PrivateKey) (factory.HcsClient, error)
+	getHcsClientMutex       sync.RWMutex
+	getHcsClientArgsForCall []struct {
 		arg1 map[string]hedera.AccountID
-		arg2 *hedera.AccountID
-		arg3 *hedera.Ed25519PrivateKey
+		arg2 string
+		arg3 *hedera.AccountID
+		arg4 *hedera.PrivateKey
 	}
-	getConsensusClientReturns struct {
-		result1 factory.ConsensusClient
+	getHcsClientReturns struct {
+		result1 factory.HcsClient
 		result2 error
 	}
-	getConsensusClientReturnsOnCall map[int]struct {
-		result1 factory.ConsensusClient
-		result2 error
-	}
-	GetMirrorClientStub        func(string) (factory.MirrorClient, error)
-	getMirrorClientMutex       sync.RWMutex
-	getMirrorClientArgsForCall []struct {
-		arg1 string
-	}
-	getMirrorClientReturns struct {
-		result1 factory.MirrorClient
-		result2 error
-	}
-	getMirrorClientReturnsOnCall map[int]struct {
-		result1 factory.MirrorClient
+	getHcsClientReturnsOnCall map[int]struct {
+		result1 factory.HcsClient
 		result2 error
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
 
-func (fake *HcsClientFactory) GetConsensusClient(arg1 map[string]hedera.AccountID, arg2 *hedera.AccountID, arg3 *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error) {
-	fake.getConsensusClientMutex.Lock()
-	ret, specificReturn := fake.getConsensusClientReturnsOnCall[len(fake.getConsensusClientArgsForCall)]
-	fake.getConsensusClientArgsForCall = append(fake.getConsensusClientArgsForCall, struct {
+func (fake *HcsClientFactory) GetHcsClient(arg1 map[string]hedera.AccountID, arg2 string, arg3 *hedera.AccountID, arg4 *hedera.PrivateKey) (factory.HcsClient, error) {
+	fake.getHcsClientMutex.Lock()
+	ret, specificReturn := fake.getHcsClientReturnsOnCall[len(fake.getHcsClientArgsForCall)]
+	fake.getHcsClientArgsForCall = append(fake.getHcsClientArgsForCall, struct {
 		arg1 map[string]hedera.AccountID
-		arg2 *hedera.AccountID
-		arg3 *hedera.Ed25519PrivateKey
-	}{arg1, arg2, arg3})
-	fake.recordInvocation("GetConsensusClient", []interface{}{arg1, arg2, arg3})
-	fake.getConsensusClientMutex.Unlock()
-	if fake.GetConsensusClientStub != nil {
-		return fake.GetConsensusClientStub(arg1, arg2, arg3)
+		arg2 string
+		arg3 *hedera.AccountID
+		arg4 *hedera.PrivateKey
+	}{arg1, arg2, arg3, arg4})
+	fake.recordInvocation("GetHcsClient", []interface{}{arg1, arg2, arg3, arg4})
+	fake.getHcsClientMutex.Unlock()
+	if fake.GetHcsClientStub != nil {
+		return fake.GetHcsClientStub(arg1, arg2, arg3, arg4)
 	}
 	if specificReturn {
 		return ret.result1, ret.result2
 	}
-	fakeReturns := fake.getConsensusClientReturns
+	fakeReturns := fake.getHcsClientReturns
 	return fakeReturns.result1, fakeReturns.result2
 }
 
-func (fake *HcsClientFactory) GetConsensusClientCallCount() int {
-	fake.getConsensusClientMutex.RLock()
-	defer fake.getConsensusClientMutex.RUnlock()
-	return len(fake.getConsensusClientArgsForCall)
+func (fake *HcsClientFactory) GetHcsClientCallCount() int {
+	fake.getHcsClientMutex.RLock()
+	defer fake.getHcsClientMutex.RUnlock()
+	return len(fake.getHcsClientArgsForCall)
 }
 
-func (fake *HcsClientFactory) GetConsensusClientCalls(stub func(map[string]hedera.AccountID, *hedera.AccountID, *hedera.Ed25519PrivateKey) (factory.ConsensusClient, error)) {
-	fake.getConsensusClientMutex.Lock()
-	defer fake.getConsensusClientMutex.Unlock()
-	fake.GetConsensusClientStub = stub
+func (fake *HcsClientFactory) GetHcsClientCalls(stub func(map[string]hedera.AccountID, string, *hedera.AccountID, *hedera.PrivateKey) (factory.HcsClient, error)) {
+	fake.getHcsClientMutex.Lock()
+	defer fake.getHcsClientMutex.Unlock()
+	fake.GetHcsClientStub = stub
 }
 
-func (fake *HcsClientFactory) GetConsensusClientArgsForCall(i int) (map[string]hedera.AccountID, *hedera.AccountID, *hedera.Ed25519PrivateKey) {
-	fake.getConsensusClientMutex.RLock()
-	defer fake.getConsensusClientMutex.RUnlock()
-	argsForCall := fake.getConsensusClientArgsForCall[i]
-	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+func (fake *HcsClientFactory) GetHcsClientArgsForCall(i int) (map[string]hedera.AccountID, string, *hedera.AccountID, *hedera.PrivateKey) {
+	fake.getHcsClientMutex.RLock()
+	defer fake.getHcsClientMutex.RUnlock()
+	argsForCall := fake.getHcsClientArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
-func (fake *HcsClientFactory) GetConsensusClientReturns(result1 factory.ConsensusClient, result2 error) {
-	fake.getConsensusClientMutex.Lock()
-	defer fake.getConsensusClientMutex.Unlock()
-	fake.GetConsensusClientStub = nil
-	fake.getConsensusClientReturns = struct {
-		result1 factory.ConsensusClient
+func (fake *HcsClientFactory) GetHcsClientReturns(result1 factory.HcsClient, result2 error) {
+	fake.getHcsClientMutex.Lock()
+	defer fake.getHcsClientMutex.Unlock()
+	fake.GetHcsClientStub = nil
+	fake.getHcsClientReturns = struct {
+		result1 factory.HcsClient
 		result2 error
 	}{result1, result2}
 }
 
-func (fake *HcsClientFactory) GetConsensusClientReturnsOnCall(i int, result1 factory.ConsensusClient, result2 error) {
-	fake.getConsensusClientMutex.Lock()
-	defer fake.getConsensusClientMutex.Unlock()
-	fake.GetConsensusClientStub = nil
-	if fake.getConsensusClientReturnsOnCall == nil {
-		fake.getConsensusClientReturnsOnCall = make(map[int]struct {
-			result1 factory.ConsensusClient
+func (fake *HcsClientFactory) GetHcsClientReturnsOnCall(i int, result1 factory.HcsClient, result2 error) {
+	fake.getHcsClientMutex.Lock()
+	defer fake.getHcsClientMutex.Unlock()
+	fake.GetHcsClientStub = nil
+	if fake.getHcsClientReturnsOnCall == nil {
+		fake.getHcsClientReturnsOnCall = make(map[int]struct {
+			result1 factory.HcsClient
 			result2 error
 		})
 	}
-	fake.getConsensusClientReturnsOnCall[i] = struct {
-		result1 factory.ConsensusClient
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *HcsClientFactory) GetMirrorClient(arg1 string) (factory.MirrorClient, error) {
-	fake.getMirrorClientMutex.Lock()
-	ret, specificReturn := fake.getMirrorClientReturnsOnCall[len(fake.getMirrorClientArgsForCall)]
-	fake.getMirrorClientArgsForCall = append(fake.getMirrorClientArgsForCall, struct {
-		arg1 string
-	}{arg1})
-	fake.recordInvocation("GetMirrorClient", []interface{}{arg1})
-	fake.getMirrorClientMutex.Unlock()
-	if fake.GetMirrorClientStub != nil {
-		return fake.GetMirrorClientStub(arg1)
-	}
-	if specificReturn {
-		return ret.result1, ret.result2
-	}
-	fakeReturns := fake.getMirrorClientReturns
-	return fakeReturns.result1, fakeReturns.result2
-}
-
-func (fake *HcsClientFactory) GetMirrorClientCallCount() int {
-	fake.getMirrorClientMutex.RLock()
-	defer fake.getMirrorClientMutex.RUnlock()
-	return len(fake.getMirrorClientArgsForCall)
-}
-
-func (fake *HcsClientFactory) GetMirrorClientCalls(stub func(string) (factory.MirrorClient, error)) {
-	fake.getMirrorClientMutex.Lock()
-	defer fake.getMirrorClientMutex.Unlock()
-	fake.GetMirrorClientStub = stub
-}
-
-func (fake *HcsClientFactory) GetMirrorClientArgsForCall(i int) string {
-	fake.getMirrorClientMutex.RLock()
-	defer fake.getMirrorClientMutex.RUnlock()
-	argsForCall := fake.getMirrorClientArgsForCall[i]
-	return argsForCall.arg1
-}
-
-func (fake *HcsClientFactory) GetMirrorClientReturns(result1 factory.MirrorClient, result2 error) {
-	fake.getMirrorClientMutex.Lock()
-	defer fake.getMirrorClientMutex.Unlock()
-	fake.GetMirrorClientStub = nil
-	fake.getMirrorClientReturns = struct {
-		result1 factory.MirrorClient
-		result2 error
-	}{result1, result2}
-}
-
-func (fake *HcsClientFactory) GetMirrorClientReturnsOnCall(i int, result1 factory.MirrorClient, result2 error) {
-	fake.getMirrorClientMutex.Lock()
-	defer fake.getMirrorClientMutex.Unlock()
-	fake.GetMirrorClientStub = nil
-	if fake.getMirrorClientReturnsOnCall == nil {
-		fake.getMirrorClientReturnsOnCall = make(map[int]struct {
-			result1 factory.MirrorClient
-			result2 error
-		})
-	}
-	fake.getMirrorClientReturnsOnCall[i] = struct {
-		result1 factory.MirrorClient
+	fake.getHcsClientReturnsOnCall[i] = struct {
+		result1 factory.HcsClient
 		result2 error
 	}{result1, result2}
 }
@@ -172,10 +98,8 @@ func (fake *HcsClientFactory) GetMirrorClientReturnsOnCall(i int, result1 factor
 func (fake *HcsClientFactory) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
-	fake.getConsensusClientMutex.RLock()
-	defer fake.getConsensusClientMutex.RUnlock()
-	fake.getMirrorClientMutex.RLock()
-	defer fake.getMirrorClientMutex.RUnlock()
+	fake.getHcsClientMutex.RLock()
+	defer fake.getHcsClientMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value

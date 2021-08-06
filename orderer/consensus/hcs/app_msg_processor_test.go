@@ -10,11 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes/any"
 	"github.com/golang/protobuf/ptypes/timestamp"
-	"github.com/hashgraph/hedera-sdk-go"
-
-	"github.com/golang/protobuf/proto"
+	"github.com/hashgraph/hedera-sdk-go/v2"
 	mockhcs "github.com/hyperledger/fabric/orderer/consensus/hcs/mock"
 	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 	"github.com/stretchr/testify/assert"

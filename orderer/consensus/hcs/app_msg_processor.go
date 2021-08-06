@@ -15,7 +15,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes/any"
-	"github.com/hashgraph/hedera-sdk-go"
+	"github.com/hashgraph/hedera-sdk-go/v2"
 	hb "github.com/hyperledger/fabric/orderer/consensus/hcs/protodef"
 	"github.com/hyperledger/fabric/protoutil"
 )

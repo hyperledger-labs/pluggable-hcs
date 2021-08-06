@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/hashgraph/hedera-sdk-go"
+	"github.com/hashgraph/hedera-sdk-go/v2"
 	"github.com/hyperledger/fabric-lib-go/healthz"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/flogging"
@@ -65,7 +65,7 @@ type consenterImpl struct {
 // multichannel.NewManagerImpl() when ranging over the ledgerFactory's
 // existingChains.
 func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, metadata *cb.Metadata) (ch consensus.Chain, err error) {
-	var topicID hedera.ConsensusTopicID
+	var topicID hedera.TopicID
 	defer func() {
 		if err == nil {
 			consenter.topicChannelMap[topicID.String()] = support.ChannelID()
@@ -97,7 +97,7 @@ func (consenter *consenterImpl) HandleChain(support consensus.ConsenterSupport, 
 	)
 }
 
-func (c *consenterImpl) JoinChain(support consensus.ConsenterSupport, joinBlock *cb.Block) (consensus.Chain, error) {
+func (consenter *consenterImpl) JoinChain(consensus.ConsenterSupport, *cb.Block) (consensus.Chain, error) {
 	return nil, errors.New("the HCS orderer does not support JoinChain")
 }
 
