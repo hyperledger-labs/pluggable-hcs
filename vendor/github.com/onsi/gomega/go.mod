@@ -1,17 +1,18 @@
 module github.com/onsi/gomega
 
+go 1.18
+
 require (
-	github.com/fsnotify/fsnotify v1.4.7 // indirect
-	github.com/golang/protobuf v1.2.0
-	github.com/hpcloud/tail v1.0.0 // indirect
-	github.com/onsi/ginkgo v1.6.0
-	golang.org/x/net v0.0.0-20180906233101-161cd47e91fd
-	golang.org/x/sync v0.0.0-20180314180146-1d60e4601c6f // indirect
-	golang.org/x/sys v0.0.0-20180909124046-d0be0721c37e // indirect
-	golang.org/x/text v0.3.0 // indirect
-	golang.org/x/xerrors v0.0.0-20190717185122-a985d3407aa7
-	gopkg.in/fsnotify.v1 v1.4.7 // indirect
-	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
-	gopkg.in/yaml.v2 v2.2.4
+	github.com/golang/protobuf v1.5.2
+	github.com/google/go-cmp v0.5.9
+	github.com/onsi/ginkgo/v2 v2.6.1
+	golang.org/x/net v0.4.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
+require (
+	github.com/go-logr/logr v1.2.3 // indirect
+	golang.org/x/sys v0.3.0 // indirect
+	golang.org/x/text v0.5.0 // indirect
+	google.golang.org/protobuf v1.28.0 // indirect
+)
