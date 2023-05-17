@@ -91,8 +91,6 @@ github.com/eapache/go-xerial-snappy
 # github.com/eapache/queue v1.1.0
 ## explicit
 github.com/eapache/queue
-# github.com/frankban/quicktest v1.9.0
-## explicit
 # github.com/fsouza/go-dockerclient v1.4.1
 ## explicit
 github.com/fsouza/go-dockerclient
@@ -193,12 +191,9 @@ github.com/hyperledger/fabric-protos-go/transientstore
 github.com/ijc/Gotty
 # github.com/inconshreveable/mousetrap v1.0.0
 github.com/inconshreveable/mousetrap
-# github.com/konsorten/go-windows-terminal-sequences v1.0.2
-## explicit
-github.com/konsorten/go-windows-terminal-sequences
 # github.com/kr/logfmt v0.0.0-20140226030751-b84e30acd515
 github.com/kr/logfmt
-# github.com/kr/pretty v0.2.0
+# github.com/kr/pretty v0.2.1
 ## explicit
 github.com/kr/pretty
 # github.com/kr/text v0.1.0
@@ -261,7 +256,7 @@ github.com/opencontainers/go-digest
 # github.com/opencontainers/image-spec v1.0.1
 github.com/opencontainers/image-spec/specs-go
 github.com/opencontainers/image-spec/specs-go/v1
-# github.com/opencontainers/runc v1.0.0-rc8
+# github.com/opencontainers/runc v1.1.5
 ## explicit
 github.com/opencontainers/runc/libcontainer/user
 # github.com/pierrec/lz4 v2.5.0+incompatible
@@ -290,7 +285,7 @@ github.com/prometheus/procfs/internal/fs
 # github.com/rcrowley/go-metrics v0.0.0-20181016184325-3113b8401b8a
 ## explicit
 github.com/rcrowley/go-metrics
-# github.com/sirupsen/logrus v1.4.2
+# github.com/sirupsen/logrus v1.8.1
 github.com/sirupsen/logrus
 # github.com/spf13/cast v1.3.1
 ## explicit
@@ -483,7 +478,7 @@ google.golang.org/grpc/serviceconfig
 google.golang.org/grpc/stats
 google.golang.org/grpc/status
 google.golang.org/grpc/tap
-# google.golang.org/protobuf v1.26.0
+# google.golang.org/protobuf v1.27.1
 google.golang.org/protobuf/encoding/protojson
 google.golang.org/protobuf/encoding/prototext
 google.golang.org/protobuf/encoding/protowire
