@@ -23,7 +23,7 @@ require (
 	github.com/eapache/queue v1.1.0 // indirect
 	github.com/fsouza/go-dockerclient v1.4.1
 	github.com/go-kit/kit v0.8.0
-	github.com/golang/protobuf v1.5.1
+	github.com/golang/protobuf v1.5.2
 	github.com/gorilla/handlers v1.4.0
 	github.com/gorilla/mux v1.7.2
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
@@ -51,7 +51,7 @@ require (
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.5
 	github.com/spf13/viper v0.0.0-20150908122457-1967d93db724
-	github.com/stretchr/testify v1.5.1
+	github.com/stretchr/testify v1.8.1
 	github.com/sykesm/zap-logfmt v0.0.2
 	github.com/syndtr/goleveldb v1.0.1-0.20190625010220-02440ea7a285
 	github.com/tedsuo/ifrit v0.0.0-20180802180643-bea94bb476cc
@@ -59,8 +59,8 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20181228115726-23731bf9ba55
 	go.uber.org/zap v1.14.1
 	golang.org/x/crypto v0.1.0
-	golang.org/x/tools v0.1.12
-	google.golang.org/grpc v1.36.0
+	golang.org/x/tools v0.3.0
+	google.golang.org/grpc v1.53.0
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
 	gopkg.in/yaml.v2 v2.2.8
